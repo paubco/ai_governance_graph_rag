@@ -1,0 +1,21 @@
+# --- Core ---
+python-dotenv==1.0.1
+pandas==2.2.2
+tqdm==4.66.4
+requests==2.32.3
+
+# --- NLP / Embeddings ---
+sentence-transformers==3.1.1
+spacy==3.7.5
+
+# --- Graph Processing ---
+networkx==3.3
+rdflib==7.0.0
+wikipedia-api==0.6.0
+
+# --- RAG Framework ---
+farm-haystack==1.26.3
+
+# --- Utility ---
+jupyter==1.0.0
+matplotlib==3.9.0
