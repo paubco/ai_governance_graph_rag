@@ -1,6 +1,6 @@
 # --- Core ---
 python-dotenv==1.0.1
-pandas==2.2.2
+pandas
 tqdm==4.66.4
 requests==2.32.3
 
@@ -9,6 +9,7 @@ sentence-transformers==3.1.1
 spacy==3.7.5
 
 # --- Graph Processing ---
+neo4j == 6.0.2
 networkx==3.3
 rdflib==7.0.0
 wikipedia-api==0.6.0
