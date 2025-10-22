@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -----------------------------
-#Provisional data
+#Paths
 # -----------------------------
-DATA_PATH = os.getenv("DATA_PATH", "data/")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+DATA_PATH = os.path.join(PROJECT_ROOT, "data")
 
 # -----------------------------
 # Neo4j configuration
@@ -31,8 +32,8 @@ SPACY_MODEL = os.getenv("SPACY_MODEL", "en_core_web_sm")
 # -----------------------------
 # Embedding Settings
 # -----------------------------
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 50))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 10))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 150))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 20))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 # -----------------------------

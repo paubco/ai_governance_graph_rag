@@ -1,11 +1,8 @@
-# src/data_intake.py
 import os
 import pandas as pd
 import ast
 from utils.config import DATA_PATH
-from utils.logger import setup_logger
-
-logger = setup_logger(__name__)
+from utils.logger import logger
 
 # -----------------------------
 # Helper functions
@@ -61,7 +58,6 @@ def load_local_data():
     split into metadata and text data, and clean nested fields.
     """
     file_path = os.path.join(DATA_PATH, "abstract_sample_data.csv")
-
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
