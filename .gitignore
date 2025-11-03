@@ -1,33 +1,53 @@
-# --- Python ---
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.egg-info/
-build/
-dist/
-
-# --- Virtual Environments ---
-.venv/
-.env/
-env/
+.Python
 venv/
+graphrag/
+*.egg-info/
 
-# --- IDE & OS ---
+# Secrets
+.env
+*.env
+.env.local
+
+# Data
+data/raw/*
+data/processed/*
+data/enriched/*
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/enriched/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Daily logs - personal notes, keep private
+docs/daily_logs/*.md
+docs/daily_logs/
+
+# Archive
+archive/
+
+# IDE
 .vscode/
 .idea/
 .DS_Store
 
-# --- Notebooks ---
-*.ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
+# Jupyter
+.ipynb_checkpoints/
 
-# --- Data & Outputs ---
-data/
-outputs/
-logs/
-*.log
+# Testing
+.pytest_cache/
+htmlcov/
 
-# --- Environment files ---
-.env
-*.yml
+# Backups
+*_old.py
+*_backup.py
+requirements_old.txt
+src/utils/config_old.py
