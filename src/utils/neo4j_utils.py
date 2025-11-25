@@ -1,4 +1,3 @@
-# src/neo4j_utils.py
 from neo4j import GraphDatabase
 import ast
 

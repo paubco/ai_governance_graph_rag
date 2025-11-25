@@ -10,8 +10,8 @@ import logging
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.phase1_graf_construction.embedder import ChunkEmbedder
-from src.phase1_graf_construction.embed_processor import EmbedProcessor
+from src.phase1_graph_construction.embedder import ChunkEmbedder
+from src.phase1_graph_construction.embed_processor import EmbedProcessor
 
 # Setup logging
 logging.basicConfig(

@@ -15,6 +15,7 @@ graphrag/
 
 # Data
 data/raw/*
+data/interim*
 data/processed/*
 data/enriched/*
 
@@ -22,6 +23,7 @@ data/enriched/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/enriched/.gitkeep
+!data/interim/.gitkeep
 
 # Logs
 logs/
@@ -51,3 +53,4 @@ htmlcov/
 *_backup.py
 requirements_old.txt
 src/utils/config_old.py
+*.bak

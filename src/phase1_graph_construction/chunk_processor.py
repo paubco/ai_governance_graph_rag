@@ -15,7 +15,7 @@ import logging
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.phase1_graf_construction.semantic_chunker import SemanticChunker, Chunk
+from src.phase1_graph_construction.semantic_chunker import SemanticChunker, Chunk
 
 # Setup logging
 logging.basicConfig(

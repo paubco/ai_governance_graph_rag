@@ -5,7 +5,7 @@ Run this to validate chunking behavior before processing all documents
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.phase1_graf_construction.semantic_chunker import SemanticChunker
+from src.phase1_graph_construction.semantic_chunker import SemanticChunker
 
 
 def test_chunker():

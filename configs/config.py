@@ -128,3 +128,28 @@ LOGGING_CONFIG = {
         "handlers": ["console", "file"],
     },
 }
+# ============================================================================
+# STANDARDIZED NAMING CONVENTIONS
+# ============================================================================
+# For reproducibility, we use predictable filenames instead of Scopus's random UUIDs
+
+def get_scopus_csv_path(year: str) -> Path:
+    """Get standardized path for Scopus CSV export"""
+    return ACADEMIC_RAW_PATH / f"scopus_{year}" / f"scopus_export_{year}_raw.csv"
+
+def get_scopus_pdf_dir(year: str) -> Path:
+    """Get path to PDF directory for a given year"""
+    return ACADEMIC_RAW_PATH / f"scopus_{year}" / "papers"
+
+def get_interim_metadata_path(year: str) -> Path:
+    """Get path for cleaned metadata CSV"""
+    return INTERIM_DATA_PATH / "academic" / f"scopus_metadata_{year}.csv"
+
+# Naming patterns (for documentation)
+NAMING_CONVENTIONS = {
+    "scopus_csv_raw": "scopus_export_{YEAR}_raw.csv",
+    "scopus_csv_clean": "scopus_metadata_{YEAR}.csv",
+    "pdf_matches": "pdf_matches_{YEAR}.csv",
+    "academic_texts": "academic_texts_{YEAR}.csv",
+    "academic_texts_combined": "academic_texts_full.csv"
+}
