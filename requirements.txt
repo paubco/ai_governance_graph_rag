@@ -1,13 +1,21 @@
-# Graph RAG Pipeline Requirements
-# Note: PyTorch is installed via conda (see environment.yml)
+# Graph RAG Pipeline Requirements - TESTED & WORKING
+# Compatible with PyTorch 2.1.0 + CUDA 11.8
+
+# Core ML (installed via conda - see environment.yml)
+# pytorch=2.1.0
+# pytorch-cuda=11.8
+# numpy<2.0
+
+# Embeddings (compatible versions)
+sentence-transformers==2.2.2
+transformers==4.35.2
+FlagEmbedding==1.2.2
 
 # Scopus
 pybliometrics>=4.4
 
-# LLM & Embeddings
+# LLM
 together>=1.2.0
-FlagEmbedding>=1.2.0
-sentence-transformers>=2.2.0
 
 # Graph Database
 neo4j>=5.0.0
@@ -20,7 +28,6 @@ scikit-learn>=1.3.0
 
 # Data Processing
 pandas>=2.0.0
-numpy==1.24.0
 
 # Web Scraping
 requests>=2.31.0
