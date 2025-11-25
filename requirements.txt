@@ -6,16 +6,21 @@
 # pytorch-cuda=11.8
 # numpy<2.0
 
-# Embeddings (compatible versions)
-sentence-transformers==2.2.2
-transformers==4.35.2
-FlagEmbedding==1.2.2
+# Step 1: Core transformers (let it pick compatible versions)
+transformers>=4.30.0,<4.45.0
+tokenizers>=0.13.0
 
-# Scopus
-pybliometrics>=4.4
+# Step 2: Embeddings (will use existing transformers)
+sentence-transformers>=2.2.0,<3.0.0
+
+# Step 3: Specific tools
+FlagEmbedding>=1.2.0
 
 # LLM
 together>=1.2.0
+
+# Scopus
+pybliometrics>=4.4
 
 # Graph Database
 neo4j>=5.0.0
