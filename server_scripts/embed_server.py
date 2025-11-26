@@ -5,6 +5,11 @@ Saves periodically to avoid memory accumulation
 """
 
 import sys
+import os
+
+# CRITICAL: Set BEFORE importing torch
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,garbage_collection_threshold:0.6'
+
 import json
 import torch
 import gc
@@ -54,9 +59,10 @@ def main():
     device = check_gpu()
     start_time = datetime.now()
     
-    # Set memory management env var
-    import os
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+    # Clear any existing GPU cache/fragmentation
+    if device == 'cuda':
+        torch.cuda.empty_cache()
+        gc.collect()
     
     # Load model with fp16 for half memory usage
     logger.info("Loading BGE-M3 model (fp16 mode for memory efficiency)...")
@@ -81,7 +87,7 @@ def main():
     logger.info(f"✓ Loaded {total_chunks:,} chunks")
     
     # Configuration
-    batch_size = 32  # Can be larger with fp16
+    batch_size = 16  # Moderate size with fragmentation fix
     save_every = 5000  # Save every 5000 chunks to free memory
     
     logger.info("-" * 70)
@@ -102,7 +108,15 @@ def main():
                       unit="batch"):
             
             batch_ids = chunk_ids[i:i+batch_size]
-            batch_texts = [all_chunks[cid]['text'] for cid in batch_ids]
+            # Truncate very long texts to prevent memory issues
+            batch_texts = []
+            for cid in batch_ids:
+                text = all_chunks[cid]['text']
+                # Truncate to max 8192 characters (BGE-M3 limit is ~8192 tokens)
+                if len(text) > 8192:
+                    text = text[:8192]
+                    logger.warning(f"Truncated chunk {cid} from {len(all_chunks[cid]['text'])} to 8192 chars")
+                batch_texts.append(text)
             
             # Embed
             with torch.no_grad():  # Don't track gradients
@@ -110,9 +124,11 @@ def main():
                     batch_texts,
                     batch_size=batch_size,
                     show_progress_bar=False,
-                    convert_to_numpy=True,
+                    convert_to_tensor=True,  # Keep as tensor first
                     normalize_embeddings=False
                 )
+                # Convert to numpy AFTER encoding
+                embeddings = embeddings.cpu().numpy()
             
             # Add to chunks
             for chunk_id, emb in zip(batch_ids, embeddings):
