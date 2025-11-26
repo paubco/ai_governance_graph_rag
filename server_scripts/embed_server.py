@@ -16,7 +16,7 @@ Expected Runtime: ~15 minutes for 25k chunks on RTX 3060
 import sys
 import json
 import torch
-import gc
+import gc  # ADDED: For memory management
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from pathlib import Path
@@ -109,7 +109,7 @@ def main():
             sys.exit(0)
     
     # Embedding configuration - REDUCED batch size for stability
-    batch_size = 16 if device == 'cuda' else 8  # CHANGED: Smaller batches
+    batch_size = 8 if device == 'cuda' else 4  # CHANGED: Ultra-conservative for 12GB GPU
     total_batches = (len(chunk_ids) + batch_size - 1) // batch_size
     
     logger.info("-" * 70)
@@ -147,10 +147,12 @@ def main():
                 chunks[chunk_id]['embedding'] = emb.tolist()
                 embedded_count += 1
             
-            # ADDED: Clear GPU memory after each batch
+            # ADDED: Aggressive memory clearing after each batch
             if device == 'cuda':
                 del embeddings
+                del batch_texts
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Wait for GPU to finish
                 gc.collect()
             
             # Progress log every 10 batches
