@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Parallel Entity Extraction Server Script
 Uses threading for fast parallel API calls to Together.ai
@@ -22,6 +21,7 @@ import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
+from collections import defaultdict
 import time
 
 # Add project root to path
@@ -114,14 +114,70 @@ class ParallelEntityProcessor:
             
             # Handle both formats: with metadata or raw list
             if isinstance(data, dict) and 'entities' in data:
-                self.results = data['entities']
+                entities_data = data['entities']
             elif isinstance(data, list):
-                self.results = data
+                entities_data = data
             else:
                 self.results = []
+                return 0
             
-            logger.info(f"🔄 Resuming from checkpoint: {len(self.results)} chunks already processed")
-            return len(self.results)
+            # Detect format: flat (entity_processor) vs nested (server script)
+            if len(entities_data) > 0:
+                first_item = entities_data[0]
+                
+                # Check if it's nested format (has 'chunk_text' and nested 'entities')
+                if isinstance(first_item, dict) and 'chunk_text' in first_item and 'entities' in first_item:
+                    # Nested format - use directly
+                    self.results = entities_data
+                    logger.info(f"🔄 Resuming from checkpoint: {len(self.results)} chunks already processed")
+                    return len(self.results)
+                
+                # Flat format (entity_processor) - need to group by chunk_id
+                elif isinstance(first_item, dict) and 'name' in first_item and 'chunk_id' in first_item:
+                    logger.info("📦 Detected flat format checkpoint - converting to nested format...")
+                    
+                    # Load chunks to get chunk_text
+                    chunks_file = "data/interim/chunks/chunks_text.json"
+                    with open(chunks_file, 'r', encoding='utf-8') as f:
+                        chunks_data = json.load(f)
+                    
+                    # Convert to dict for lookup
+                    if isinstance(chunks_data, dict):
+                        chunks = chunks_data
+                    else:
+                        chunks = {chunk['chunk_id']: chunk for chunk in chunks_data}
+                    
+                    # Group entities by chunk_id
+                    entities_by_chunk = defaultdict(list)
+                    
+                    for entity in entities_data:
+                        chunk_id = entity['chunk_id']
+                        entities_by_chunk[chunk_id].append({
+                            'name': entity['name'],
+                            'type': entity['type'],
+                            'description': entity['description'],
+                            'chunk_id': entity['chunk_id']
+                        })
+                    
+                    # Build nested format
+                    self.results = []
+                    for chunk_id, chunk_entities in entities_by_chunk.items():
+                        if chunk_id in chunks:
+                            self.results.append({
+                                'chunk_id': chunk_id,
+                                'chunk_text': chunks[chunk_id]['text'],
+                                'entities': chunk_entities
+                            })
+                    
+                    # Update total_entities counter
+                    self.total_entities = len(entities_data)
+                    
+                    logger.info(f"✅ Converted {len(entities_data)} flat entities into {len(self.results)} chunks")
+                    logger.info(f"🔄 Resuming from checkpoint: {len(self.results)} chunks already processed")
+                    return len(self.results)
+            
+            self.results = []
+            return 0
         
         return 0
     
