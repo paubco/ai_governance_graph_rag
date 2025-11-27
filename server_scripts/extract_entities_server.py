@@ -200,46 +200,49 @@ class ParallelEntityProcessor:
         return 0
     
     def save_checkpoint(self, final: bool = False):
-        """Save current progress to checkpoint with validation."""
-        with self.results_lock:
-            data = {
-                'metadata': {
-                    'final': final,
-                    'chunks_processed': len(self.results),
-                    'total_entities': self.total_entities,
-                    'errors': self.errors,
-                    'timestamp': datetime.now().isoformat()
-                },
-                'entities': self.results
-            }
+        """Save current progress to checkpoint with validation.
+        
+        NOTE: Caller must hold self.results_lock before calling this!
+        """
+        # NO LOCK HERE - caller already has it
+        data = {
+            'metadata': {
+                'final': final,
+                'chunks_processed': len(self.results),
+                'total_entities': self.total_entities,
+                'errors': self.errors,
+                'timestamp': datetime.now().isoformat()
+            },
+            'entities': self.results
+        }
+        
+        # Save to temp file first, then rename (atomic)
+        temp_file = self.output_file.with_suffix('.tmp')
+        
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
             
-            # Save to temp file first, then rename (atomic)
-            temp_file = self.output_file.with_suffix('.tmp')
+            # Validate JSON by reading it back
+            with open(temp_file, 'r', encoding='utf-8') as f:
+                json.load(f)  # Will raise error if invalid
             
-            try:
-                with open(temp_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                
-                # Validate JSON by reading it back
-                with open(temp_file, 'r', encoding='utf-8') as f:
-                    json.load(f)  # Will raise error if invalid
-                
-                # If valid, replace main file
-                temp_file.replace(self.output_file)
-                
-                if not final:
-                    logger.info(f"✓ Checkpoint saved: {len(self.results)} chunks, {self.total_entities} entities")
-                else:
-                    logger.info(f"✓ FINAL output saved: {len(self.results)} chunks, {self.total_entities} entities")
-                    logger.info(f"✓ JSON validated successfully")
-                
-                sys.stdout.flush()
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to save checkpoint: {e}")
-                if temp_file.exists():
-                    temp_file.unlink()
-                raise
+            # If valid, replace main file
+            temp_file.replace(self.output_file)
+            
+            if not final:
+                logger.info(f"✓ Checkpoint saved: {len(self.results)} chunks, {self.total_entities} entities")
+            else:
+                logger.info(f"✓ FINAL output saved: {len(self.results)} chunks, {self.total_entities} entities")
+                logger.info(f"✓ JSON validated successfully")
+            
+            sys.stdout.flush()
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to save checkpoint: {e}")
+            if temp_file.exists():
+                temp_file.unlink()
+            raise
     
     def extract_chunk_with_retry(self, chunk: dict, max_retries: int = 3):
         """
@@ -362,7 +365,8 @@ class ParallelEntityProcessor:
         # Final save
         logger.info(f"\n{'='*70}")
         logger.info(f"Saving final results...")
-        self.save_checkpoint(final=True)
+        with self.results_lock:
+            self.save_checkpoint(final=True)
         
         # Print summary
         elapsed = (datetime.now() - start_time).total_seconds()
