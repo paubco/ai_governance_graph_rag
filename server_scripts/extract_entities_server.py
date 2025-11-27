@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Parallel Entity Extraction Server Script
 Uses threading for fast parallel API calls to Together.ai
@@ -35,16 +36,26 @@ import json
 # Load environment
 load_dotenv(PROJECT_ROOT / '.env')
 
-# Setup logging
+# Setup logging with immediate flush
+import sys
+log_handler_stream = logging.StreamHandler(sys.stdout)
+log_handler_stream.setLevel(logging.INFO)
+log_handler_file = logging.FileHandler('logs/entity_extraction_server.log', mode='a')
+log_handler_file.setLevel(logging.INFO)
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+log_handler_stream.setFormatter(formatter)
+log_handler_file.setFormatter(formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('logs/entity_extraction_server.log')
-    ]
+    handlers=[log_handler_stream, log_handler_file]
 )
 logger = logging.getLogger(__name__)
+
+# Force unbuffered output
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure') else None
 
 
 class ParallelEntityProcessor:
@@ -129,7 +140,13 @@ class ParallelEntityProcessor:
                 if isinstance(first_item, dict) and 'chunk_text' in first_item and 'entities' in first_item:
                     # Nested format - use directly
                     self.results = entities_data
+                    
+                    # Calculate totals
+                    self.chunks_processed = len(self.results)
+                    self.total_entities = sum(len(chunk['entities']) for chunk in self.results)
+                    
                     logger.info(f"🔄 Resuming from checkpoint: {len(self.results)} chunks already processed")
+                    logger.info(f"   Total entities from checkpoint: {self.total_entities}")
                     return len(self.results)
                 
                 # Flat format (entity_processor) - need to group by chunk_id
@@ -169,7 +186,8 @@ class ParallelEntityProcessor:
                                 'entities': chunk_entities
                             })
                     
-                    # Update total_entities counter
+                    # Update counters
+                    self.chunks_processed = len(self.results)
                     self.total_entities = len(entities_data)
                     
                     logger.info(f"✅ Converted {len(entities_data)} flat entities into {len(self.results)} chunks")
@@ -182,13 +200,14 @@ class ParallelEntityProcessor:
         return 0
     
     def save_checkpoint(self, final: bool = False):
-        """Save current progress to checkpoint."""
+        """Save current progress to checkpoint with validation."""
         with self.results_lock:
             data = {
                 'metadata': {
                     'final': final,
                     'chunks_processed': len(self.results),
                     'total_entities': self.total_entities,
+                    'errors': self.errors,
                     'timestamp': datetime.now().isoformat()
                 },
                 'entities': self.results
@@ -196,13 +215,31 @@ class ParallelEntityProcessor:
             
             # Save to temp file first, then rename (atomic)
             temp_file = self.output_file.with_suffix('.tmp')
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
             
-            temp_file.replace(self.output_file)
-            
-            if not final:
-                logger.info(f"[CHECKPOINT] Saved {len(self.results)} chunks, {self.total_entities} entities")
+            try:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                
+                # Validate JSON by reading it back
+                with open(temp_file, 'r', encoding='utf-8') as f:
+                    json.load(f)  # Will raise error if invalid
+                
+                # If valid, replace main file
+                temp_file.replace(self.output_file)
+                
+                if not final:
+                    logger.info(f"✓ Checkpoint saved: {len(self.results)} chunks, {self.total_entities} entities")
+                else:
+                    logger.info(f"✓ FINAL output saved: {len(self.results)} chunks, {self.total_entities} entities")
+                    logger.info(f"✓ JSON validated successfully")
+                
+                sys.stdout.flush()
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to save checkpoint: {e}")
+                if temp_file.exists():
+                    temp_file.unlink()
+                raise
     
     def extract_chunk_with_retry(self, chunk: dict, max_retries: int = 3):
         """
@@ -262,10 +299,12 @@ class ParallelEntityProcessor:
         
         total = len(chunks_to_process)
         logger.info(f"Processing {total} chunks with {self.num_workers} parallel workers")
+        logger.info(f"Starting from index {start_index} (checkpoint offset)")
         
         # Statistics
         start_time = datetime.now()
-        last_checkpoint = 0
+        last_checkpoint = len(self.results)  # Track from current checkpoint position
+        chunks_processed_this_run = 0
         
         # Process in parallel
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
@@ -287,29 +326,42 @@ class ParallelEntityProcessor:
                         'entities': entities
                     })
                     
-                    self.chunks_processed += 1
+                    chunks_processed_this_run += 1
                     self.total_entities += len(entities)
                     
+                    # Calculate true totals (checkpoint + new)
+                    total_chunks_done = len(self.results)
+                    
                     # Progress update every 100 chunks
-                    if self.chunks_processed % 100 == 0:
+                    if chunks_processed_this_run % 100 == 0:
                         elapsed = (datetime.now() - start_time).total_seconds()
-                        rate = self.chunks_processed / elapsed if elapsed > 0 else 0
-                        avg_entities = self.total_entities / self.chunks_processed if self.chunks_processed > 0 else 0
+                        rate = chunks_processed_this_run / elapsed if elapsed > 0 else 0
+                        avg_entities = self.total_entities / total_chunks_done if total_chunks_done > 0 else 0
+                        progress_pct = (chunks_processed_this_run / total * 100) if total > 0 else 0
                         
                         logger.info(
-                            f"Progress: {self.chunks_processed}/{total} chunks "
-                            f"({self.chunks_processed/total*100:.1f}%) | "
+                            f"Progress: {chunks_processed_this_run}/{total} NEW chunks ({progress_pct:.1f}%) | "
+                            f"Total done: {total_chunks_done}/{len(chunks)} | "
                             f"Entities: {self.total_entities} | "
                             f"Avg: {avg_entities:.1f}/chunk | "
                             f"Rate: {rate:.1f} chunks/sec"
                         )
+                        
+                        # Force flush
+                        sys.stdout.flush()
+                        sys.stderr.flush()
                     
-                    # Checkpoint save
-                    if self.chunks_processed - last_checkpoint >= self.checkpoint_interval:
+                    # Checkpoint save every N chunks
+                    if total_chunks_done - last_checkpoint >= self.checkpoint_interval:
+                        logger.info(f"\n[CHECKPOINT TRIGGER] Saving at {total_chunks_done} total chunks...")
                         self.save_checkpoint(final=False)
-                        last_checkpoint = self.chunks_processed
+                        last_checkpoint = total_chunks_done
+                        logger.info(f"[CHECKPOINT SAVED] Continuing...\n")
+                        sys.stdout.flush()
         
         # Final save
+        logger.info(f"\n{'='*70}")
+        logger.info(f"Saving final results...")
         self.save_checkpoint(final=True)
         
         # Print summary
@@ -318,12 +370,12 @@ class ParallelEntityProcessor:
         logger.info("=" * 70)
         logger.info("✅ EXTRACTION COMPLETE")
         logger.info("=" * 70)
-        logger.info(f"Chunks processed: {self.chunks_processed}")
+        logger.info(f"Chunks processed this run: {chunks_processed_this_run}")
+        logger.info(f"Total chunks in output: {len(self.results)}")
         logger.info(f"Total entities: {self.total_entities}")
-        logger.info(f"Average per chunk: {self.total_entities/self.chunks_processed:.1f}")
-        logger.info(f"Errors: {self.errors}")
-        logger.info(f"Time: {elapsed/60:.1f} minutes")
-        logger.info(f"Rate: {self.chunks_processed/elapsed:.2f} chunks/sec")
+        logger.info(f"Average per chunk: {self.total_entities/len(self.results):.1f}")
+        logger.info(f"Time this run: {elapsed/60:.1f} minutes")
+        logger.info(f"Rate: {chunks_processed_this_run/elapsed:.2f} chunks/sec")
         logger.info(f"Output: {self.output_file}")
         logger.info("=" * 70)
 
@@ -393,13 +445,6 @@ Examples:
     logger.info(f"Input: {args.chunks_file}")
     logger.info(f"Output: {args.output_file}")
     logger.info("")
-    
-    # Warn about rate limits
-    if args.workers > 3:
-        logger.warning(f"⚠️  Using {args.workers} workers requires Tier 2+ rate limits")
-        logger.warning(f"   Tier 1 ($5): 600 RPM → use --workers 3")
-        logger.warning(f"   Tier 2 ($50): 1800 RPM → use --workers 10")
-        logger.info("")
     
     # Initialize processor
     processor = ParallelEntityProcessor(
