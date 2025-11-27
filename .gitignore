@@ -30,8 +30,8 @@ logs/
 *.log
 
 # Daily logs - personal notes, keep private
-docs/daily_logs/*.md
 docs/daily_logs/
+docs/project/
 
 # Archive
 archive/
