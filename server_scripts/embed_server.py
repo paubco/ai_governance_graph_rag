@@ -1,6 +1,6 @@
 """
-BGE-M3 Embedding Script - UNIVERSAL VERSION
-Auto-detects progress and resumes or starts fresh
+BGE-M3 Embedding Script 
+Handles both chunks AND entities
 """
 
 import sys
@@ -40,16 +40,98 @@ def check_gpu():
         logger.warning("CUDA not available, falling back to CPU")
         return 'cpu'
 
+def detect_input_type(data):
+    """
+    Detect if input is chunks or entities and return appropriate structure
+    
+    Returns:
+        (input_type, items_dict, text_key)
+        - input_type: 'chunks' or 'entities'
+        - items_dict: dict of items to embed
+        - text_key: field to use for embedding text
+    """
+    # Case 1: Phase 1B output - nested entities structure
+    if isinstance(data, dict) and 'metadata' in data and 'entities' in data:
+        logger.info("Detected: Phase 1B entity extraction output (nested structure)")
+        
+        # Flatten: extract all entities from all chunks
+        items_dict = {}
+        entity_count = 0
+        
+        for chunk_data in data['entities']:
+            for entity in chunk_data.get('entities', []):
+                # Format entity as "name [type]" per RAKG Eq. 19
+                formatted_text = f"{entity['name']} [{entity['type']}]"
+                
+                items_dict[f'entity_{entity_count:06d}'] = {
+                    'name': entity['name'],
+                    'type': entity['type'],
+                    'description': entity.get('description', ''),
+                    'chunk_id': entity['chunk_id'],
+                    'formatted_text': formatted_text,
+                    'text': formatted_text  # For compatibility with embed logic
+                }
+                entity_count += 1
+        
+        logger.info(f"✓ Flattened {entity_count:,} entities from nested structure")
+        logger.info(f"Sample formatted entity: {items_dict['entity_000000']['formatted_text']}")
+        return 'entities', items_dict, 'text'
+    
+    # Case 2: Already flattened entities (list or dict with name/type)
+    elif isinstance(data, (list, dict)):
+        sample = data[0] if isinstance(data, list) else next(iter(data.values()))
+        
+        if 'name' in sample and 'type' in sample:
+            logger.info("Detected: Flattened entities")
+            
+            # Convert to dict if list
+            if isinstance(data, list):
+                items_dict = {f'entity_{i:06d}': item for i, item in enumerate(data)}
+            else:
+                items_dict = data
+            
+            # Add formatted text if not present
+            for key, entity in items_dict.items():
+                if 'text' not in entity:
+                    formatted_text = f"{entity['name']} [{entity['type']}]"
+                    entity['formatted_text'] = formatted_text
+                    entity['text'] = formatted_text
+            
+            logger.info(f"✓ Loaded {len(items_dict):,} entities")
+            return 'entities', items_dict, 'text'
+        
+        # Case 3: Chunks with 'text' field
+        elif 'text' in sample:
+            logger.info("Detected: Text chunks")
+            
+            # Convert to dict if list
+            if isinstance(data, list):
+                items_dict = {f'chunk_{i:06d}': item for i, item in enumerate(data)}
+            else:
+                items_dict = data
+            
+            logger.info(f"✓ Loaded {len(items_dict):,} chunks")
+            return 'chunks', items_dict, 'text'
+        
+        else:
+            raise ValueError(f"Unknown input format. Sample item keys: {list(sample.keys())}")
+    
+    else:
+        raise ValueError(f"Unknown input format. Data type: {type(data)}")
+
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python embed_server.py <input_chunks.json> <output_chunks.json>")
+        print("Usage: python embed_server.py <input.json> <output.json>")
+        print()
+        print("Supports:")
+        print("  - Phase 1A chunks (with 'text' field)")
+        print("  - Phase 1B entities (nested structure with metadata)")
+        print("  - Flattened entities (with 'name' and 'type' fields)")
         print()
         print("Examples:")
-        print("  # Start fresh:")
-        print("  python embed_server.py data/interim/chunks/chunks_text.json data/interim/chunks/chunks_embedded.json")
-        print()
-        print("  # Resume (input = output):")
-        print("  python embed_server.py data/interim/chunks/chunks_embedded.json data/interim/chunks/chunks_embedded.json")
+        print("  python embed_server.py chunks_text.json chunks_embedded.json")
+        print("  python embed_server.py pre_entities.json pre_entities_embedded.json")
+        print("  python embed_server.py pre_entities_embedded.json pre_entities_embedded.json  # Resume")
         sys.exit(1)
     
     input_path = Path(sys.argv[1])
@@ -60,7 +142,7 @@ def main():
         sys.exit(1)
     
     logger.info("=" * 70)
-    logger.info("BGE-M3 CHUNK EMBEDDING - UNIVERSAL MODE")
+    logger.info("UNIVERSAL BGE-M3 EMBEDDING SERVER")
     logger.info("=" * 70)
     logger.info(f"Input:  {input_path}")
     logger.info(f"Output: {output_path}")
@@ -74,41 +156,45 @@ def main():
         gc.collect()
         logger.info("✓ GPU cache cleared")
     
-    # Load chunks
+    # Load and detect input type
     logger.info("-" * 70)
-    logger.info(f"Loading chunks from: {input_path}")
+    logger.info(f"Loading from: {input_path}")
     
     with open(input_path, 'r', encoding='utf-8') as f:
-        all_chunks = json.load(f)
+        raw_data = json.load(f)
     
-    total_chunks = len(all_chunks)
-    logger.info(f"✓ Loaded {total_chunks:,} chunks")
+    input_type, all_items, text_key = detect_input_type(raw_data)
+    
+    total_items = len(all_items)
+    logger.info(f"Input type: {input_type.upper()}")
+    logger.info(f"Total items: {total_items:,}")
     
     # Detect resume vs fresh start
-    sample_chunk = next(iter(all_chunks.values()))
-    is_resume = 'embedding' in sample_chunk
+    sample_item = next(iter(all_items.values()))
+    is_resume = 'embedding' in sample_item
     
     if is_resume:
         # Count what's already done
-        with_embeddings = sum(1 for c in all_chunks.values() if 'embedding' in c and len(c.get('embedding', [])) == 1024)
-        missing_ids = [cid for cid, chunk in all_chunks.items() 
-                      if 'embedding' not in chunk or len(chunk.get('embedding', [])) != 1024]
+        with_embeddings = sum(1 for item in all_items.values() 
+                             if 'embedding' in item and len(item.get('embedding', [])) == 1024)
+        missing_ids = [iid for iid, item in all_items.items() 
+                      if 'embedding' not in item or len(item.get('embedding', [])) != 1024]
         
         logger.info("")
         logger.info("🔄 RESUME MODE DETECTED")
-        logger.info(f"  Already embedded: {with_embeddings:,} chunks ({with_embeddings/total_chunks*100:.1f}%)")
-        logger.info(f"  Remaining: {len(missing_ids):,} chunks ({len(missing_ids)/total_chunks*100:.1f}%)")
+        logger.info(f"  Already embedded: {with_embeddings:,} ({with_embeddings/total_items*100:.1f}%)")
+        logger.info(f"  Remaining: {len(missing_ids):,} ({len(missing_ids)/total_items*100:.1f}%)")
         
         if len(missing_ids) == 0:
             logger.info("")
-            logger.info("✓ All chunks already embedded! Nothing to do.")
+            logger.info("✓ All items already embedded! Nothing to do.")
             sys.exit(0)
         
-        chunk_ids = missing_ids
+        item_ids = missing_ids
     else:
         logger.info("")
         logger.info("🆕 FRESH START MODE")
-        chunk_ids = list(all_chunks.keys())
+        item_ids = list(all_items.keys())
     
     # Load model
     logger.info("-" * 70)
@@ -123,34 +209,34 @@ def main():
         logger.error(f"Failed to load model: {e}")
         sys.exit(1)
     
-    # Configuration - Conservative for stability
-    batch_size = 8  # Small and safe
-    save_interval = 1000  # Save every 1000 chunks
+    # Configuration
+    batch_size = 8
+    save_interval = 1000
     
     logger.info("-" * 70)
     logger.info(f"Configuration:")
     logger.info(f"  Batch size: {batch_size}")
-    logger.info(f"  Save interval: {save_interval} chunks")
+    logger.info(f"  Save interval: {save_interval} items")
     logger.info(f"  Precision: fp16 (half)")
-    logger.info(f"  Memory management: max_split_size_mb=512")
+    logger.info(f"  Text field: '{text_key}'")
     logger.info("=" * 70)
-    logger.info(f"Starting embedding process for {len(chunk_ids):,} chunks...")
+    logger.info(f"Starting embedding process for {len(item_ids):,} items...")
     logger.info("")
     
     start_time = datetime.now()
     embedded_count = 0
     
     try:
-        for i in tqdm(range(0, len(chunk_ids), batch_size),
+        for i in tqdm(range(0, len(item_ids), batch_size),
                       desc="Embedding batches",
                       unit="batch"):
             
-            batch_ids = chunk_ids[i:i+batch_size]
+            batch_ids = item_ids[i:i+batch_size]
             
-            # Get texts and truncate if needed
+            # Get texts
             batch_texts = []
-            for cid in batch_ids:
-                text = all_chunks[cid]['text']
+            for iid in batch_ids:
+                text = all_items[iid][text_key]
                 # Truncate very long texts (BGE-M3 max is ~8192 tokens)
                 if len(text) > 8192:
                     text = text[:8192]
@@ -168,9 +254,9 @@ def main():
                 # Convert to numpy on CPU
                 embeddings = embeddings.cpu().numpy()
             
-            # Add to chunks
-            for chunk_id, emb in zip(batch_ids, embeddings):
-                all_chunks[chunk_id]['embedding'] = emb.tolist()
+            # Add to items
+            for item_id, emb in zip(batch_ids, embeddings):
+                all_items[item_id]['embedding'] = emb.tolist()
                 embedded_count += 1
             
             # Aggressive memory cleanup after each batch
@@ -182,10 +268,10 @@ def main():
             
             # Save checkpoint periodically
             if embedded_count % save_interval == 0:
-                logger.info(f"\n💾 Checkpoint: Saving progress ({embedded_count:,}/{len(chunk_ids):,})...")
+                logger.info(f"\n💾 Checkpoint: Saving progress ({embedded_count:,}/{len(item_ids):,})...")
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(output_path, 'w', encoding='utf-8') as f:
-                    json.dump(all_chunks, f, ensure_ascii=False)
+                    json.dump(all_items, f, ensure_ascii=False)
                 logger.info(f"✓ Checkpoint saved")
                 
                 # Extra memory cleanup at checkpoint
@@ -198,22 +284,21 @@ def main():
             if (i // batch_size + 1) % 20 == 0:
                 elapsed = (datetime.now() - start_time).total_seconds()
                 rate = embedded_count / elapsed if elapsed > 0 else 0
-                remaining = (len(chunk_ids) - embedded_count) / rate if rate > 0 else 0
-                logger.info(f"  Progress: {embedded_count:,}/{len(chunk_ids):,} chunks "
-                           f"({embedded_count/len(chunk_ids)*100:.1f}%) "
+                remaining = (len(item_ids) - embedded_count) / rate if rate > 0 else 0
+                logger.info(f"  Progress: {embedded_count:,}/{len(item_ids):,} "
+                           f"({embedded_count/len(item_ids)*100:.1f}%) "
                            f"- ETA: {remaining/60:.1f} min")
     
     except KeyboardInterrupt:
         logger.warning("\n⚠ Interrupted by user!")
-        logger.info(f"Embedded {embedded_count:,}/{len(chunk_ids):,} chunks in this session")
-        response = input("Save progress? [Y/n]: ")
-        if response.lower() == 'n':
-            logger.info("Progress not saved")
-            sys.exit(1)
+        logger.info(f"Embedded {embedded_count:,}/{len(item_ids):,} items in this session")
+        logger.info("Saving progress...")
     
     except Exception as e:
         logger.error(f"Error during embedding: {e}")
-        logger.info(f"Embedded {embedded_count:,} chunks before error")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.info(f"Embedded {embedded_count:,} items before error")
         logger.info("Saving partial results...")
     
     # Final save
@@ -223,19 +308,19 @@ def main():
     
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(all_chunks, f, ensure_ascii=False, indent=2)
+        json.dump(all_items, f, ensure_ascii=False)
     
     logger.info("✓ Final save complete")
     
     # Verification
     logger.info("")
     logger.info("Verification:")
-    total = len(all_chunks)
-    with_embeddings = sum(1 for c in all_chunks.values() if 'embedding' in c)
-    correct_dim = sum(1 for c in all_chunks.values() 
-                     if 'embedding' in c and len(c['embedding']) == 1024)
+    total = len(all_items)
+    with_embeddings = sum(1 for item in all_items.values() if 'embedding' in item)
+    correct_dim = sum(1 for item in all_items.values() 
+                     if 'embedding' in item and len(item['embedding']) == 1024)
     
-    logger.info(f"  Total chunks: {total:,}")
+    logger.info(f"  Total items: {total:,}")
     logger.info(f"  With embeddings: {with_embeddings:,}")
     logger.info(f"  Correct dimensions (1024): {correct_dim:,}")
     logger.info(f"  Success rate: {correct_dim/total*100:.2f}%")
@@ -250,16 +335,19 @@ def main():
     logger.info("=" * 70)
     logger.info(f"Session time: {int(minutes)}m {int(seconds)}s")
     logger.info(f"Embeddings created this session: {embedded_count:,}")
-    logger.info(f"Average speed: {embedded_count/elapsed_time.total_seconds():.1f} chunks/sec")
+    logger.info(f"Average speed: {embedded_count/elapsed_time.total_seconds():.1f} items/sec")
     logger.info(f"Output file size: {output_path.stat().st_size / 1024**2:.1f} MB")
     logger.info("")
     
     if correct_dim == total:
-        logger.info("✅ SUCCESS: All chunks embedded!")
-        logger.info("✓ Ready for Phase 1B: Entity Extraction")
+        logger.info(f"✅ SUCCESS: All {input_type} embedded!")
+        if input_type == 'chunks':
+            logger.info("✓ Ready for Phase 1B: Entity Extraction")
+        else:
+            logger.info("✓ Ready for Phase 1C-2: VecJudge Clustering")
     else:
-        logger.warning(f"⚠ INCOMPLETE: {total - correct_dim:,} chunks still need embedding")
-        logger.info("Run again to resume from where it stopped:")
+        logger.warning(f"⚠ INCOMPLETE: {total - correct_dim:,} items still need embedding")
+        logger.info("Run again to resume:")
         logger.info(f"  python embed_server.py {output_path} {output_path}")
     
     logger.info("=" * 70)
