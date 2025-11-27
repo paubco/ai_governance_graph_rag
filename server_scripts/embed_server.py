@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 BGE-M3 Embedding Script - UNIVERSAL VERSION
 Auto-detects progress and resumes or starts fresh
