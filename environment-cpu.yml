@@ -1,25 +1,21 @@
-name: graphrag_gpu
+name: graphrag_cpu
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
   - python=3.10
   - pip>=23.0
   
-  # PyTorch with CUDA (exact versions tested)
-  - pytorch=2.1.0
-  - pytorch-cuda=11.8
-  - torchvision=0.16.0
-  - torchaudio=2.1.0
-  
-  # NumPy 1.x required for PyTorch compatibility
+  # NumPy
   - numpy=1.24.3
   
-  # FAISS GPU (for production server)
-  - faiss-gpu=1.7.4
+  # FAISS CPU
+  - faiss-cpu=1.7.4
   
-  # Install rest from requirements.txt
+  # Install PyTorch CPU via pip (simpler, no CUDA)
   - pip:
+      - torch==2.1.0
+      - torchvision==0.16.0
+      - torchaudio==2.1.0
+      - --extra-index-url https://download.pytorch.org/whl/cpu
       - -r requirements.txt
