@@ -51,6 +51,13 @@ from src.phase1_graph_construction.entity_disambiguator import (
 from src.utils.embedder import BGEEmbedder
 from src.utils.embed_processor import EmbedProcessor
 
+# Load .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, will use environment variables directly
+
 # Logger setup
 logging.basicConfig(
     level=logging.INFO,
@@ -96,7 +103,10 @@ class DisambiguationProcessor:
         )  # YOUR existing batch processor
         self.stage2 = FAISSBlocker()
         self.stage3 = TieredThresholdFilter()
-        self.stage4 = SameJudge(api_key=together_api_key)  # NEW: CPU version
+        
+        # Stage 4: Initialize only when needed (lazy loading)
+        self.stage4 = None
+        self.together_api_key = together_api_key
         
         self.stats = {}
         
@@ -286,6 +296,17 @@ class DisambiguationProcessor:
         logger.info("Single-threaded processing")
         logger.info("For GPU + 8 workers, use server_scripts/disambiguation_server.py")
         
+        # Initialize Stage 4 now (lazy loading)
+        if self.stage4 is None:
+            if not self.together_api_key:
+                raise ValueError(
+                    "Stage 4 requires Together API key!\n"
+                    "Set via: export TOGETHER_API_KEY='your-key'\n"
+                    "Or pass: --api-key your-key"
+                )
+            logger.info("Initializing Stage 4 (SameJudge)...")
+            self.stage4 = SameJudge(api_key=self.together_api_key)
+        
         # Verify uncertain pairs with LLM
         llm_matches = self.stage4.verify_batch(uncertain_pairs, entities)
         
@@ -403,8 +424,11 @@ def main():
     # Get API key from args or environment
     import os
     api_key = args.api_key or os.getenv('TOGETHER_API_KEY')
-    if not api_key:
-        logger.warning("No API key provided - Stage 4 will fail!")
+    if not api_key and args.start_from_stage == 1:
+        logger.info("No API key provided - Stage 4 (LLM verification) will be skipped")
+        logger.info("To run Stage 4: export TOGETHER_API_KEY='your-key' or use --api-key")
+    elif not api_key:
+        logger.warning("No API key provided - pipeline will fail at Stage 4!")
     
     logger.info("=" * 70)
     logger.info("Phase 1C: Entity Disambiguation (CPU - All 4 Stages)")
