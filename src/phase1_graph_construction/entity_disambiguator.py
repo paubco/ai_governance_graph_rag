@@ -41,6 +41,7 @@ Notes:
 import hashlib
 import unicodedata
 import logging
+import json
 from typing import List, Dict, Tuple, Set
 from collections import defaultdict, Counter
 
@@ -316,6 +317,11 @@ class FAISSBlocker:
                 # Convert L2 distance to cosine similarity
                 # Since vectors are normalized: cos_sim = 1 - (L2_dist^2 / 2)
                 similarity = float(1 - (dist ** 2) / 2)
+                
+                # Filter out dissimilar pairs (negative cosine similarity)
+                # For entity disambiguation, we only care about similar entities
+                if similarity < 0.0:
+                    continue
                 
                 # Only keep unique pairs (i < j to avoid duplicates)
                 pair_key = (min(i, neighbor_idx), max(i, neighbor_idx))
@@ -631,5 +637,3 @@ JSON:"""
         logger.info(f"  Total cost: ${self.stats['total_cost']:.2f}")
         
         return matches
-
-

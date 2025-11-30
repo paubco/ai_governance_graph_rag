@@ -218,6 +218,10 @@ class FAISSBlockerGPU:
                 # Convert L2 distance to cosine similarity
                 similarity = float(1 - (dist ** 2) / 2)
                 
+                # Filter out dissimilar pairs (negative cosine similarity)
+                if similarity < 0.0:
+                    continue
+                
                 # Only keep unique pairs (i < j)
                 if i < neighbor_idx:
                     pairs.append((i, neighbor_idx, similarity))
