@@ -40,6 +40,7 @@ Notes:
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -61,6 +62,13 @@ from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
     TieredThresholdFilter
 )
+
+# Load .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, will use environment variables directly
 
 # Setup logging
 logging.basicConfig(
