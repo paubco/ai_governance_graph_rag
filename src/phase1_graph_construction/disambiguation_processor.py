@@ -40,15 +40,16 @@ from typing import Dict, List
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Local imports
-from entity_disambiguator import (
+from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
     FAISSBlocker,
-    TieredThresholdFilter
+    TieredThresholdFilter,
+    SameJudge
 )
 
 # Import YOUR existing code
-from embedder import BGEEmbedder
-from embed_processor import EmbedProcessor
+from src.utils.embedder import BGEEmbedder
+from src.utils.embed_processor import EmbedProcessor
 
 # Logger setup
 logging.basicConfig(
