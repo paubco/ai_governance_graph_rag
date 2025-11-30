@@ -1,617 +1,576 @@
 """
-Module: entity_disambiguator.py
+Module: disambiguation_processor.py
 Phase: 1C - Entity Disambiguation
-Purpose: 4-stage entity disambiguation pipeline (exact dedup, FAISS blocking, tiered thresholds, LLM verification)
+Purpose: Orchestrate 4-stage entity disambiguation pipeline
 Author: Pau Barba i Colomer
 Created: 2025-11-29
 Last Modified: 2025-11-29
 
 Dependencies:
-    - faiss-cpu or faiss-gpu: FAISS HNSW index for Stage 2
-    - together: LLM API for Stage 4
-    - numpy: Array operations
+    - entity_disambiguator: Stages 1-3 (exact dedup, FAISS, thresholds)
+    - embedder: YOUR existing BGEEmbedder for Stage 1.5
+    - embed_processor: YOUR existing EmbedProcessor for batch processing
+    - samejudge_server.py: YOUR existing multithreaded LLM verification (Stage 4)
     
 Usage:
-    from entity_disambiguator import ExactDeduplicator, FAISSBlocker, TieredThresholdFilter, SameJudgeLLM
+    # Start from Stage 1 (dedup, then embed 25k entities)
+    python disambiguation_processor.py \
+        --input data/interim/entities/pre_entities.json \
+        --start-from-stage 1
     
-    # Stage 1: Exact deduplication
-    dedup = ExactDeduplicator()
-    canonical = dedup.deduplicate(entities)
-    
-    # Stage 2: FAISS blocking
-    blocker = FAISSBlocker()
-    blocker.build_index(canonical)
-    pairs = blocker.find_candidates(canonical, k=50)
-    
-    # Stage 3: Tiered thresholds
-    filter = TieredThresholdFilter()
-    filtered = filter.filter_pairs(pairs, canonical)
-    
-    # Stage 4: LLM verification
-    judge = SameJudgeLLM(api_key="your-key")
-    matches = judge.verify_batch(filtered['uncertain'], canonical)
+    # Or skip to Stage 2 if already deduplicated+embedded (after migration)
+    python disambiguation_processor.py \
+        --start-from-stage 2
 
 Notes:
-    - Implements 4-stage pipeline from PHASE_1C_DESIGN_JUSTIFICATION.md
-    - Based on Malkov & Yashunin (2020) HNSW, Papadakis et al. (2021) blocking survey
-    - Extends RAKG methodology with FAISS blocking for scalability
+    - Stages 1-3 run automatically
+    - Stage 4 requires manual execution of samejudge_server.py (see output)
+    - Integrates with YOUR existing BGEEmbedder and SameJudge code
 """
 
 # Standard library
-import hashlib
-import unicodedata
-import logging
+import argparse
 import json
-from typing import List, Dict, Tuple, Set
-from collections import defaultdict, Counter
+import logging
+import sys
+from pathlib import Path
+from typing import Dict, List
 
-# Third-party
-import numpy as np
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# Logger
+# Local imports
+from src.phase1_graph_construction.entity_disambiguator import (
+    ExactDeduplicator,
+    FAISSBlocker,
+    TieredThresholdFilter,
+    SameJudge
+)
+
+# Import YOUR existing code
+from src.utils.embedder import BGEEmbedder
+from src.utils.embed_processor import EmbedProcessor
+
+# Load .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, will use environment variables directly
+
+# Logger setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-class ExactDeduplicator:
+class DisambiguationProcessor:
     """
-    Stage 1: Hash-based exact string deduplication
+    Orchestrates full 4-stage entity disambiguation pipeline (CPU version)
     
-    Uses NFKC normalization + casefold + MD5 hashing to group identical entities.
-    Merges duplicates by combining chunk_ids and using most frequent type.
+    Pipeline:
+        Stage 1: Exact deduplication (hash-based)
+        Stage 1.5: Embed deduplicated entities (YOUR BGEEmbedder)
+        Stage 2: FAISS HNSW blocking (CPU)
+        Stage 3: Tiered threshold filtering
+        Stage 4: LLM verification (SameJudge, single-threaded)
     
-    References:
-        - Christen (2012) "Data Matching" - Standard normalization pipeline
-        - Python recordlinkage library - NFKC best practice
+    For GPU-optimized version with multithreading, use:
+        server_scripts/disambiguation_server.py
     """
     
-    def __init__(self):
-        """Initialize deduplicator with stats tracking"""
-        self.stats = {
-            'input_count': 0,
-            'output_count': 0,
-            'duplicates_removed': 0,
-            'largest_group_size': 0
-        }
-    
-    def normalize_string(self, text: str) -> str:
+    def __init__(self, 
+                 together_api_key: str = None,
+                 data_dir: str = "data/interim/entities"):
         """
-        Normalize string for exact matching
-        
-        Steps:
-            1. NFKC normalization (collapses ligatures, fullwidth chars)
-            2. Casefold (better than lower() for Unicode)
-            3. Whitespace collapse
+        Initialize processor with all stages
         
         Args:
-            text: Raw string
-            
-        Returns:
-            Normalized string
+            together_api_key: API key for Stage 4 LLM verification
+            data_dir: Directory for intermediate files
         """
-        # NFKC normalization: ﬁ→fi, fullwidth→normal
-        normalized = unicodedata.normalize('NFKC', text)
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Casefold: handles special cases like German ß→ss
-        normalized = normalized.casefold()
+        # Initialize all stages (CPU versions)
+        self.stage1 = ExactDeduplicator()
+        self.embedder = BGEEmbedder()  # YOUR existing universal embedder
+        self.embed_processor = EmbedProcessor(
+            embedder=self.embedder,
+            checkpoint_freq=1000
+        )  # YOUR existing batch processor
+        self.stage2 = FAISSBlocker()
+        self.stage3 = TieredThresholdFilter()
         
-        # Strip and collapse whitespace
-        normalized = normalized.strip()
-        normalized = ' '.join(normalized.split())
+        # Stage 4: Initialize only when needed (lazy loading)
+        self.stage4 = None
+        self.together_api_key = together_api_key
         
-        return normalized
+        self.stats = {}
+        
+        logger.info("DisambiguationProcessor initialized (CPU version)")
+        logger.info("For GPU-optimized pipeline, use server_scripts/disambiguation_server.py")
     
-    def compute_hash(self, name: str, entity_type: str) -> str:
+    def load_json(self, filepath: str) -> List[Dict]:
+        """Load JSON file (handles nested chunk+entities structure from Phase 1A)"""
+        logger.info(f"Loading {filepath}...")
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Handle Phase 1A format: {"metadata": {...}, "entities": [chunks]}
+        if isinstance(data, dict):
+            if 'entities' in data:
+                logger.info("Extracting entities from chunks...")
+                chunks = data['entities']
+                
+                # Flatten: each chunk has nested 'entities' array
+                entities = []
+                for chunk in chunks:
+                    if isinstance(chunk, dict) and 'entities' in chunk:
+                        # This is a chunk with nested entities
+                        entities.extend(chunk['entities'])
+                    else:
+                        # Direct entity
+                        entities.append(chunk)
+                
+                data = entities
+                logger.info(f"Flattened {len(chunks)} chunks into {len(entities)} entities")
+            else:
+                # Fallback: entity IDs as keys
+                logger.info("Converting dict format to list...")
+                data = list(data.values())
+        
+        logger.info(f"Loaded {len(data)} entities")
+        return data
+    
+    def save_json(self, data: List[Dict], filepath: str):
+        """Save JSON file"""
+        logger.info(f"Saving to {filepath}...")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved {len(data)} entities")
+    
+    def run_stage1(self, input_file: str) -> List[Dict]:
         """
-        Compute MD5 hash of normalized 'name [type]'
+        Run Stage 1: Exact deduplication
         
         Args:
-            name: Entity name
-            entity_type: Entity type
+            input_file: Path to pre_entities.json
             
         Returns:
-            32-character hex hash
+            Deduplicated entities
         """
-        normalized = self.normalize_string(f"{name} [{entity_type}]")
-        return hashlib.md5(normalized.encode('utf-8')).hexdigest()
-    
-    def deduplicate(self, entities: List[Dict]) -> List[Dict]:
-        """
-        Deduplicate entities by exact string matching
+        logger.info("="*60)
+        logger.info("STAGE 1: EXACT DEDUPLICATION")
+        logger.info("="*60)
         
-        Process:
-            1. Group entities by hash
-            2. Merge each group (combine chunk_ids, vote on type)
-            3. Preserve embeddings if they exist
+        entities = self.load_json(input_file)
+        entities = self.stage1.deduplicate(entities)
+        
+        # Save intermediate result
+        output_file = self.data_dir / "stage1_deduplicated.json"
+        self.save_json(entities, str(output_file))
+        
+        self.stats['stage1'] = self.stage1.stats
+        
+        return entities
+    
+    def run_stage1_5(self, entities: List[Dict]) -> List[Dict]:
+        """
+        Run Stage 1.5: Embed deduplicated entities using YOUR BGEEmbedder
         
         Args:
-            entities: List of entity dicts with 'name', 'type', 'chunk_ids'
+            entities: Deduplicated entities (without embeddings)
             
         Returns:
-            List of canonical entities (deduplicated)
+            Entities with embeddings
         """
-        logger.info(f"Stage 1: Deduplicating {len(entities)} entities...")
+        logger.info("="*60)
+        logger.info("STAGE 1.5: EMBEDDING DEDUPLICATED ENTITIES")
+        logger.info("="*60)
+        logger.info("Using YOUR existing BGEEmbedder (universal embedder)")
         
-        # Group entities by hash
-        hash_groups = defaultdict(list)
+        # Format entities as "name [type]" for RAKG embedding (Eq. 19)
+        # This is the RAKG standard format for entity embeddings
+        logger.info("Formatting entities as 'name [type]' for embedding...")
+        
+        # Add formatted text to each entity for embed_processor
         for entity in entities:
-            h = self.compute_hash(entity['name'], entity['type'])
-            hash_groups[h].append(entity)
+            entity['formatted_text'] = f"{entity['name']} [{entity['type']}]"
         
-        # Track largest group for stats
-        largest_group = max(len(group) for group in hash_groups.values())
+        # Use YOUR existing EmbedProcessor for batch processing with checkpoints
+        entities_dict = {i: entity for i, entity in enumerate(entities)}
         
-        # Merge each group
-        canonical = []
-        for h, group in hash_groups.items():
-            merged = self._merge_group(group)
-            canonical.append(merged)
-        
-        # Update stats
-        self.stats['input_count'] = len(entities)
-        self.stats['output_count'] = len(canonical)
-        self.stats['duplicates_removed'] = len(entities) - len(canonical)
-        self.stats['largest_group_size'] = largest_group
-        
-        logger.info(f"Deduplication complete: {len(entities)} → {len(canonical)} entities")
-        logger.info(f"Removed {self.stats['duplicates_removed']} duplicates ({100 * self.stats['duplicates_removed'] / len(entities):.1f}%)")
-        logger.info(f"Largest duplicate group: {largest_group} entities")
-        
-        return canonical
-    
-    def _merge_group(self, group: List[Dict]) -> Dict:
-        """
-        Merge duplicate entities
-        
-        Merge strategy:
-            - Name: From first entity (canonical)
-            - Type: Most frequent across group
-            - Description: Longest (most informative)
-            - chunk_ids: Union of all chunk_ids
-            - Embedding: From first entity (if exists)
-        
-        Args:
-            group: List of duplicate entities
-            
-        Returns:
-            Merged canonical entity
-        """
-        # Start with first entity as base
-        canonical = group[0].copy()
-        
-        # Combine all chunk_ids
-        all_chunk_ids = set()
-        for entity in group:
-            chunk_ids = entity.get('chunk_ids', [])
-            if isinstance(chunk_ids, list):
-                all_chunk_ids.update(chunk_ids)
-            else:
-                all_chunk_ids.add(chunk_ids)
-        canonical['chunk_ids'] = sorted(list(all_chunk_ids))
-        
-        # Type: Most frequent wins (voting)
-        type_counts = Counter([e['type'] for e in group])
-        canonical['type'] = type_counts.most_common(1)[0][0]
-        
-        # Description: Most frequent wins (voting, like type)
-        descriptions = [e.get('description', '') for e in group if e.get('description', '')]
-        if descriptions:
-            desc_counts = Counter(descriptions)
-            canonical['description'] = desc_counts.most_common(1)[0][0]
-        else:
-            canonical['description'] = ''
-        
-        # Preserve embedding if exists (from first entity)
-        if 'embedding' in group[0]:
-            canonical['embedding'] = group[0]['embedding']
-        
-        # Add metadata about merge
-        canonical['duplicate_count'] = len(group)
-        canonical['merged_types'] = list(type_counts.keys()) if len(type_counts) > 1 else None
-        
-        return canonical
-
-
-class FAISSBlocker:
-    """
-    Stage 2: FAISS HNSW blocking for approximate nearest neighbor search
-    
-    **NOTE**: This is the CPU-only version for local development.
-    For GPU-accelerated version with multithreading, use:
-        server_scripts/disambiguation_server.py
-    
-    Uses Hierarchical Navigable Small World (HNSW) graph to find similar entities
-    efficiently. Reduces N² comparisons to N×k comparisons.
-    
-    References:
-        - Malkov & Yashunin (2020) - HNSW algorithm
-        - Johnson et al. (2024) - FAISS library
-        - Li et al. (VLDB 2023) - Benchmark validation
-    """
-    
-    def __init__(self, embedding_dim: int = 1024, M: int = 32):
-        """
-        Initialize FAISS blocker (CPU version)
-        
-        Args:
-            embedding_dim: Embedding dimension (1024 for BGE-M3)
-            M: HNSW connections per node (32 standard for 1024-dim)
-        """
-        import faiss
-        
-        self.embedding_dim = embedding_dim
-        self.M = M
-        self.index = None
-        self.stats = {
-            'entities_indexed': 0,
-            'candidate_pairs': 0,
-            'avg_neighbors': 0.0
-        }
-        
-        logger.info("FAISSBlocker initialized (CPU version)")
-        logger.info("For GPU version, use server_scripts/disambiguation_server.py")
-    
-    def build_index(self, entities: List[Dict], ef_construction: int = 200):
-        """
-        Build HNSW index from entity embeddings
-        
-        Args:
-            entities: List of entities with 'embedding' field
-            ef_construction: HNSW parameter (higher = better recall, slower build)
-        """
-        import faiss
-        
-        logger.info(f"Stage 2: Building FAISS HNSW index for {len(entities)} entities...")
-        
-        # Extract embeddings
-        embeddings = np.array([e['embedding'] for e in entities]).astype('float32')
-        
-        # CRITICAL: Normalize for cosine similarity
-        faiss.normalize_L2(embeddings)
-        
-        # Create HNSW index
-        self.index = faiss.IndexHNSWFlat(self.embedding_dim, self.M)
-        self.index.hnsw.efConstruction = ef_construction
-        self.index.add(embeddings)
-        
-        self.stats['entities_indexed'] = len(entities)
-        
-        logger.info(f"FAISS index built successfully:")
-        logger.info(f"  Type: HNSW, M={self.M}, ef_construction={ef_construction}")
-        logger.info(f"  Entities: {len(entities)}")
-        logger.info(f"  Dimension: {self.embedding_dim}")
-    
-    def find_candidates(self, 
-                       entities: List[Dict], 
-                       k: int = 50,
-                       ef_search: int = 64) -> List[Tuple[int, int, float]]:
-        """
-        Find candidate pairs using approximate nearest neighbor search
-        
-        Args:
-            entities: List of entities with embeddings
-            k: Number of neighbors to retrieve per entity
-            ef_search: HNSW parameter (higher = better recall, slower search)
-            
-        Returns:
-            List of (entity_i_idx, entity_j_idx, similarity) tuples
-        """
-        logger.info(f"Searching k={k} nearest neighbors (ef_search={ef_search})...")
-        
-        self.index.hnsw.efSearch = ef_search
-        
-        # Extract and normalize embeddings
-        embeddings = np.array([e['embedding'] for e in entities]).astype('float32')
-        import faiss
-        faiss.normalize_L2(embeddings)
-        
-        # Search k+1 neighbors (includes self-match)
-        distances, indices = self.index.search(embeddings, k + 1)
-        
-        # Convert to candidate pairs
-        pairs = []
-        seen_pairs = set()  # Track unique pairs
-        
-        for i, (dists, neighbors) in enumerate(zip(distances, indices)):
-            for neighbor_idx, dist in zip(neighbors, dists):
-                # Skip self-matches
-                if neighbor_idx == i:
-                    continue
-                
-                # Convert L2 distance to cosine similarity
-                # Since vectors are normalized: cos_sim = 1 - (L2_dist^2 / 2)
-                similarity = float(1 - (dist ** 2) / 2)
-                
-                # Filter out dissimilar pairs (negative cosine similarity)
-                # For entity disambiguation, we only care about similar entities
-                if similarity < 0.0:
-                    continue
-                
-                # Only keep unique pairs (i < j to avoid duplicates)
-                pair_key = (min(i, neighbor_idx), max(i, neighbor_idx))
-                if pair_key not in seen_pairs:
-                    seen_pairs.add(pair_key)
-                    pairs.append((pair_key[0], pair_key[1], similarity))
-        
-        self.stats['candidate_pairs'] = len(pairs)
-        self.stats['avg_neighbors'] = len(pairs) / len(entities) if entities else 0.0
-        
-        logger.info(f"Found {len(pairs)} candidate pairs")
-        logger.info(f"Average neighbors per entity: {self.stats['avg_neighbors']:.1f}")
-        
-        return pairs
-
-
-class TieredThresholdFilter:
-    """
-    Stage 3: Tiered threshold filtering for auto-merge/reject decisions
-    
-    Applies three similarity thresholds:
-        - High (≥0.95): Auto-merge without LLM
-        - Low (<0.80): Auto-reject without LLM
-        - Medium (0.80-0.95): Send to LLM for verification
-    
-    References:
-        - Papadakis et al. (2021) - Multi-tier blocking survey
-        - Splink (2024) - Multi-threshold approach
-    """
-    
-    def __init__(self, 
-                 auto_merge_threshold: float = 0.95,
-                 auto_reject_threshold: float = 0.80):
-        """
-        Initialize threshold filter
-        
-        Args:
-            auto_merge_threshold: Similarity ≥ this → auto-merge
-            auto_reject_threshold: Similarity < this → auto-reject
-        """
-        self.merge_threshold = auto_merge_threshold
-        self.reject_threshold = auto_reject_threshold
-        self.stats = {
-            'input_pairs': 0,
-            'auto_merged': 0,
-            'auto_rejected': 0,
-            'uncertain': 0
-        }
-    
-    def filter_pairs(self, 
-                    pairs: List[Tuple[int, int, float]],
-                    entities: List[Dict]) -> Dict:
-        """
-        Classify pairs into auto-merge, auto-reject, uncertain
-        
-        Args:
-            pairs: List of (i, j, similarity) tuples
-            entities: List of entities (for context)
-            
-        Returns:
-            {
-                'merged': List[Tuple[int, int]],
-                'rejected': List[Tuple[int, int]],
-                'uncertain': List[Tuple[int, int, float]]
-            }
-        """
-        logger.info(f"Stage 3: Filtering {len(pairs)} pairs with tiered thresholds...")
-        
-        merged = []
-        rejected = []
-        uncertain = []
-        
-        for i, j, sim in pairs:
-            if sim >= self.merge_threshold:
-                merged.append((i, j))
-            elif sim < self.reject_threshold:
-                rejected.append((i, j))
-            else:
-                uncertain.append((i, j, sim))
-        
-        self.stats['input_pairs'] = len(pairs)
-        self.stats['auto_merged'] = len(merged)
-        self.stats['auto_rejected'] = len(rejected)
-        self.stats['uncertain'] = len(uncertain)
-        
-        logger.info(f"Filtering complete:")
-        logger.info(f"  Auto-merge (≥{self.merge_threshold}): {len(merged)} pairs")
-        logger.info(f"  Auto-reject (<{self.reject_threshold}): {len(rejected)} pairs")
-        logger.info(f"  Uncertain ({self.reject_threshold}-{self.merge_threshold}): {len(uncertain)} pairs")
-        
-        return {
-            'merged': merged,
-            'rejected': rejected,
-            'uncertain': uncertain
-        }
-    
-    def apply_merges(self, 
-                    entities: List[Dict],
-                    merged_pairs: List[Tuple[int, int]]) -> List[Dict]:
-        """
-        Apply merge decisions using Union-Find algorithm
-        
-        Uses Union-Find to handle transitivity:
-            If A=B and B=C, then A=C
-        
-        Args:
-            entities: List of entities
-            merged_pairs: List of (i, j) pairs to merge
-            
-        Returns:
-            List of canonical entities after merging
-        """
-        logger.info(f"Applying {len(merged_pairs)} merge decisions...")
-        
-        # Build Union-Find structure
-        parent = {i: i for i in range(len(entities))}
-        
-        def find(x):
-            """Find root with path compression"""
-            if parent[x] != x:
-                parent[x] = find(parent[x])
-            return parent[x]
-        
-        def union(x, y):
-            """Union two sets"""
-            px, py = find(x), find(y)
-            if px != py:
-                parent[py] = px
-        
-        # Union all merged pairs
-        for i, j in merged_pairs:
-            union(i, j)
-        
-        # Group entities by root
-        groups = defaultdict(list)
-        for i in range(len(entities)):
-            root = find(i)
-            groups[root].append(entities[i])
-        
-        # Merge each group using ExactDeduplicator logic
-        deduplicator = ExactDeduplicator()
-        canonical = []
-        for group in groups.values():
-            merged = deduplicator._merge_group(group)
-            canonical.append(merged)
-        
-        logger.info(f"Merged {len(entities)} → {len(canonical)} entities")
-        
-        return canonical
-
-
-
-class SameJudge:
-    """
-    Stage 4: LLM-based entity verification (CPU version)
-    
-    Simple, single-threaded implementation for development/testing.
-    For GPU-optimized multithreaded version, use:
-        server_scripts/disambiguation_server.py
-    
-    Uses centralized prompt from src/prompts/prompts.py
-    
-    References:
-        - Zhang et al. (2025) RAKG - SameJudge methodology
-        - Wu et al. (2020) BLINK - LLM entity linking
-    """
-    
-    def __init__(self, 
-                 model: str = "Qwen/Qwen2-7B-Instruct",
-                 api_key: str = None):
-        """
-        Initialize LLM judge (CPU version)
-        
-        Args:
-            model: LLM model identifier
-            api_key: Together.ai API key
-        """
-        from together import Together
-        
-        self.client = Together(api_key=api_key)
-        self.model = model
-        self.stats = {
-            'pairs_verified': 0,
-            'matches_found': 0,
-            'total_cost': 0.0
-        }
-        self.cost_per_call = 0.00003  # Approximate for 7B model
-        
-        logger.info("SameJudge initialized (CPU version - single-threaded)")
-        logger.info("For GPU version with 8 workers, use server_scripts/disambiguation_server.py")
-    
-    def verify_pair(self, entity1: Dict, entity2: Dict) -> Dict:
-        """
-        Use LLM to determine if two entities are the same
-        
-        Args:
-            entity1: First entity dict
-            entity2: Second entity dict
-            
-        Returns:
-            {
-                'is_same': bool,
-                'confidence': float (0-1),
-                'reasoning': str
-            }
-        """
-        # Import prompt from centralized location (FAIL HARD if missing)
-        from src.prompts.prompts import SAMEJUDGE_PROMPT
-        
-        prompt = SAMEJUDGE_PROMPT.format(
-            entity1_name=entity1['name'],
-            entity1_type=entity1['type'],
-            entity1_desc=entity1.get('description', 'N/A')[:150],
-            entity2_name=entity2['name'],
-            entity2_type=entity2['type'],
-            entity2_desc=entity2.get('description', 'N/A')[:150]
+        embedded_dict = self.embed_processor.process_items(
+            items=entities_dict,
+            text_key='formatted_text',  # Use our formatted text
+            batch_size=32,
+            checkpoint_dir=self.data_dir / "embed_checkpoints"
         )
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=150
-            )
-            
-            response_text = response.choices[0].message.content.strip()
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-            result = json.loads(response_text)
-            
-            parsed = {
-                'is_same': result.get('result', False),
-                'confidence': 0.9 if result.get('result', False) else 0.5,
-                'reasoning': result.get('reasoning', '')
-            }
-            
-        except Exception as e:
-            logger.warning(f"LLM call failed: {e}")
-            parsed = {
-                'is_same': False,
-                'confidence': 0.0,
-                'reasoning': f"Error: {str(e)}"
-            }
+        # Convert back to list
+        entities = list(embedded_dict.values())
         
-        self.stats['pairs_verified'] += 1
-        if parsed['is_same']:
-            self.stats['matches_found'] += 1
-        self.stats['total_cost'] += self.cost_per_call
+        # Remove temporary formatted_text field
+        for entity in entities:
+            entity.pop('formatted_text', None)
         
-        return parsed
+        # Save intermediate result
+        output_file = self.data_dir / "stage1_deduplicated_embedded.json"
+        self.save_json(entities, str(output_file))
+        
+        # Verify embeddings
+        stats = self.embed_processor.verify_embeddings(embedded_dict)
+        self.stats['stage1_5'] = stats
+        
+        logger.info(f"✓ Stage 1.5 complete: {len(entities)} entities embedded")
+        
+        return entities
     
-    def verify_batch(self, 
-                    uncertain_pairs: List[Tuple[int, int, float]],
-                    entities: List[Dict],
-                    log_interval: int = 100) -> List[Tuple[int, int]]:
+    def run_stage2(self, entities: List[Dict]) -> List[tuple]:
         """
-        Verify batch of uncertain pairs (single-threaded)
+        Run Stage 2: FAISS HNSW blocking
         
         Args:
-            uncertain_pairs: List of (i, j, similarity) tuples
-            entities: List of entities
-            log_interval: Log progress every N pairs
+            entities: Entities with embeddings
             
         Returns:
-            List of (i, j) pairs confirmed as matches
+            Candidate pairs
         """
-        logger.info(f"Stage 4: Verifying {len(uncertain_pairs)} pairs with LLM...")
-        logger.info(f"Estimated cost: ${len(uncertain_pairs) * self.cost_per_call:.2f}")
-        logger.info("Single-threaded - for faster processing, use disambiguation_server.py")
+        logger.info("="*60)
+        logger.info("STAGE 2: FAISS HNSW BLOCKING")
+        logger.info("="*60)
         
-        matches = []
+        # Build index and search
+        self.stage2.build_index(entities)
+        pairs = self.stage2.find_candidates(entities, k=50)
         
-        for idx, (i, j, sim) in enumerate(uncertain_pairs):
-            result = self.verify_pair(entities[i], entities[j])
+        # Save intermediate result with entity info for traceability
+        output_file = self.data_dir / "stage2_candidate_pairs.json"
+        pairs_enriched = []
+        for i, j, sim in pairs:
+            pairs_enriched.append({
+                'entity1_idx': int(i),
+                'entity1_name': entities[i]['name'],
+                'entity1_type': entities[i]['type'],
+                'entity2_idx': int(j),
+                'entity2_name': entities[j]['name'],
+                'entity2_type': entities[j]['type'],
+                'similarity': float(sim)
+            })
+        
+        with open(output_file, 'w') as f:
+            json.dump(pairs_enriched, f, indent=2)
+        logger.info(f"Saved {len(pairs)} candidate pairs with entity names for traceability")
+        
+        self.stats['stage2'] = self.stage2.stats
+        
+        return pairs
+    
+    def run_stage3(self, 
+                   pairs: List[tuple], 
+                   entities: List[Dict]) -> Dict:
+        """
+        Run Stage 3: Tiered threshold filtering
+        
+        Args:
+            pairs: Candidate pairs from Stage 2
+            entities: Entities
             
-            if result['is_same']:
-                matches.append((i, j))
+        Returns:
+            Filtered pairs dict
+        """
+        logger.info("="*60)
+        logger.info("STAGE 3: TIERED THRESHOLD FILTERING")
+        logger.info("="*60)
+        
+        filtered = self.stage3.filter_pairs(pairs, entities)
+        
+        # Apply auto-merges and get index mapping
+        logger.info("Applying auto-merge decisions...")
+        entities, index_mapping = self.stage3.apply_merges(entities, filtered['merged'])
+        
+        # Update uncertain pairs with new indices
+        updated_uncertain = []
+        for i, j, sim in filtered['uncertain']:
+            new_i = index_mapping.get(i, i)
+            new_j = index_mapping.get(j, j)
             
-            # Log progress
-            if (idx + 1) % log_interval == 0 or (idx + 1) == len(uncertain_pairs):
-                logger.info(f"Progress: {idx + 1}/{len(uncertain_pairs)} pairs verified")
-                logger.info(f"  Matches found: {len(matches)} ({100 * len(matches) / (idx + 1):.1f}%)")
-                logger.info(f"  Cost so far: ${self.stats['total_cost']:.2f}")
+            # Skip if both merged into same entity
+            if new_i == new_j:
+                continue
+            
+            # Ensure i < j for consistency
+            if new_i > new_j:
+                new_i, new_j = new_j, new_i
+            
+            updated_uncertain.append((new_i, new_j, sim))
         
-        logger.info(f"LLM verification complete:")
-        logger.info(f"  Total pairs: {len(uncertain_pairs)}")
-        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / len(uncertain_pairs):.1f}%)")
-        logger.info(f"  Total cost: ${self.stats['total_cost']:.2f}")
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        filtered['uncertain'] = updated_uncertain
         
-        return matches
+        # Save intermediate results with entity info for traceability
+        output_file = self.data_dir / "stage3_filtered_pairs.json"
+        filtered_json = {
+            'merged': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['merged']
+            ],
+            'rejected': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['rejected']
+            ],
+            'uncertain': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type'],
+                    'similarity': float(sim)
+                }
+                for i, j, sim in filtered['uncertain']
+            ]
+        }
+        with open(output_file, 'w') as f:
+            json.dump(filtered_json, f, indent=2)
+        
+        # Save entities after auto-merges
+        output_file = self.data_dir / "stage3_entities_after_automerge.json"
+        self.save_json(entities, str(output_file))
+        
+        self.stats['stage3'] = self.stage3.stats
+        
+        return filtered, entities
+    
+    
+    def run_stage4(self, 
+                   uncertain_pairs: List[tuple],
+                   entities: List[Dict]) -> List[Dict]:
+        """
+        Run Stage 4: LLM verification (CPU version - single-threaded)
+        
+        Args:
+            uncertain_pairs: Uncertain pairs from Stage 3
+            entities: Entities after Stage 3 auto-merges
+            
+        Returns:
+            Final canonical entities
+        """
+        logger.info("="*60)
+        logger.info("STAGE 4: LLM VERIFICATION (SAMEJUDGE - CPU)")
+        logger.info("="*60)
+        logger.info("Single-threaded processing")
+        logger.info("For GPU + 8 workers, use server_scripts/disambiguation_server.py")
+        
+        # Initialize Stage 4 now (lazy loading)
+        if self.stage4 is None:
+            if not self.together_api_key:
+                raise ValueError(
+                    "Stage 4 requires Together API key!\n"
+                    "Set via: export TOGETHER_API_KEY='your-key'\n"
+                    "Or pass: --api-key your-key"
+                )
+            logger.info("Initializing Stage 4 (SameJudge)...")
+            self.stage4 = SameJudge(api_key=self.together_api_key)
+        
+        # Verify uncertain pairs with LLM
+        llm_matches = self.stage4.verify_batch(uncertain_pairs, entities)
+        
+        # Apply LLM match decisions
+        logger.info("Applying LLM match decisions...")
+        entities, _ = self.stage3.apply_merges(entities, llm_matches)  # Discard mapping (final stage)
+        
+        self.stats['stage4'] = self.stage4.stats
+        
+        return entities
+    
+    def run_pipeline(self, 
+                     input_file: str = None,
+                     output_file: str = None,
+                     start_from_stage: int = 1,
+                     stop_at_stage: int = None) -> Dict:
+        """
+        Execute stage-by-stage pipeline (CPU version)
+        
+        Args:
+            input_file: Path to input entities
+            output_file: Path to save final normalized entities
+            start_from_stage: 
+                1 = Start from exact dedup (need to embed after)
+                2 = Start from FAISS (entities already deduplicated + embedded)
+            stop_at_stage:
+                1 = Stop after dedup (no embedding)
+                2 = Stop after FAISS blocking
+                3 = Stop after threshold filtering
+                4 = Complete pipeline (default)
+                
+        Returns:
+            Pipeline statistics
+        """
+        logger.info("="*60)
+        logger.info("ENTITY DISAMBIGUATION PIPELINE (CPU)")
+        logger.info("="*60)
+        logger.info(f"Start from stage: {start_from_stage}")
+        if stop_at_stage:
+            logger.info(f"Stop at stage: {stop_at_stage}")
+        logger.info("For GPU-optimized version, use server_scripts/disambiguation_server.py")
+        
+        if start_from_stage == 1:
+            # Normal flow: dedup → embed → FAISS → thresholds → LLM
+            if not input_file:
+                raise ValueError("input_file required when starting from Stage 1")
+            
+            # Stage 1: Exact dedup
+            entities = self.run_stage1(input_file)
+            
+            if stop_at_stage == 1:
+                logger.info("✓ Stopping after Stage 1 (exact dedup)")
+                return self.stats
+            
+            # Stage 1.5: Embed deduplicated entities (YOUR BGEEmbedder)
+            entities = self.run_stage1_5(entities)
+            
+            if stop_at_stage == 2:
+                logger.info("✓ Stopping after Stage 1.5 (embedding complete)")
+                return self.stats
+            
+        elif start_from_stage == 2:
+            # Skip to Stage 2 (entities already deduplicated + embedded)
+            embedded_file = self.data_dir / "stage1_deduplicated_embedded.json"
+            if not embedded_file.exists():
+                raise ValueError(f"File not found: {embedded_file}. Run Stages 1-1.5 first!")
+            
+            entities = self.load_json(str(embedded_file))
+            logger.info("Loaded deduplicated+embedded entities (skipping Stages 1-1.5)")
+        
+        else:
+            raise ValueError(f"Invalid start_from_stage: {start_from_stage}")
+        
+        # Stage 2: FAISS blocking
+        pairs = self.run_stage2(entities)
+        
+        if stop_at_stage == 2:
+            logger.info("✓ Stopping after Stage 2 (FAISS blocking)")
+            return self.stats
+        
+        # Stage 3: Tiered thresholds
+        filtered, entities = self.run_stage3(pairs, entities)
+        
+        if stop_at_stage == 3:
+            logger.info("✓ Stopping after Stage 3 (threshold filtering)")
+            return self.stats
+        
+        # Stage 4: LLM verification (CPU - single-threaded)
+        entities = self.run_stage4(filtered['uncertain'], entities)
+        
+        # Save final output
+        if output_file:
+            self.save_json(entities, output_file)
+        
+        # Compile stats
+        self.stats['final_entity_count'] = len(entities)
+        
+        logger.info("="*60)
+        logger.info("PIPELINE COMPLETE!")
+        logger.info("="*60)
+        logger.info(f"Final entity count: {len(entities)}")
+        logger.info("")
+        logger.info("Statistics:")
+        for stage, stats in self.stats.items():
+            logger.info(f"  {stage}: {stats}")
+        
+        return self.stats
+
+
+def main():
+    """Command-line interface"""
+    parser = argparse.ArgumentParser(description="Entity Disambiguation Pipeline (CPU - All 4 Stages)")
+    parser.add_argument(
+        '--input',
+        type=str,
+        help='Input file (pre_entities.json) - required if --start-from-stage 1'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        default='data/interim/entities/normalized_entities.json',
+        help='Output file for normalized entities'
+    )
+    parser.add_argument(
+        '--start-from-stage',
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help='Start from Stage 1 (dedup) or Stage 2 (FAISS)'
+    )
+    parser.add_argument(
+        '--stop-at-stage',
+        type=int,
+        choices=[1, 2, 3, 4],
+        help='Stop after this stage (default: run all stages)'
+    )
+    parser.add_argument(
+        '--api-key',
+        type=str,
+        help='Together.ai API key for Stage 4 (or set TOGETHER_API_KEY env var)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Get API key from args or environment
+    import os
+    api_key = args.api_key or os.getenv('TOGETHER_API_KEY')
+    if not api_key and args.start_from_stage == 1:
+        logger.info("No API key provided - Stage 4 (LLM verification) will be skipped")
+        logger.info("To run Stage 4: export TOGETHER_API_KEY='your-key' or use --api-key")
+    elif not api_key:
+        logger.warning("No API key provided - pipeline will fail at Stage 4!")
+    
+    logger.info("=" * 70)
+    logger.info("Phase 1C: Entity Disambiguation (CPU - All 4 Stages)")
+    logger.info("=" * 70)
+    if args.input:
+        logger.info(f"Input: {args.input}")
+    logger.info(f"Output: {args.output}")
+    logger.info(f"Start from stage: {args.start_from_stage}")
+    logger.info("For GPU-optimized version, use server_scripts/disambiguation_server.py")
+    
+    # Run pipeline (all 4 stages)
+    processor = DisambiguationProcessor(together_api_key=api_key)
+    
+    try:
+        stats = processor.run_pipeline(
+            input_file=args.input,
+            output_file=args.output,
+            start_from_stage=args.start_from_stage,
+            stop_at_stage=args.stop_at_stage
+        )
+        
+        logger.info("Pipeline succeeded!")
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

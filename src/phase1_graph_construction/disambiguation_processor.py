@@ -5,27 +5,6 @@ Purpose: Orchestrate 4-stage entity disambiguation pipeline
 Author: Pau Barba i Colomer
 Created: 2025-11-29
 Last Modified: 2025-11-29
-
-Dependencies:
-    - entity_disambiguator: Stages 1-3 (exact dedup, FAISS, thresholds)
-    - embedder: YOUR existing BGEEmbedder for Stage 1.5
-    - embed_processor: YOUR existing EmbedProcessor for batch processing
-    - samejudge_server.py: YOUR existing multithreaded LLM verification (Stage 4)
-    
-Usage:
-    # Start from Stage 1 (dedup, then embed 25k entities)
-    python disambiguation_processor.py \
-        --input data/interim/entities/pre_entities.json \
-        --start-from-stage 1
-    
-    # Or skip to Stage 2 if already deduplicated+embedded (after migration)
-    python disambiguation_processor.py \
-        --start-from-stage 2
-
-Notes:
-    - Stages 1-3 run automatically
-    - Stage 4 requires manual execution of samejudge_server.py (see output)
-    - Integrates with YOUR existing BGEEmbedder and SameJudge code
 """
 
 # Standard library
@@ -247,12 +226,23 @@ class DisambiguationProcessor:
         self.stage2.build_index(entities)
         pairs = self.stage2.find_candidates(entities, k=50)
         
-        # Save intermediate result (as list for JSON serialization)
+        # Save intermediate result with entity info for traceability
         output_file = self.data_dir / "stage2_candidate_pairs.json"
-        pairs_list = [[int(i), int(j), float(sim)] for i, j, sim in pairs]
+        pairs_enriched = []
+        for i, j, sim in pairs:
+            pairs_enriched.append({
+                'entity1_idx': int(i),
+                'entity1_name': entities[i]['name'],
+                'entity1_type': entities[i]['type'],
+                'entity2_idx': int(j),
+                'entity2_name': entities[j]['name'],
+                'entity2_type': entities[j]['type'],
+                'similarity': float(sim)
+            })
+        
         with open(output_file, 'w') as f:
-            json.dump(pairs_list, f)
-        logger.info(f"Saved {len(pairs)} candidate pairs")
+            json.dump(pairs_enriched, f, indent=2)
+        logger.info(f"Saved {len(pairs)} candidate pairs with entity names for traceability")
         
         self.stats['stage2'] = self.stage2.stats
         
@@ -277,17 +267,66 @@ class DisambiguationProcessor:
         
         filtered = self.stage3.filter_pairs(pairs, entities)
         
-        # Apply auto-merges
+        # Apply auto-merges and get index mapping
         logger.info("Applying auto-merge decisions...")
-        entities = self.stage3.apply_merges(entities, filtered['merged'])
+        entities, index_mapping = self.stage3.apply_merges(entities, filtered['merged'])
         
-        # Save intermediate results
+        # Update uncertain pairs with new indices
+        updated_uncertain = []
+        for i, j, sim in filtered['uncertain']:
+            new_i = index_mapping.get(i, i)
+            new_j = index_mapping.get(j, j)
+            
+            # Skip if both merged into same entity
+            if new_i == new_j:
+                continue
+            
+            # Ensure i < j for consistency
+            if new_i > new_j:
+                new_i, new_j = new_j, new_i
+            
+            updated_uncertain.append((new_i, new_j, sim))
+        
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        filtered['uncertain'] = updated_uncertain
+        
+        # Save intermediate results with entity info for traceability
         output_file = self.data_dir / "stage3_filtered_pairs.json"
-        # Convert to JSON-serializable format
         filtered_json = {
-            'merged': [[int(i), int(j)] for i, j in filtered['merged']],
-            'rejected': [[int(i), int(j)] for i, j in filtered['rejected']],
-            'uncertain': [[int(i), int(j), float(sim)] for i, j, sim in filtered['uncertain']]
+            'merged': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['merged']
+            ],
+            'rejected': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['rejected']
+            ],
+            'uncertain': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type'],
+                    'similarity': float(sim)
+                }
+                for i, j, sim in filtered['uncertain']
+            ]
         }
         with open(output_file, 'w') as f:
             json.dump(filtered_json, f, indent=2)
@@ -336,7 +375,7 @@ class DisambiguationProcessor:
         
         # Apply LLM match decisions
         logger.info("Applying LLM match decisions...")
-        entities = self.stage3.apply_merges(entities, llm_matches)
+        entities, _ = self.stage3.apply_merges(entities, llm_matches)  # Discard mapping (final stage)
         
         self.stats['stage4'] = self.stage4.stats
         
@@ -345,9 +384,10 @@ class DisambiguationProcessor:
     def run_pipeline(self, 
                      input_file: str = None,
                      output_file: str = None,
-                     start_from_stage: int = 1) -> Dict:
+                     start_from_stage: int = 1,
+                     stop_at_stage: int = None) -> Dict:
         """
-        Execute full 4-stage pipeline (CPU version)
+        Execute stage-by-stage pipeline (CPU version)
         
         Args:
             input_file: Path to input entities
@@ -355,14 +395,21 @@ class DisambiguationProcessor:
             start_from_stage: 
                 1 = Start from exact dedup (need to embed after)
                 2 = Start from FAISS (entities already deduplicated + embedded)
+            stop_at_stage:
+                1 = Stop after dedup (no embedding)
+                2 = Stop after FAISS blocking
+                3 = Stop after threshold filtering
+                4 = Complete pipeline (default)
                 
         Returns:
             Pipeline statistics
         """
         logger.info("="*60)
-        logger.info("ENTITY DISAMBIGUATION PIPELINE (CPU - ALL 4 STAGES)")
+        logger.info("ENTITY DISAMBIGUATION PIPELINE (CPU)")
         logger.info("="*60)
         logger.info(f"Start from stage: {start_from_stage}")
+        if stop_at_stage:
+            logger.info(f"Stop at stage: {stop_at_stage}")
         logger.info("For GPU-optimized version, use server_scripts/disambiguation_server.py")
         
         if start_from_stage == 1:
@@ -373,14 +420,22 @@ class DisambiguationProcessor:
             # Stage 1: Exact dedup
             entities = self.run_stage1(input_file)
             
+            if stop_at_stage == 1:
+                logger.info("✓ Stopping after Stage 1 (exact dedup)")
+                return self.stats
+            
             # Stage 1.5: Embed deduplicated entities (YOUR BGEEmbedder)
             entities = self.run_stage1_5(entities)
+            
+            if stop_at_stage == 2:
+                logger.info("✓ Stopping after Stage 1.5 (embedding complete)")
+                return self.stats
             
         elif start_from_stage == 2:
             # Skip to Stage 2 (entities already deduplicated + embedded)
             embedded_file = self.data_dir / "stage1_deduplicated_embedded.json"
             if not embedded_file.exists():
-                raise ValueError(f"File not found: {embedded_file}. Run migration script first!")
+                raise ValueError(f"File not found: {embedded_file}. Run Stages 1-1.5 first!")
             
             entities = self.load_json(str(embedded_file))
             logger.info("Loaded deduplicated+embedded entities (skipping Stages 1-1.5)")
@@ -391,8 +446,16 @@ class DisambiguationProcessor:
         # Stage 2: FAISS blocking
         pairs = self.run_stage2(entities)
         
+        if stop_at_stage == 2:
+            logger.info("✓ Stopping after Stage 2 (FAISS blocking)")
+            return self.stats
+        
         # Stage 3: Tiered thresholds
         filtered, entities = self.run_stage3(pairs, entities)
+        
+        if stop_at_stage == 3:
+            logger.info("✓ Stopping after Stage 3 (threshold filtering)")
+            return self.stats
         
         # Stage 4: LLM verification (CPU - single-threaded)
         entities = self.run_stage4(filtered['uncertain'], entities)
@@ -438,6 +501,12 @@ def main():
         help='Start from Stage 1 (dedup) or Stage 2 (FAISS)'
     )
     parser.add_argument(
+        '--stop-at-stage',
+        type=int,
+        choices=[1, 2, 3, 4],
+        help='Stop after this stage (default: run all stages)'
+    )
+    parser.add_argument(
         '--api-key',
         type=str,
         help='Together.ai API key for Stage 4 (or set TOGETHER_API_KEY env var)'
@@ -470,7 +539,8 @@ def main():
         stats = processor.run_pipeline(
             input_file=args.input,
             output_file=args.output,
-            start_from_stage=args.start_from_stage
+            start_from_stage=args.start_from_stage,
+            stop_at_stage=args.stop_at_stage
         )
         
         logger.info("Pipeline succeeded!")

@@ -62,6 +62,8 @@ from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
     TieredThresholdFilter
 )
+from src.utils.embedder import BGEEmbedder
+from src.utils.embed_processor import EmbedProcessor
 
 # Load .env file if available
 try:
@@ -177,30 +179,34 @@ class FAISSBlockerGPU:
         else:
             self.index = index_cpu
         
+        # Set efSearch ONCE here for all subsequent searches (thread-safe)
+        # Higher efSearch = better recall but slower (64 is good default)
+        if hasattr(self.index, 'hnsw'):
+            self.index.hnsw.efSearch = 64
+        
         self.stats['entities_indexed'] = len(entities)
         
         logger.info(f"FAISS index built:")
         logger.info(f"  Device: {self.stats['device']}")
         logger.info(f"  Entities: {len(entities)}")
-        logger.info(f"  M: {self.M}, ef_construction: {ef_construction}")
+        logger.info(f"  M: {self.M}, ef_construction: {ef_construction}, efSearch: 64")
     
     def find_candidates_batch(self,
                               entities: List[Dict],
                               batch_indices: List[int],
-                              k: int = 50,
-                              ef_search: int = 64) -> List[Tuple[int, int, float]]:
+                              k: int = 50) -> List[Tuple[int, int, float]]:
         """
         Find candidates for a batch of entities (thread-safe worker function)
         
         Thread Safety:
-            - Index is read-only (safe for concurrent reads)
-            - Returns results to main thread
+            - Index search is read-only (thread-safe, no lock needed)
+            - efSearch set once in build_index()
+            - Each worker processes different batch
         
         Args:
             entities: Full entity list
             batch_indices: Indices of entities to process in this batch
             k: Number of neighbors
-            ef_search: HNSW search parameter
             
         Returns:
             List of (i, j, similarity) tuples for this batch
@@ -211,10 +217,9 @@ class FAISSBlockerGPU:
         batch_embeddings = np.array([entities[i]['embedding'] for i in batch_indices]).astype('float32')
         faiss.normalize_L2(batch_embeddings)
         
-        # Search (read-only operation, thread-safe)
-        with self.index_lock:  # Lock for GPU safety
-            self.index.hnsw.efSearch = ef_search
-            distances, indices = self.index.search(batch_embeddings, k + 1)
+        # Search (read-only, thread-safe - no lock needed!)
+        # efSearch already set in build_index()
+        distances, indices = self.index.search(batch_embeddings, k + 1)
         
         # Convert to pairs
         pairs = []
@@ -239,20 +244,18 @@ class FAISSBlockerGPU:
     def find_candidates_parallel(self,
                                 entities: List[Dict],
                                 k: int = 50,
-                                ef_search: int = 64,
                                 num_workers: int = 4) -> List[Tuple[int, int, float]]:
         """
         Find candidates with parallel search across workers
         
         Thread Safety:
-            - Index read-only (safe)
+            - Index search is read-only and thread-safe
             - Each worker processes different entity batch
-            - Results collected with lock
+            - No locks needed for search (efSearch set in build_index)
         
         Args:
             entities: List of entities
             k: Number of neighbors per entity
-            ef_search: HNSW search parameter
             num_workers: Number of parallel threads
             
         Returns:
@@ -270,18 +273,17 @@ class FAISSBlockerGPU:
         
         logger.info(f"Split {n_entities} entities into {len(batches)} batches")
         
-        # Process batches in parallel
+        # Process batches in parallel (TRUE parallelism - no locks!)
         all_pairs = []
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             futures = [
-                executor.submit(self.find_candidates_batch, entities, batch, k, ef_search)
+                executor.submit(self.find_candidates_batch, entities, batch, k)
                 for batch in batches
             ]
             
             for future in tqdm(as_completed(futures), total=len(futures), desc="FAISS search"):
                 batch_pairs = future.result()
-                with self.result_lock:
-                    all_pairs.extend(batch_pairs)
+                all_pairs.extend(batch_pairs)
         
         # Remove duplicates (same pair from different batches)
         unique_pairs = list(set(all_pairs))
@@ -357,6 +359,9 @@ class SameJudgeGPU:
         """
         Verify a single pair (thread-safe worker function)
         
+        Note: LLM can decide that entities with different types are actually the same
+        (e.g., "EU" [Organization] vs "European Union" [Political Union])
+        
         Args:
             i, j: Entity indices
             entities: Full entity list (read-only, thread-safe)
@@ -364,11 +369,11 @@ class SameJudgeGPU:
         Returns:
             (i, j, is_same) tuple
         """
-        # Import prompt from centralized location (FAIL HARD if missing)
-        from src.prompts.prompts import SAMEJUDGE_PROMPT
-        
         entity1 = entities[i]
         entity2 = entities[j]
+        
+        # Import prompt from centralized location (FAIL HARD if missing)
+        from src.prompts.prompts import SAMEJUDGE_PROMPT
         
         prompt = SAMEJUDGE_PROMPT.format(
             entity1_name=entity1['name'],
@@ -543,7 +548,13 @@ class DisambiguationServerProcessor:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize GPU-optimized stages
+        # Initialize ALL stages (1-4) for comprehensive pipeline
+        self.stage1 = ExactDeduplicator()
+        self.embedder = BGEEmbedder()  # BGE-M3 1024-dim
+        self.embed_processor = EmbedProcessor(
+            embedder=self.embedder,
+            checkpoint_freq=1000
+        )
         self.stage2 = FAISSBlockerGPU(gpu_id=gpu_id)
         self.stage3 = TieredThresholdFilter()
         self.stage4 = SameJudgeGPU(
@@ -554,7 +565,7 @@ class DisambiguationServerProcessor:
         self.faiss_workers = faiss_workers
         self.stats = {}
         
-        logger.info(f"Server processor initialized:")
+        logger.info(f"GPU server initialized (ALL 4 stages):")
         logger.info(f"  FAISS workers: {faiss_workers}")
         logger.info(f"  SameJudge workers: {samejudge_workers}")
         logger.info(f"  GPU: {gpu_id}")
@@ -598,6 +609,81 @@ class DisambiguationServerProcessor:
             json.dump(data, f, indent=2, ensure_ascii=False)
         logger.info(f"Saved {len(data)} items")
     
+    def run_stage1(self, input_file: str) -> List[Dict]:
+        """
+        Run Stage 1: Exact deduplication
+        
+        Args:
+            input_file: Path to pre_entities.json
+            
+        Returns:
+            Deduplicated entities
+        """
+        logger.info("="*60)
+        logger.info("STAGE 1: EXACT DEDUPLICATION")
+        logger.info("="*60)
+        
+        entities = self.load_json(input_file)
+        entities = self.stage1.deduplicate(entities)
+        
+        # Save intermediate result
+        output_file = self.data_dir / "stage1_deduplicated.json"
+        self.save_json(entities, str(output_file))
+        
+        self.stats['stage1'] = self.stage1.stats
+        
+        return entities
+    
+    def run_stage1_5(self, entities: List[Dict]) -> List[Dict]:
+        """
+        Run Stage 1.5: Embed deduplicated entities using BGE-M3
+        
+        Args:
+            entities: Deduplicated entities (without embeddings)
+            
+        Returns:
+            Entities with embeddings
+        """
+        logger.info("="*60)
+        logger.info("STAGE 1.5: EMBEDDING DEDUPLICATED ENTITIES (GPU)")
+        logger.info("="*60)
+        logger.info("Using BGE-M3 embedder (1024-dim)")
+        
+        # Format entities as "name [type]" for embedding (RAKG standard)
+        logger.info("Formatting entities as 'name [type]' for embedding...")
+        
+        for entity in entities:
+            entity['formatted_text'] = f"{entity['name']} [{entity['type']}]"
+        
+        # Batch process with checkpoints
+        entities_dict = {i: entity for i, entity in enumerate(entities)}
+        
+        embedded_dict = self.embed_processor.process_items(
+            items=entities_dict,
+            text_key='formatted_text',
+            batch_size=32,
+            checkpoint_dir=self.data_dir / "embed_checkpoints"
+        )
+        
+        # Convert back to list
+        entities = list(embedded_dict.values())
+        
+        # Remove temporary formatted_text field
+        for entity in entities:
+            entity.pop('formatted_text', None)
+        
+        # Save intermediate result
+        output_file = self.data_dir / "stage1_deduplicated_embedded.json"
+        self.save_json(entities, str(output_file))
+        
+        # Verify embeddings
+        stats = self.embed_processor.verify_embeddings(embedded_dict)
+        self.stats['stage1_5'] = stats
+        
+        logger.info(f"✓ Stage 1.5 complete: {len(entities)} entities embedded")
+        
+        return entities
+    
     def run_stage2(self, entities: List[Dict]) -> List[tuple]:
         """Run Stage 2: GPU-accelerated FAISS blocking"""
         logger.info("="*60)
@@ -614,12 +700,23 @@ class DisambiguationServerProcessor:
             num_workers=self.faiss_workers
         )
         
-        # Save intermediate result
+        # Save intermediate result with entity info for traceability
         output_file = self.data_dir / "stage2_candidate_pairs.json"
-        pairs_list = [[int(i), int(j), float(sim)] for i, j, sim in pairs]
+        pairs_enriched = []
+        for i, j, sim in pairs:
+            pairs_enriched.append({
+                'entity1_idx': int(i),
+                'entity1_name': entities[i]['name'],
+                'entity1_type': entities[i]['type'],
+                'entity2_idx': int(j),
+                'entity2_name': entities[j]['name'],
+                'entity2_type': entities[j]['type'],
+                'similarity': float(sim)
+            })
+        
         with open(output_file, 'w') as f:
-            json.dump(pairs_list, f)
-        logger.info(f"Saved {len(pairs)} candidate pairs")
+            json.dump(pairs_enriched, f, indent=2)
+        logger.info(f"Saved {len(pairs)} candidate pairs with entity names for traceability")
         
         self.stats['stage2'] = self.stage2.stats
         
@@ -635,16 +732,66 @@ class DisambiguationServerProcessor:
         
         filtered = self.stage3.filter_pairs(pairs, entities)
         
-        # Apply auto-merges
+        # Apply auto-merges and get index mapping
         logger.info("Applying auto-merge decisions...")
-        entities = self.stage3.apply_merges(entities, filtered['merged'])
+        entities, index_mapping = self.stage3.apply_merges(entities, filtered['merged'])
         
-        # Save intermediate results
+        # Update uncertain pairs with new indices
+        updated_uncertain = []
+        for i, j, sim in filtered['uncertain']:
+            new_i = index_mapping.get(i, i)
+            new_j = index_mapping.get(j, j)
+            
+            # Skip if both merged into same entity
+            if new_i == new_j:
+                continue
+            
+            # Ensure i < j for consistency
+            if new_i > new_j:
+                new_i, new_j = new_j, new_i
+            
+            updated_uncertain.append((new_i, new_j, sim))
+        
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        filtered['uncertain'] = updated_uncertain
+        
+        # Save intermediate results with entity info for traceability
         output_file = self.data_dir / "stage3_filtered_pairs.json"
         filtered_json = {
-            'merged': [[int(i), int(j)] for i, j in filtered['merged']],
-            'rejected': [[int(i), int(j)] for i, j in filtered['rejected']],
-            'uncertain': [[int(i), int(j), float(sim)] for i, j, sim in filtered['uncertain']]
+            'merged': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['merged']
+            ],
+            'rejected': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type']
+                }
+                for i, j in filtered['rejected']
+            ],
+            'uncertain': [
+                {
+                    'entity1_idx': int(i),
+                    'entity1_name': entities[i]['name'],
+                    'entity1_type': entities[i]['type'],
+                    'entity2_idx': int(j),
+                    'entity2_name': entities[j]['name'],
+                    'entity2_type': entities[j]['type'],
+                    'similarity': float(sim)
+                }
+                for i, j, sim in filtered['uncertain']
+            ]
         }
         with open(output_file, 'w') as f:
             json.dump(filtered_json, f, indent=2)
@@ -676,30 +823,87 @@ class DisambiguationServerProcessor:
         
         # Apply LLM match decisions
         logger.info("Applying LLM match decisions...")
-        entities = self.stage3.apply_merges(entities, llm_matches)
+        entities, _ = self.stage3.apply_merges(entities, llm_matches)  # Discard mapping (final stage)
         
         self.stats['stage4'] = self.stage4.stats
         
         return entities
     
-    def run_pipeline(self, input_file: str, output_file: str = None) -> Dict:
-        """Execute full 4-stage GPU-optimized pipeline"""
-        logger.info("="*60)
-        logger.info("GPU-OPTIMIZED DISAMBIGUATION (ALL 4 STAGES)")
-        logger.info("="*60)
+    def run_pipeline(self, 
+                     input_file: str, 
+                     output_file: str = None,
+                     start_from_stage: int = 1,
+                     stop_at_stage: int = None) -> Dict:
+        """
+        Execute comprehensive GPU-optimized pipeline
         
-        # Load entities (already deduplicated+embedded)
-        entities = self.load_json(input_file)
+        Args:
+            input_file: Path to input entities
+            output_file: Path to save final output
+            start_from_stage: 
+                1 = Start from raw entities (dedup + embed + FAISS + LLM)
+                2 = Start from embedded entities (FAISS + LLM)
+            stop_at_stage:
+                1 = Stop after dedup
+                2 = Stop after embedding/FAISS
+                3 = Stop after thresholds
+                4 = Complete pipeline (default)
+                
+        Returns:
+            Pipeline statistics
+        """
+        logger.info("="*60)
+        logger.info("GPU-OPTIMIZED DISAMBIGUATION PIPELINE")
+        logger.info("="*60)
+        logger.info(f"Start from stage: {start_from_stage}")
+        if stop_at_stage:
+            logger.info(f"Stop at stage: {stop_at_stage}")
         
-        # Verify embeddings exist
-        if 'embedding' not in entities[0]:
-            raise ValueError("Entities missing embeddings! Run Stage 1 first.")
+        if start_from_stage == 1:
+            # Full pipeline: dedup → embed → FAISS → thresholds → LLM
+            if not input_file:
+                raise ValueError("input_file required when starting from Stage 1")
+            
+            # Stage 1: Exact dedup
+            entities = self.run_stage1(input_file)
+            
+            if stop_at_stage == 1:
+                logger.info("✓ Stopping after Stage 1 (exact dedup)")
+                return self.stats
+            
+            # Stage 1.5: Embed
+            entities = self.run_stage1_5(entities)
+            
+            if stop_at_stage == 2:
+                logger.info("✓ Stopping after Stage 1.5 (embedding complete)")
+                return self.stats
+                
+        elif start_from_stage == 2:
+            # Start from embedded entities
+            entities = self.load_json(input_file)
+            
+            # Verify embeddings exist
+            if 'embedding' not in entities[0]:
+                raise ValueError("Entities missing embeddings! Run Stages 1-1.5 first.")
+            
+            logger.info("Loaded embedded entities (skipping Stages 1-1.5)")
+        
+        else:
+            raise ValueError(f"Invalid start_from_stage: {start_from_stage}")
         
         # Stage 2: GPU FAISS blocking
         pairs = self.run_stage2(entities)
         
+        if stop_at_stage == 2:
+            logger.info("✓ Stopping after Stage 2 (FAISS blocking)")
+            return self.stats
+        
         # Stage 3: Tiered thresholds
         filtered, entities = self.run_stage3(pairs, entities)
+        
+        if stop_at_stage == 3:
+            logger.info("✓ Stopping after Stage 3 (threshold filtering)")
+            return self.stats
         
         # Stage 4: GPU LLM verification
         entities = self.run_stage4(filtered['uncertain'], entities)
@@ -781,6 +985,19 @@ Note: For CPU version, use src/phase1_graph_construction/disambiguation_processo
         help='CUDA device ID (default: 0)'
     )
     parser.add_argument(
+        '--start-from-stage',
+        type=int,
+        choices=[1, 2],
+        default=2,
+        help='Start from Stage 1 (raw entities) or Stage 2 (embedded) - default: 2'
+    )
+    parser.add_argument(
+        '--stop-at-stage',
+        type=int,
+        choices=[1, 2, 3, 4],
+        help='Stop after this stage (default: run all stages)'
+    )
+    parser.add_argument(
         '--api-key',
         type=str,
         help='Together.ai API key (or set TOGETHER_API_KEY env var)'
@@ -819,7 +1036,9 @@ Note: For CPU version, use src/phase1_graph_construction/disambiguation_processo
         start_time = time.time()
         stats = processor.run_pipeline(
             input_file=args.input,
-            output_file=args.output
+            output_file=args.output,
+            start_from_stage=args.start_from_stage,
+            stop_at_stage=args.stop_at_stage
         )
         elapsed = time.time() - start_time
         
