@@ -114,10 +114,16 @@ class DisambiguationProcessor:
         logger.info("For GPU-optimized pipeline, use server_scripts/disambiguation_server.py")
     
     def load_json(self, filepath: str) -> List[Dict]:
-        """Load JSON file"""
+        """Load JSON file (handles both dict and list formats)"""
         logger.info(f"Loading {filepath}...")
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        
+        # Handle dict format (entity IDs as keys)
+        if isinstance(data, dict):
+            logger.info("Converting dict format to list...")
+            data = list(data.values())
+        
         logger.info(f"Loaded {len(data)} entities")
         return data
     
