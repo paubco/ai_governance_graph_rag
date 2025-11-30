@@ -192,10 +192,13 @@ class ExactDeduplicator:
         type_counts = Counter([e['type'] for e in group])
         canonical['type'] = type_counts.most_common(1)[0][0]
         
-        # Description: Keep longest
-        descriptions = [e.get('description', '') for e in group]
+        # Description: Most frequent wins (voting, like type)
+        descriptions = [e.get('description', '') for e in group if e.get('description', '')]
         if descriptions:
-            canonical['description'] = max(descriptions, key=len)
+            desc_counts = Counter(descriptions)
+            canonical['description'] = desc_counts.most_common(1)[0][0]
+        else:
+            canonical['description'] = ''
         
         # Preserve embedding if exists (from first entity)
         if 'embedding' in group[0]:
@@ -528,33 +531,8 @@ class SameJudge:
                 'reasoning': str
             }
         """
-        # Import prompt from centralized location
-        try:
-            from prompts.prompts import SAMEJUDGE_PROMPT
-        except ImportError:
-            # Fallback if prompts.py not found
-            logger.warning("prompts.py not found, using fallback prompt")
-            SAMEJUDGE_PROMPT = """Are these two entities the SAME real-world entity?
-
-Entity 1:
-- Name: {entity1_name}
-- Type: {entity1_type}
-- Description: {entity1_desc}
-
-Entity 2:
-- Name: {entity2_name}
-- Type: {entity2_type}
-- Description: {entity2_desc}
-
-Respond ONLY with valid JSON:
-{{
-  "result": true or false,
-  "canonical_name": "most official name if same",
-  "canonical_type": "standardized type if same",
-  "reasoning": "brief explanation"
-}}
-
-JSON:"""
+        # Import prompt from centralized location (FAIL HARD if missing)
+        from src.prompts.prompts import SAMEJUDGE_PROMPT
         
         prompt = SAMEJUDGE_PROMPT.format(
             entity1_name=entity1['name'],
@@ -637,3 +615,5 @@ JSON:"""
         logger.info(f"  Total cost: ${self.stats['total_cost']:.2f}")
         
         return matches
+
+

@@ -356,8 +356,8 @@ class SameJudgeGPU:
         Returns:
             (i, j, is_same) tuple
         """
-        # Import prompt from centralized location
-        from prompts.prompts import SAMEJUDGE_PROMPT
+        # Import prompt from centralized location (FAIL HARD if missing)
+        from src.prompts.prompts import SAMEJUDGE_PROMPT
         
         entity1 = entities[i]
         entity2 = entities[j]
