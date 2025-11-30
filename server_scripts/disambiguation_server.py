@@ -560,14 +560,20 @@ class DisambiguationServerProcessor:
         logger.info(f"  GPU: {gpu_id}")
     
     def load_json(self, filepath: str) -> List[Dict]:
-        """Load JSON file"""
+        """Load JSON file (handles metadata+entities structure)"""
         logger.info(f"Loading {filepath}...")
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Handle both list and dict formats
+        # Handle your actual format: {"metadata": {...}, "entities": [...]}
         if isinstance(data, dict):
-            data = list(data.values())
+            if 'entities' in data:
+                logger.info("Extracting entities array from file...")
+                data = data['entities']
+            else:
+                # Fallback: entity IDs as keys
+                logger.info("Converting dict format to list...")
+                data = list(data.values())
         
         logger.info(f"Loaded {len(data)} entities")
         return data
