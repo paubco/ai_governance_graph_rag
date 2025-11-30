@@ -114,16 +114,29 @@ class DisambiguationProcessor:
         logger.info("For GPU-optimized pipeline, use server_scripts/disambiguation_server.py")
     
     def load_json(self, filepath: str) -> List[Dict]:
-        """Load JSON file (handles metadata+entities structure)"""
+        """Load JSON file (handles nested chunk+entities structure from Phase 1A)"""
         logger.info(f"Loading {filepath}...")
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Handle your actual format: {"metadata": {...}, "entities": [...]}
+        # Handle Phase 1A format: {"metadata": {...}, "entities": [chunks]}
         if isinstance(data, dict):
             if 'entities' in data:
-                logger.info("Extracting entities array from file...")
-                data = data['entities']
+                logger.info("Extracting entities from chunks...")
+                chunks = data['entities']
+                
+                # Flatten: each chunk has nested 'entities' array
+                entities = []
+                for chunk in chunks:
+                    if isinstance(chunk, dict) and 'entities' in chunk:
+                        # This is a chunk with nested entities
+                        entities.extend(chunk['entities'])
+                    else:
+                        # Direct entity
+                        entities.append(chunk)
+                
+                data = entities
+                logger.info(f"Flattened {len(chunks)} chunks into {len(entities)} entities")
             else:
                 # Fallback: entity IDs as keys
                 logger.info("Converting dict format to list...")
