@@ -1,30 +1,38 @@
 """
-Entity Disambiguation Processor - CPU Version
+Entity Disambiguation Server - GPU Version
 
-Orchestrates 4-stage pipeline: dedup → embed → FAISS → thresholds → LLM
-For GPU version, use server_scripts/disambiguation_server.py
+GPU-optimized pipeline with multithreading for production use.
+All 4 stages: dedup → embed → FAISS → thresholds → LLM
+
+For CPU/development version, use src/phase1_graph_construction/disambiguation_processor.py
 """
 
 # Standard library
 import argparse
 import json
 import logging
+import os
 import sys
+import threading
 from pathlib import Path
 from typing import Dict, List, Tuple
+from datetime import datetime
+from collections import defaultdict, Counter
+import time
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
+# Third-party
+import numpy as np
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Local imports
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import local modules
 from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
-    FAISSBlocker,
-    TieredThresholdFilter,
-    SameJudge
+    TieredThresholdFilter
 )
-
-# Import YOUR existing code
 from src.utils.embedder import BGEEmbedder
 from src.utils.embed_processor import EmbedProcessor
 
@@ -35,60 +43,554 @@ try:
 except ImportError:
     pass  # dotenv not installed, will use environment variables directly
 
-# Logger setup
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('logs/disambiguation_server.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
 
-class DisambiguationProcessor:
+class FAISSBlockerGPU:
     """
-    Orchestrates full 4-stage entity disambiguation pipeline (CPU version)
+    GPU-accelerated FAISS HNSW blocking with multithreading
     
-    Pipeline:
-        Stage 1: Exact deduplication (hash-based)
-        Stage 1.5: Embed deduplicated entities (YOUR BGEEmbedder)
-        Stage 2: FAISS HNSW blocking (CPU)
-        Stage 3: Tiered threshold filtering
-        Stage 4: LLM verification (SameJudge, single-threaded)
+    Thread Safety:
+        - Index built once in main thread
+        - Search is read-only (thread-safe)
+        - Result collection protected by lock
     
-    For GPU-optimized version with multithreading, use:
-        server_scripts/disambiguation_server.py
+    GPU Optimization:
+        - Uses faiss-gpu for CUDA acceleration
+        - Batched search for GPU efficiency
+        - Falls back to CPU if GPU unavailable
     """
     
     def __init__(self, 
-                 together_api_key: str = None,
-                 data_dir: str = "data/interim/entities"):
+                 embedding_dim: int = 1024, 
+                 M: int = 32,
+                 gpu_id: int = 0):
         """
-        Initialize processor with all stages
+        Initialize GPU-accelerated FAISS blocker
         
         Args:
-            together_api_key: API key for Stage 4 LLM verification
+            embedding_dim: Embedding dimension (1024 for BGE-M3)
+            M: HNSW connections per node
+            gpu_id: CUDA device ID (0 = first GPU)
+        """
+        self.embedding_dim = embedding_dim
+        self.M = M
+        self.gpu_id = gpu_id
+        self.index = None
+        self.use_gpu = False
+        
+        # Thread safety
+        self.index_lock = threading.Lock()
+        self.result_lock = threading.Lock()
+        
+        self.stats = {
+            'entities_indexed': 0,
+            'candidate_pairs': 0,
+            'avg_neighbors': 0.0,
+            'device': 'cpu'
+        }
+        
+        # Try to import faiss-gpu
+        try:
+            import faiss
+            if faiss.get_num_gpus() > 0:
+                self.use_gpu = True
+                self.stats['device'] = f'cuda:{gpu_id}'
+                logger.info(f"GPU detected: Using CUDA device {gpu_id}")
+            else:
+                logger.warning("No GPU detected, falling back to CPU")
+        except Exception as e:
+            logger.warning(f"GPU initialization failed: {e}, using CPU")
+    
+    def build_index(self, entities: List[Dict], ef_construction: int = 200):
+        """
+        Build HNSW index on GPU (if available)
+        
+        Thread Safety: Called once in main thread before parallel search
+        
+        Args:
+            entities: List of entities with 'embedding' field
+            ef_construction: HNSW parameter (higher = better recall)
+        """
+        import faiss
+        
+        logger.info(f"Building FAISS HNSW index on {self.stats['device']}...")
+        
+        # Extract embeddings
+        embeddings = np.array([e['embedding'] for e in entities]).astype('float32')
+        
+        # CRITICAL: Normalize for cosine similarity
+        faiss.normalize_L2(embeddings)
+        
+        # Create CPU index first
+        index_cpu = faiss.IndexHNSWFlat(self.embedding_dim, self.M)
+        index_cpu.hnsw.efConstruction = ef_construction
+        index_cpu.add(embeddings)
+        
+        # Move to GPU if available
+        if self.use_gpu:
+            try:
+                res = faiss.StandardGpuResources()
+                self.index = faiss.index_cpu_to_gpu(res, self.gpu_id, index_cpu)
+                logger.info(f"Index moved to GPU {self.gpu_id}")
+            except Exception as e:
+                logger.warning(f"GPU transfer failed: {e}, using CPU index")
+                self.index = index_cpu
+                self.use_gpu = False
+                self.stats['device'] = 'cpu'
+        else:
+            self.index = index_cpu
+        
+        # Set efSearch ONCE here for all subsequent searches (thread-safe)
+        # Higher efSearch = better recall but slower (64 is good default)
+        if hasattr(self.index, 'hnsw'):
+            self.index.hnsw.efSearch = 64
+        
+        self.stats['entities_indexed'] = len(entities)
+        
+        logger.info(f"FAISS index built:")
+        logger.info(f"  Device: {self.stats['device']}")
+        logger.info(f"  Entities: {len(entities)}")
+        logger.info(f"  M: {self.M}, ef_construction: {ef_construction}, efSearch: 64")
+    
+    def find_candidates_batch(self,
+                              entities: List[Dict],
+                              batch_indices: List[int],
+                              k: int = 50) -> List[Dict]:
+        """
+        Find candidates for a batch of entities (thread-safe worker function)
+        
+        Returns pairs with entity KEYS instead of indices.
+        
+        Thread Safety:
+            - Index search is read-only (thread-safe, no lock needed)
+            - efSearch set once in build_index()
+            - Each worker processes different batch
+        
+        Args:
+            entities: Full entity list (must have _index field!)
+            batch_indices: Indices of entities to process in this batch
+            k: Number of neighbors
+            
+        Returns:
+            List of pair dicts with entity1_key, entity2_key, similarity
+        """
+        import faiss
+        from src.phase1_graph_construction.entity_disambiguator import get_entity_key
+        
+        # Get embeddings for this batch
+        batch_embeddings = np.array([entities[i]['embedding'] for i in batch_indices]).astype('float32')
+        faiss.normalize_L2(batch_embeddings)
+        
+        # Search (read-only, thread-safe - no lock needed!)
+        # efSearch already set in build_index()
+        distances, indices = self.index.search(batch_embeddings, k + 1)
+        
+        # Convert to pairs with entity KEYS
+        pairs = []
+        seen_pairs = set()  # Track unique pairs using entity keys
+        
+        for batch_idx, (i, (dists, neighbors)) in enumerate(zip(batch_indices, zip(distances, indices))):
+            entity1 = entities[i]
+            entity1_key = get_entity_key(entity1)
+            
+            for neighbor_idx, dist in zip(neighbors, dists):
+                if neighbor_idx == i:  # Skip self
+                    continue
+                
+                entity2 = entities[neighbor_idx]
+                entity2_key = get_entity_key(entity2)
+                
+                # Convert L2 distance to cosine similarity
+                similarity = float(1 - (dist ** 2) / 2)
+                
+                # Filter out dissimilar pairs (negative cosine similarity)
+                if similarity < 0.0:
+                    continue
+                
+                # Only keep unique pairs (use sorted keys)
+                pair_key = tuple(sorted([entity1_key, entity2_key]))
+                if pair_key not in seen_pairs:
+                    seen_pairs.add(pair_key)
+                    pairs.append({
+                        'entity1_key': entity1_key,
+                        'entity2_key': entity2_key,
+                        'similarity': similarity
+                    })
+        
+        return pairs
+    
+    def find_candidates_parallel(self,
+                                entities: List[Dict],
+                                k: int = 50,
+                                num_workers: int = 4) -> List[Dict]:
+        """
+        Find candidates with parallel search across workers
+        
+        Returns pairs with entity KEYS - much cleaner than indices!
+        
+        Thread Safety:
+            - Index search is read-only and thread-safe
+            - Each worker processes different entity batch
+            - No locks needed for search (efSearch set in build_index)
+        
+        Args:
+            entities: List of entities
+            k: Number of neighbors per entity
+            num_workers: Number of parallel threads
+            
+        Returns:
+            List of pair dicts with entity1_key, entity2_key, similarity
+        """
+        logger.info(f"Searching k={k} neighbors with {num_workers} workers...")
+        
+        # TEMPORARY: Add _index for FAISS operations only
+        for i, entity in enumerate(entities):
+            entity['_index'] = i
+        
+        # Split entities into batches for workers
+        n_entities = len(entities)
+        batch_size = (n_entities + num_workers - 1) // num_workers
+        batches = [
+            list(range(i, min(i + batch_size, n_entities)))
+            for i in range(0, n_entities, batch_size)
+        ]
+        
+        logger.info(f"Split {n_entities} entities into {len(batches)} batches")
+        
+        # Process batches in parallel (TRUE parallelism - no locks!)
+        all_pairs = []
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [
+                executor.submit(self.find_candidates_batch, entities, batch, k)
+                for batch in batches
+            ]
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="FAISS search"):
+                batch_pairs = future.result()
+                all_pairs.extend(batch_pairs)
+        
+        # Remove duplicates using entity keys
+        unique_pairs_dict = {}
+        for pair in all_pairs:
+            # Create unique key from sorted entity keys
+            pair_key = tuple(sorted([pair['entity1_key'], pair['entity2_key']]))
+            if pair_key not in unique_pairs_dict:
+                unique_pairs_dict[pair_key] = pair
+        
+        unique_pairs = list(unique_pairs_dict.values())
+        
+        # CLEANUP: Remove temporary _index field
+        for entity in entities:
+            entity.pop('_index', None)
+        
+        self.stats['candidate_pairs'] = len(unique_pairs)
+        self.stats['avg_neighbors'] = len(unique_pairs) / len(entities) if entities else 0
+        
+        logger.info(f"Found {len(unique_pairs)} unique candidate pairs")
+        logger.info(f"Average neighbors per entity: {self.stats['avg_neighbors']:.1f}")
+        
+        return unique_pairs
+
+
+class SameJudgeGPU:
+    """
+    Stage 4: Multithreaded LLM-based entity verification (GPU version)
+    
+    Thread Safety:
+        - Each worker gets own API client
+        - Checkpoint saves protected by lock
+        - Result collection via as_completed() (atomic)
+    
+    Optimization:
+        - 8 parallel workers for GPU inference
+        - Exponential backoff retry
+        - Atomic checkpoint saves
+        - Thread-safe result collection
+    
+    References:
+        - Zhang et al. (2025) RAKG - SameJudge methodology
+    """
+    
+    def __init__(self, 
+                 model: str = "Qwen/Qwen2-7B-Instruct",
+                 api_key: str = None,
+                 num_workers: int = 8,
+                 checkpoint_interval: int = 100):
+        """
+        Initialize GPU-optimized SameJudge
+        
+        Args:
+            model: LLM model identifier
+            api_key: Together.ai API key
+            num_workers: Number of parallel threads (8 for GPU)
+            checkpoint_interval: Save checkpoint every N pairs
+        """
+        self.model = model
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        self.num_workers = num_workers
+        self.checkpoint_interval = checkpoint_interval
+        
+        # Thread safety
+        self.checkpoint_lock = threading.Lock()
+        
+        self.stats = {
+            'pairs_verified': 0,
+            'matches_found': 0,
+            'total_cost': 0.0
+        }
+        self.cost_per_call = 0.00003
+        
+        logger.info(f"SameJudgeGPU initialized:")
+        logger.info(f"  Model: {model}")
+        logger.info(f"  Workers: {num_workers}")
+        logger.info(f"  Thread-safe: Yes (with locks)")
+    
+    def _get_client(self):
+        """Get thread-local API client"""
+        from together import Together
+        return Together(api_key=self.api_key)
+    
+    def verify_pair(self, 
+                    entity1_key: Tuple[str, str], 
+                    entity2_key: Tuple[str, str],
+                    entity_map: Dict[Tuple[str, str], Dict]) -> Tuple[Tuple[str, str], Tuple[str, str], bool]:
+        """
+        Verify a single pair (thread-safe worker function)
+        
+        Uses entity KEYS instead of indices - much cleaner!
+        
+        Note: LLM can decide that entities with different types are actually the same
+        (e.g., "EU" [Organization] vs "European Union" [Political Union])
+        
+        Args:
+            entity1_key: (name, type) tuple for first entity
+            entity2_key: (name, type) tuple for second entity
+            entity_map: Entity lookup dict (read-only, thread-safe)
+            
+        Returns:
+            (entity1_key, entity2_key, is_same) tuple
+        """
+        entity1 = entity_map[entity1_key]
+        entity2 = entity_map[entity2_key]
+        
+        # Import prompt from centralized location (FAIL HARD if missing)
+        from src.prompts.prompts import SAMEJUDGE_PROMPT
+        
+        prompt = SAMEJUDGE_PROMPT.format(
+            entity1_name=entity1['name'],
+            entity1_type=entity1['type'],
+            entity1_desc=entity1.get('description', 'N/A')[:150],
+            entity2_name=entity2['name'],
+            entity2_type=entity2['type'],
+            entity2_desc=entity2.get('description', 'N/A')[:150]
+        )
+        
+        # Thread-local client
+        client = self._get_client()
+        
+        # Retry logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=300
+                )
+                
+                response_text = response.choices[0].message.content.strip()
+                response_text = response_text.replace('```json', '').replace('```', '').strip()
+                result = json.loads(response_text)
+                
+                is_same = result.get('result', False)
+                return (entity1_key, entity2_key, is_same)
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"Failed pair {entity1_key}-{entity2_key}: {e}")
+                    return (entity1_key, entity2_key, False)  # Default to not matching on error
+    
+    def verify_batch(self, 
+                    uncertain_pairs: List[Dict],
+                    entities: List[Dict],
+                    checkpoint_path: Path = None) -> List[Dict]:
+        """
+        Verify batch of uncertain pairs with multithreading
+        
+        Works with entity KEYS - much cleaner than indices!
+        No validation needed - keys either exist or don't.
+        
+        Thread Safety:
+            - Entity map is read-only (safe)
+            - Each worker processes different pairs
+            - Results collected atomically
+            - Checkpoints saved with lock
+        
+        Args:
+            uncertain_pairs: List of pair dicts with entity1_key, entity2_key, similarity
+            entities: List of entities (for building map)
+            checkpoint_path: Optional checkpoint file
+            
+        Returns:
+            List of pair dicts confirmed as matches
+        """
+        from src.phase1_graph_construction.entity_disambiguator import build_entity_map
+        
+        logger.info(f"Stage 4: Verifying {len(uncertain_pairs)} pairs with {self.num_workers} workers...")
+        logger.info(f"Estimated cost: ${len(uncertain_pairs) * self.cost_per_call:.2f}")
+        
+        # Build entity map once for all workers (read-only, thread-safe)
+        entity_map = build_entity_map(entities)
+        
+        matches = []
+        processed = 0
+        start_time = time.time()
+        
+        # Check for checkpoint
+        if checkpoint_path and checkpoint_path.exists():
+            logger.info(f"Loading checkpoint: {checkpoint_path}")
+            with open(checkpoint_path, 'r') as f:
+                checkpoint = json.load(f)
+            processed = checkpoint.get('processed', 0)
+            matches = checkpoint.get('matches', [])
+            logger.info(f"Resuming from: {processed} pairs processed")
+        
+        # Process remaining
+        remaining_pairs = uncertain_pairs[processed:]
+        
+        # Multithreaded processing (no validation needed with entity keys!)
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            # Submit all tasks
+            futures = [
+                executor.submit(self.verify_pair, pair['entity1_key'], pair['entity2_key'], entity_map)
+                for pair in remaining_pairs
+            ]
+            
+            # Collect results as they complete (main thread - atomic)
+            with tqdm(total=len(remaining_pairs), desc="SameJudge GPU") as pbar:
+                for future in as_completed(futures):
+                    entity1_key, entity2_key, is_same = future.result()
+                    
+                    if is_same:
+                        matches.append({
+                            'entity1_key': entity1_key,
+                            'entity2_key': entity2_key
+                        })
+                    
+                    processed += 1
+                    pbar.update(1)
+                    
+                    # Checkpoint with lock
+                    if checkpoint_path and processed % self.checkpoint_interval == 0:
+                        with self.checkpoint_lock:
+                            self._save_checkpoint(checkpoint_path, matches, processed, len(uncertain_pairs))
+        
+        # Final checkpoint
+        if checkpoint_path:
+            with self.checkpoint_lock:
+                self._save_checkpoint(checkpoint_path, matches, processed, len(uncertain_pairs), final=True)
+        
+        elapsed = time.time() - start_time
+        self.stats['pairs_verified'] = processed  # Actual pairs attempted
+        self.stats['matches_found'] = len(matches)
+        self.stats['total_cost'] = processed * self.cost_per_call
+        
+        logger.info(f"LLM verification complete:")
+        logger.info(f"  Pairs attempted: {processed} / {len(uncertain_pairs)} total")
+        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / processed if processed > 0 else 0:.1f}%)")
+        logger.info(f"  Time: {elapsed/60:.1f} minutes")
+        logger.info(f"  Cost: ${self.stats['total_cost']:.2f}")
+        
+        return matches
+    
+    def _save_checkpoint(self, path: Path, matches: List, processed: int, total: int, final: bool = False):
+        """Save checkpoint (called with lock held)"""
+        checkpoint = {
+            'timestamp': datetime.now().isoformat(),
+            'processed': processed,
+            'total': total,
+            'matches': matches,
+            'final': final
+        }
+        
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Atomic write
+        temp_path = path.with_suffix('.tmp')
+        with open(temp_path, 'w') as f:
+            json.dump(checkpoint, f, indent=2)
+        temp_path.replace(path)
+
+
+class DisambiguationServerProcessor:
+    """
+    GPU-optimized orchestrator for full 4-stage pipeline
+    
+    Assumes:
+        - Entities already deduplicated+embedded (Stage 1 complete)
+        - Running on server with GPU
+        - Needs fast processing for large datasets
+    
+    Stages:
+        Stage 2: FAISS GPU blocking (4 workers)
+        Stage 3: Tiered thresholds
+        Stage 4: SameJudge GPU (8 workers)
+    """
+    
+    def __init__(self, 
+                 data_dir: str = "data/interim/entities",
+                 faiss_workers: int = 4,
+                 samejudge_workers: int = 8,
+                 gpu_id: int = 0,
+                 together_api_key: str = None):
+        """
+        Initialize server processor
+        
+        Args:
             data_dir: Directory for intermediate files
+            faiss_workers: Workers for FAISS search (4 recommended)
+            samejudge_workers: Workers for LLM calls (8 recommended)
+            gpu_id: CUDA device ID
+            together_api_key: API key for Stage 4
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize all stages (CPU versions)
+        # Initialize ALL stages (1-4) for comprehensive pipeline
         self.stage1 = ExactDeduplicator()
-        self.embedder = BGEEmbedder()  # YOUR existing universal embedder
+        self.embedder = BGEEmbedder()  # BGE-M3 1024-dim
         self.embed_processor = EmbedProcessor(
             embedder=self.embedder,
             checkpoint_freq=1000
-        )  # YOUR existing batch processor
-        self.stage2 = FAISSBlocker()
+        )
+        self.stage2 = FAISSBlockerGPU(gpu_id=gpu_id)
         self.stage3 = TieredThresholdFilter()
+        self.stage4 = SameJudgeGPU(
+            api_key=together_api_key,
+            num_workers=samejudge_workers
+        )
         
-        # Stage 4: Initialize only when needed (lazy loading)
-        self.stage4 = None
-        self.together_api_key = together_api_key
-        
+        self.faiss_workers = faiss_workers
         self.stats = {}
         
-        logger.info("DisambiguationProcessor initialized (CPU version)")
-        logger.info("For GPU-optimized pipeline, use server_scripts/disambiguation_server.py")
+        logger.info(f"GPU server initialized (ALL 4 stages):")
+        logger.info(f"  FAISS workers: {faiss_workers}")
+        logger.info(f"  SameJudge workers: {samejudge_workers}")
+        logger.info(f"  GPU: {gpu_id}")
     
     def load_json(self, filepath: str) -> List[Dict]:
         """Load JSON file (handles nested chunk+entities structure from Phase 1A)"""
@@ -127,7 +629,7 @@ class DisambiguationProcessor:
         logger.info(f"Saving to {filepath}...")
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(data)} entities")
+        logger.info(f"Saved {len(data)} items")
     
     def run_stage1(self, input_file: str) -> List[Dict]:
         """
@@ -156,7 +658,7 @@ class DisambiguationProcessor:
     
     def run_stage1_5(self, entities: List[Dict]) -> List[Dict]:
         """
-        Run Stage 1.5: Embed deduplicated entities using YOUR BGEEmbedder
+        Run Stage 1.5: Embed deduplicated entities using BGE-M3
         
         Args:
             entities: Deduplicated entities (without embeddings)
@@ -165,24 +667,22 @@ class DisambiguationProcessor:
             Entities with embeddings
         """
         logger.info("="*60)
-        logger.info("STAGE 1.5: EMBEDDING DEDUPLICATED ENTITIES")
+        logger.info("STAGE 1.5: EMBEDDING DEDUPLICATED ENTITIES (GPU)")
         logger.info("="*60)
-        logger.info("Using YOUR existing BGEEmbedder (universal embedder)")
+        logger.info("Using BGE-M3 embedder (1024-dim)")
         
-        # Format entities as "name [type]" for RAKG embedding (Eq. 19)
-        # This is the RAKG standard format for entity embeddings
+        # Format entities as "name [type]" for embedding (RAKG standard)
         logger.info("Formatting entities as 'name [type]' for embedding...")
         
-        # Add formatted text to each entity for embed_processor
         for entity in entities:
             entity['formatted_text'] = f"{entity['name']} [{entity['type']}]"
         
-        # Use YOUR existing EmbedProcessor for batch processing with checkpoints
+        # Batch process with checkpoints
         entities_dict = {i: entity for i, entity in enumerate(entities)}
         
         embedded_dict = self.embed_processor.process_items(
             items=entities_dict,
-            text_key='formatted_text',  # Use our formatted text
+            text_key='formatted_text',
             batch_size=32,
             checkpoint_dir=self.data_dir / "embed_checkpoints"
         )
@@ -207,25 +707,22 @@ class DisambiguationProcessor:
         return entities
     
     def run_stage2(self, entities: List[Dict]) -> List[Dict]:
-        """
-        Run Stage 2: FAISS HNSW blocking
-        
-        Args:
-            entities: Entities with embeddings
-            
-        Returns:
-            Candidate pairs (already enriched with entity keys!)
-        """
+        """Run Stage 2: GPU-accelerated FAISS blocking"""
         logger.info("="*60)
-        logger.info("STAGE 2: FAISS HNSW BLOCKING")
+        logger.info("STAGE 2: FAISS BLOCKING (GPU)")
         logger.info("="*60)
         
-        # Build index and search
-        # Returns pairs with entity keys - no enrichment needed!
+        # Build index
         self.stage2.build_index(entities)
-        pairs = self.stage2.find_candidates(entities, k=50)
         
-        # Save intermediate result (pairs already have entity keys!)
+        # Parallel search (returns pairs with entity keys already!)
+        pairs = self.stage2.find_candidates_parallel(
+            entities,
+            k=50,
+            num_workers=self.faiss_workers
+        )
+        
+        # Save intermediate result (already has entity keys!)
         output_file = self.data_dir / "stage2_candidate_pairs.json"
         with open(output_file, 'w') as f:
             json.dump(pairs, f, indent=2)
@@ -242,13 +739,6 @@ class DisambiguationProcessor:
         Run Stage 3: Tiered threshold filtering
         
         MUCH SIMPLER with entity keys - no index remapping needed!
-        
-        Args:
-            pairs: Candidate pairs from Stage 2 (already have entity keys!)
-            entities: Entities
-            
-        Returns:
-            Tuple of (filtered pairs dict, entities after merging)
         """
         logger.info("="*60)
         logger.info("STAGE 3: TIERED THRESHOLD FILTERING")
@@ -257,14 +747,38 @@ class DisambiguationProcessor:
         # Filter pairs into merged/rejected/uncertain
         filtered = self.stage3.filter_pairs(pairs, entities)
         
-        # Save filtered pairs (already have entity keys - no enrichment needed!)
+        # Save filtered pairs (already have entity keys!)
         output_file = self.data_dir / "stage3_filtered_pairs.json"
         with open(output_file, 'w') as f:
             json.dump(filtered, f, indent=2)
         
-        # Apply auto-merges (no index mapping needed or returned!)
+        # Apply auto-merges and get key mapping
         logger.info("Applying auto-merge decisions...")
-        entities = self.stage3.apply_merges(entities, filtered['merged'])
+        entities, key_mapping = self.stage3.apply_merges(entities, filtered['merged'])
+        
+        # Update uncertain pairs with canonical entity keys
+        updated_uncertain = []
+        for pair in filtered['uncertain']:
+            key1 = pair['entity1_key']
+            key2 = pair['entity2_key']
+            
+            # Remap to canonical keys
+            canonical_key1 = key_mapping.get(key1, key1)
+            canonical_key2 = key_mapping.get(key2, key2)
+            
+            # Skip if both merged into same entity
+            if canonical_key1 == canonical_key2:
+                continue
+            
+            # Keep pair with updated keys
+            updated_uncertain.append({
+                'entity1_key': canonical_key1,
+                'entity2_key': canonical_key2,
+                'similarity': pair['similarity']
+            })
+        
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        filtered['uncertain'] = updated_uncertain
         
         # Save entities after auto-merges
         output_file = self.data_dir / "stage3_entities_after_automerge.json"
@@ -278,77 +792,59 @@ class DisambiguationProcessor:
     def run_stage4(self, 
                    uncertain_pairs: List[Dict],
                    entities: List[Dict]) -> List[Dict]:
-        """
-        Run Stage 4: LLM verification (CPU version - single-threaded)
-        
-        Args:
-            uncertain_pairs: Uncertain pairs from Stage 3 (with entity keys!)
-            entities: Entities after Stage 3 auto-merges
-            
-        Returns:
-            Final canonical entities
-        """
+        """Run Stage 4: GPU-accelerated LLM verification"""
         logger.info("="*60)
-        logger.info("STAGE 4: LLM VERIFICATION (SAMEJUDGE - CPU)")
+        logger.info("STAGE 4: LLM VERIFICATION (SAMEJUDGE GPU)")
         logger.info("="*60)
-        logger.info("Single-threaded processing")
-        logger.info("For GPU + 8 workers, use server_scripts/disambiguation_server.py")
         
-        # Initialize Stage 4 now (lazy loading)
-        if self.stage4 is None:
-            if not self.together_api_key:
-                raise ValueError(
-                    "Stage 4 requires Together API key!\n"
-                    "Set via: export TOGETHER_API_KEY='your-key'\n"
-                    "Or pass: --api-key your-key"
-                )
-            logger.info("Initializing Stage 4 (SameJudge)...")
-            self.stage4 = SameJudge(api_key=self.together_api_key)
+        # Verify uncertain pairs with multithreaded LLM
+        checkpoint_path = self.data_dir / "samejudge_checkpoint.json"
+        llm_matches = self.stage4.verify_batch(
+            uncertain_pairs, 
+            entities,
+            checkpoint_path=checkpoint_path
+        )
         
-        # Verify uncertain pairs with LLM
-        llm_matches = self.stage4.verify_batch(uncertain_pairs, entities)
-        
-        # Apply LLM match decisions (no index mapping returned!)
+        # Apply LLM match decisions (discard key mapping - final stage)
         logger.info("Applying LLM match decisions...")
-        entities = self.stage3.apply_merges(entities, llm_matches)
+        entities, _ = self.stage3.apply_merges(entities, llm_matches)
         
         self.stats['stage4'] = self.stage4.stats
         
         return entities
     
     def run_pipeline(self, 
-                     input_file: str = None,
+                     input_file: str, 
                      output_file: str = None,
                      start_from_stage: int = 1,
                      stop_at_stage: int = None) -> Dict:
         """
-        Execute stage-by-stage pipeline (CPU version)
+        Execute comprehensive GPU-optimized pipeline
         
         Args:
             input_file: Path to input entities
-            output_file: Path to save final normalized entities
+            output_file: Path to save final output
             start_from_stage: 
-                1 = Start from exact dedup (need to embed after)
-                2 = Start from FAISS (entities already deduplicated + embedded)
+                1 = Start from raw entities (dedup + embed + FAISS + LLM)
+                2 = Start from embedded entities (FAISS + LLM)
             stop_at_stage:
-                1 = Stop after dedup (no embedding)
-                2 = Stop after FAISS blocking
-                3 = Stop after threshold filtering
+                1 = Stop after dedup
+                2 = Stop after embedding/FAISS
+                3 = Stop after thresholds
                 4 = Complete pipeline (default)
                 
         Returns:
             Pipeline statistics
         """
         logger.info("="*60)
-        logger.info("ENTITY DISAMBIGUATION PIPELINE (CPU)")
+        logger.info("GPU-OPTIMIZED DISAMBIGUATION PIPELINE")
         logger.info("="*60)
         logger.info(f"Start from stage: {start_from_stage}")
         if stop_at_stage:
             logger.info(f"Stop at stage: {stop_at_stage}")
-        logger.info("For GPU-optimized version, use server_scripts/disambiguation_server.py")
         
         if start_from_stage == 1:
-            # Normal flow: dedup → embed → FAISS → thresholds → LLM
+            # Full pipeline: dedup → embed → FAISS → thresholds → LLM
             if not input_file:
                 raise ValueError("input_file required when starting from Stage 1")
             
@@ -359,26 +855,27 @@ class DisambiguationProcessor:
                 logger.info("✓ Stopping after Stage 1 (exact dedup)")
                 return self.stats
             
-            # Stage 1.5: Embed deduplicated entities (YOUR BGEEmbedder)
+            # Stage 1.5: Embed
             entities = self.run_stage1_5(entities)
             
             if stop_at_stage == 2:
                 logger.info("✓ Stopping after Stage 1.5 (embedding complete)")
                 return self.stats
-            
+                
         elif start_from_stage == 2:
-            # Skip to Stage 2 (entities already deduplicated + embedded)
-            embedded_file = self.data_dir / "stage1_deduplicated_embedded.json"
-            if not embedded_file.exists():
-                raise ValueError(f"File not found: {embedded_file}. Run Stages 1-1.5 first!")
+            # Start from embedded entities
+            entities = self.load_json(input_file)
             
-            entities = self.load_json(str(embedded_file))
-            logger.info("Loaded deduplicated+embedded entities (skipping Stages 1-1.5)")
+            # Verify embeddings exist
+            if 'embedding' not in entities[0]:
+                raise ValueError("Entities missing embeddings! Run Stages 1-1.5 first.")
+            
+            logger.info("Loaded embedded entities (skipping Stages 1-1.5)")
         
         else:
             raise ValueError(f"Invalid start_from_stage: {start_from_stage}")
         
-        # Stage 2: FAISS blocking
+        # Stage 2: GPU FAISS blocking
         pairs = self.run_stage2(entities)
         
         if stop_at_stage == 2:
@@ -392,12 +889,15 @@ class DisambiguationProcessor:
             logger.info("✓ Stopping after Stage 3 (threshold filtering)")
             return self.stats
         
-        # Stage 4: LLM verification (CPU - single-threaded)
+        # Stage 4: GPU LLM verification
         entities = self.run_stage4(filtered['uncertain'], entities)
         
         # Save final output
         if output_file:
             self.save_json(entities, output_file)
+        else:
+            output_file = self.data_dir / "normalized_entities.json"
+            self.save_json(entities, str(output_file))
         
         # Compile stats
         self.stats['final_entity_count'] = len(entities)
@@ -416,24 +916,64 @@ class DisambiguationProcessor:
 
 def main():
     """Command-line interface"""
-    parser = argparse.ArgumentParser(description="Entity Disambiguation Pipeline (CPU - All 4 Stages)")
+    parser = argparse.ArgumentParser(
+        description="GPU-Optimized Entity Disambiguation (All 4 Stages)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    # Run on server with GPU (all 4 stages)
+    export TOGETHER_API_KEY="your-key"
+    nohup python server_scripts/disambiguation_server.py \\
+        --input data/interim/entities/stage1_deduplicated_embedded.json \\
+        --output data/interim/entities/normalized_entities.json \\
+        --faiss-workers 4 \\
+        --samejudge-workers 8 \\
+        --gpu-id 0 \\
+        > logs/disambiguation.log 2>&1 &
+    
+    # Monitor
+    tail -f logs/disambiguation.log
+
+Note: For CPU version, use src/phase1_graph_construction/disambiguation_processor.py
+        """
+    )
+    
     parser.add_argument(
         '--input',
         type=str,
-        help='Input file (pre_entities.json) - required if --start-from-stage 1'
+        required=True,
+        help='Input file (stage1_deduplicated_embedded.json)'
     )
     parser.add_argument(
         '--output',
         type=str,
         default='data/interim/entities/normalized_entities.json',
-        help='Output file for normalized entities'
+        help='Output file (normalized_entities.json)'
+    )
+    parser.add_argument(
+        '--faiss-workers',
+        type=int,
+        default=4,
+        help='Workers for FAISS search (default: 4)'
+    )
+    parser.add_argument(
+        '--samejudge-workers',
+        type=int,
+        default=8,
+        help='Workers for SameJudge LLM (default: 8)'
+    )
+    parser.add_argument(
+        '--gpu-id',
+        type=int,
+        default=0,
+        help='CUDA device ID (default: 0)'
     )
     parser.add_argument(
         '--start-from-stage',
         type=int,
         choices=[1, 2],
-        default=1,
-        help='Start from Stage 1 (dedup) or Stage 2 (FAISS)'
+        default=2,
+        help='Start from Stage 1 (raw entities) or Stage 2 (embedded) - default: 2'
     )
     parser.add_argument(
         '--stop-at-stage',
@@ -444,44 +984,53 @@ def main():
     parser.add_argument(
         '--api-key',
         type=str,
-        help='Together.ai API key for Stage 4 (or set TOGETHER_API_KEY env var)'
+        help='Together.ai API key (or set TOGETHER_API_KEY env var)'
     )
     
     args = parser.parse_args()
     
-    # Get API key from args or environment
+    # Get API key
     import os
     api_key = args.api_key or os.getenv('TOGETHER_API_KEY')
-    if not api_key and args.start_from_stage == 1:
-        logger.info("No API key provided - Stage 4 (LLM verification) will be skipped")
-        logger.info("To run Stage 4: export TOGETHER_API_KEY='your-key' or use --api-key")
-    elif not api_key:
-        logger.warning("No API key provided - pipeline will fail at Stage 4!")
+    if not api_key:
+        logger.error("No API key provided! Set TOGETHER_API_KEY or use --api-key")
+        sys.exit(1)
+    
+    # Create logs directory
+    Path('logs').mkdir(exist_ok=True)
     
     logger.info("=" * 70)
-    logger.info("Phase 1C: Entity Disambiguation (CPU - All 4 Stages)")
+    logger.info("GPU-Optimized Disambiguation Server (All 4 Stages)")
     logger.info("=" * 70)
-    if args.input:
-        logger.info(f"Input: {args.input}")
+    logger.info(f"Input: {args.input}")
     logger.info(f"Output: {args.output}")
-    logger.info(f"Start from stage: {args.start_from_stage}")
-    logger.info("For GPU-optimized version, use server_scripts/disambiguation_server.py")
+    logger.info(f"FAISS workers: {args.faiss_workers}")
+    logger.info(f"SameJudge workers: {args.samejudge_workers}")
+    logger.info(f"GPU ID: {args.gpu_id}")
     
-    # Run pipeline (all 4 stages)
-    processor = DisambiguationProcessor(together_api_key=api_key)
+    # Run pipeline
+    processor = DisambiguationServerProcessor(
+        faiss_workers=args.faiss_workers,
+        samejudge_workers=args.samejudge_workers,
+        gpu_id=args.gpu_id,
+        together_api_key=api_key
+    )
     
     try:
+        start_time = time.time()
         stats = processor.run_pipeline(
             input_file=args.input,
             output_file=args.output,
             start_from_stage=args.start_from_stage,
             stop_at_stage=args.stop_at_stage
         )
+        elapsed = time.time() - start_time
         
         if args.stop_at_stage:
-            logger.info(f"✓ Stopped at Stage {args.stop_at_stage} as requested")
+            logger.info(f"\n✓ Stopped at Stage {args.stop_at_stage} (completed in {elapsed/60:.1f} minutes)")
         else:
-            logger.info("✓ Pipeline completed!")
+            logger.info(f"\n✓ Pipeline completed in {elapsed/60:.1f} minutes")
+            logger.info(f"Output saved to: {args.output}")
         sys.exit(0)
         
     except Exception as e:

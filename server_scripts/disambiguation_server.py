@@ -752,9 +752,33 @@ class DisambiguationServerProcessor:
         with open(output_file, 'w') as f:
             json.dump(filtered, f, indent=2)
         
-        # Apply auto-merges (no index mapping needed or returned!)
+        # Apply auto-merges and get key mapping
         logger.info("Applying auto-merge decisions...")
-        entities = self.stage3.apply_merges(entities, filtered['merged'])
+        entities, key_mapping = self.stage3.apply_merges(entities, filtered['merged'])
+        
+        # Update uncertain pairs with canonical entity keys
+        updated_uncertain = []
+        for pair in filtered['uncertain']:
+            key1 = pair['entity1_key']
+            key2 = pair['entity2_key']
+            
+            # Remap to canonical keys
+            canonical_key1 = key_mapping.get(key1, key1)
+            canonical_key2 = key_mapping.get(key2, key2)
+            
+            # Skip if both merged into same entity
+            if canonical_key1 == canonical_key2:
+                continue
+            
+            # Keep pair with updated keys
+            updated_uncertain.append({
+                'entity1_key': canonical_key1,
+                'entity2_key': canonical_key2,
+                'similarity': pair['similarity']
+            })
+        
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        filtered['uncertain'] = updated_uncertain
         
         # Save entities after auto-merges
         output_file = self.data_dir / "stage3_entities_after_automerge.json"
@@ -781,9 +805,9 @@ class DisambiguationServerProcessor:
             checkpoint_path=checkpoint_path
         )
         
-        # Apply LLM match decisions (no index mapping returned!)
+        # Apply LLM match decisions (discard key mapping - final stage)
         logger.info("Applying LLM match decisions...")
-        entities = self.stage3.apply_merges(entities, llm_matches)
+        entities, _ = self.stage3.apply_merges(entities, llm_matches)
         
         self.stats['stage4'] = self.stage4.stats
         

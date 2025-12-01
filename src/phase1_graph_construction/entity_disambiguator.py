@@ -398,9 +398,9 @@ class TieredThresholdFilter:
     Stage 3: Tiered threshold filtering for auto-merge/reject decisions
     
     Applies three similarity thresholds:
-        - High (≥0.95): Auto-merge without LLM
-        - Low (<0.80): Auto-reject without LLM
-        - Medium (0.80-0.95): Send to LLM for verification
+        - High (≥0.98): Auto-merge without LLM (only near-identical)
+        - Low (<0.90): Auto-reject without LLM (clearly different)
+        - Medium (0.90-0.98): Send to LLM for verification
     
     References:
         - Papadakis et al. (2021) - Multi-tier blocking survey
@@ -408,14 +408,14 @@ class TieredThresholdFilter:
     """
     
     def __init__(self, 
-                 auto_merge_threshold: float = 0.95,
-                 auto_reject_threshold: float = 0.80):
+                 auto_merge_threshold: float = 0.98,
+                 auto_reject_threshold: float = 0.90):
         """
         Initialize threshold filter
         
         Args:
-            auto_merge_threshold: Similarity ≥ this → auto-merge
-            auto_reject_threshold: Similarity < this → auto-reject
+            auto_merge_threshold: Similarity ≥ this → auto-merge (default 0.98)
+            auto_reject_threshold: Similarity < this → auto-reject (default 0.90)
         """
         self.merge_threshold = auto_merge_threshold
         self.reject_threshold = auto_reject_threshold
@@ -481,7 +481,7 @@ class TieredThresholdFilter:
     
     def apply_merges(self, 
                     entities: List[Dict],
-                    merged_pairs: List[Dict]) -> List[Dict]:
+                    merged_pairs: List[Dict]) -> Tuple[List[Dict], Dict[Tuple[str, str], Tuple[str, str]]]:
         """
         Apply merge decisions using Union-Find algorithm
         
@@ -489,14 +489,16 @@ class TieredThresholdFilter:
             If A=B and B=C, then A=C
         
         Now works with entity KEYS instead of indices - much cleaner!
-        No index validation needed, no index mapping to return.
+        Returns key mapping so uncertain pairs can be updated.
         
         Args:
             entities: List of entities
             merged_pairs: List of pair dicts with entity1_key, entity2_key
             
         Returns:
-            List of canonical entities after merging
+            Tuple of:
+            - List of canonical entities after merging
+            - Dict mapping old entity keys to canonical entity keys
         """
         logger.info(f"Applying {len(merged_pairs)} merge decisions...")
         
@@ -541,9 +543,16 @@ class TieredThresholdFilter:
             merged = deduplicator._merge_group(group)
             canonical.append(merged)
         
+        # Build key mapping: old_key → canonical_key
+        key_mapping = {}
+        for entity in entities:
+            old_key = get_entity_key(entity)
+            root_key = find(old_key)
+            key_mapping[old_key] = root_key
+        
         logger.info(f"Merged {len(entities)} → {len(canonical)} entities")
         
-        return canonical
+        return canonical, key_mapping
 
 
 
