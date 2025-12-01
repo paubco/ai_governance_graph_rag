@@ -57,20 +57,3 @@ Respond ONLY with valid JSON:
 }}
 
 JSON:"""
-
-
-# Alternative SameJudge Prompt (simpler, if needed)
-SAMEJUDGE_PROMPT_SIMPLE = """Are these the same entity?
-
-Entity 1: {entity1_name} [Type: {entity1_type}]
-Description: {entity1_desc}
-
-Entity 2: {entity2_name} [Type: {entity2_type}]
-Description: {entity2_desc}
-
-Answer YES or NO, followed by a brief justification (one sentence).
-
-Format:
-Decision: [YES/NO]
-Confidence: [HIGH/MEDIUM/LOW]
-Reasoning: [Your reasoning]"""

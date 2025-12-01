@@ -75,12 +75,17 @@ def build_entity_map(entities: List[Dict]) -> Dict[Tuple[str, str], Dict]:
 
 class ExactDeduplicator:
     """
-    Stage 1: Hash-based exact string deduplication
+    Stage 1: Hash-based exact string deduplication (LightRAG approach)
     
-    Uses NFKC normalization + casefold + MD5 hashing to group identical entities.
-    Merges duplicates by combining chunk_ids and using most frequent type.
+    Groups entities by NAME ONLY (type-agnostic).
+    When merging: most frequent type wins, combines chunk_ids.
+    
+    Rationale: Same entity often extracted with different types due to LLM
+    inconsistency (e.g., "AI Act" as Regulation, Legislation, Law, Act).
+    Following LightRAG's approach: let most common type interpretation win.
     
     References:
+        - LightRAG source code: "Most frequent entity_type wins"
         - Christen (2012) "Data Matching" - Standard normalization pipeline
         - Python recordlinkage library - NFKC best practice
     """
@@ -121,34 +126,45 @@ class ExactDeduplicator:
         
         return normalized
     
-    def compute_hash(self, name: str, entity_type: str) -> str:
+    def compute_hash(self, name: str, entity_type: str = None) -> str:
         """
-        Compute MD5 hash of normalized 'name [type]'
+        Compute MD5 hash of normalized name only (LightRAG approach)
+        
+        NOTE: entity_type parameter kept for API compatibility but NOT USED.
+        This allows same entity with different types to be merged.
+        
+        Example:
+            "AI Act [Legislation]" and "AI Act [Regulation]" → same hash
+            Most frequent type wins during merge.
         
         Args:
             name: Entity name
-            entity_type: Entity type
+            entity_type: Entity type (ignored, kept for API compatibility)
             
         Returns:
-            32-character hex hash
+            32-character hex hash based on name only
         """
-        normalized = self.normalize_string(f"{name} [{entity_type}]")
+        normalized = self.normalize_string(name)  # Name only!
         return hashlib.md5(normalized.encode('utf-8')).hexdigest()
     
     def deduplicate(self, entities: List[Dict]) -> List[Dict]:
         """
-        Deduplicate entities by exact string matching
+        Deduplicate entities by exact NAME matching (type-agnostic)
         
         Process:
-            1. Group entities by hash
+            1. Group entities by hash of normalized NAME ONLY
             2. Merge each group (combine chunk_ids, vote on type)
             3. Preserve embeddings if they exist
+        
+        Example:
+            Input: ["AI Act" (Legislation), "AI Act" (Regulation), "AI Act" (Law)]
+            Output: "AI Act" (Legislation) ← most frequent type wins
         
         Args:
             entities: List of entity dicts with 'name', 'type', 'chunk_ids'
             
         Returns:
-            List of canonical entities (deduplicated)
+            List of canonical entities (deduplicated and type-consolidated)
         """
         logger.info(f"Stage 1: Deduplicating {len(entities)} entities...")
         
@@ -161,6 +177,12 @@ class ExactDeduplicator:
         # Track largest group for stats
         largest_group = max(len(group) for group in hash_groups.values())
         
+        # Track type consolidations (groups with multiple types)
+        type_consolidations = sum(
+            1 for group in hash_groups.values()
+            if len(set(e['type'] for e in group)) > 1
+        )
+        
         # Merge each group
         canonical = []
         for h, group in hash_groups.items():
@@ -172,9 +194,11 @@ class ExactDeduplicator:
         self.stats['output_count'] = len(canonical)
         self.stats['duplicates_removed'] = len(entities) - len(canonical)
         self.stats['largest_group_size'] = largest_group
+        self.stats['type_consolidations'] = type_consolidations
         
         logger.info(f"Deduplication complete: {len(entities)} → {len(canonical)} entities")
         logger.info(f"Removed {self.stats['duplicates_removed']} duplicates ({100 * self.stats['duplicates_removed'] / len(entities):.1f}%)")
+        logger.info(f"Type consolidations: {type_consolidations} entities had multiple types")
         logger.info(f"Largest duplicate group: {largest_group} entities")
         
         return canonical
