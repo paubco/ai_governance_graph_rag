@@ -422,9 +422,9 @@ class TieredThresholdFilter:
     Stage 3: Tiered threshold filtering for auto-merge/reject decisions
     
     Applies three similarity thresholds:
-        - High (≥0.98): Auto-merge without LLM (only near-identical)
-        - Low (<0.90): Auto-reject without LLM (clearly different)
-        - Medium (0.90-0.98): Send to LLM for verification
+        - High (≥0.99): Auto-merge without LLM (only near-identical)
+        - Low (<0.97): Auto-reject without LLM (clearly different)
+        - Medium (0.97-0.99): Send to LLM for verification
     
     References:
         - Papadakis et al. (2021) - Multi-tier blocking survey
@@ -432,14 +432,14 @@ class TieredThresholdFilter:
     """
     
     def __init__(self, 
-                 auto_merge_threshold: float = 0.98,
-                 auto_reject_threshold: float = 0.90):
+                 auto_merge_threshold: float = 0.99,
+                 auto_reject_threshold: float = 0.97):
         """
         Initialize threshold filter
         
         Args:
-            auto_merge_threshold: Similarity ≥ this → auto-merge (default 0.98)
-            auto_reject_threshold: Similarity < this → auto-reject (default 0.90)
+            auto_merge_threshold: Similarity ≥ this → auto-merge (default 0.99)
+            auto_reject_threshold: Similarity < this → auto-reject (default 0.97)
         """
         self.merge_threshold = auto_merge_threshold
         self.reject_threshold = auto_reject_threshold
