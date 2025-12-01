@@ -1,40 +1,12 @@
 """
-Module: entity_disambiguator.py
-Phase: 1C - Entity Disambiguation
-Purpose: 4-stage entity disambiguation pipeline (exact dedup, FAISS blocking, tiered thresholds, LLM verification)
-Author: Pau Barba i Colomer
-Created: 2025-11-29
-Last Modified: 2025-11-29
+Entity Disambiguation - Core Classes
 
-Dependencies:
-    - faiss-cpu or faiss-gpu: FAISS HNSW index for Stage 2
-    - together: LLM API for Stage 4
-    - numpy: Array operations
-    
-Usage:
-    from entity_disambiguator import ExactDeduplicator, FAISSBlocker, TieredThresholdFilter, SameJudgeLLM
-    
-    # Stage 1: Exact deduplication
-    dedup = ExactDeduplicator()
-    canonical = dedup.deduplicate(entities)
-    
-    # Stage 2: FAISS blocking
-    blocker = FAISSBlocker()
-    blocker.build_index(canonical)
-    pairs = blocker.find_candidates(canonical, k=50)
-    
-    # Stage 3: Tiered thresholds
-    filter = TieredThresholdFilter()
-    filtered = filter.filter_pairs(pairs, canonical)
-    
-    # Stage 4: LLM verification
-    judge = SameJudgeLLM(api_key="your-key")
-    matches = judge.verify_batch(filtered['uncertain'], canonical)
+Stage 1: ExactDeduplicator - Hash-based exact deduplication
+Stage 2: FAISSBlocker - HNSW approximate nearest neighbors (CPU)
+Stage 3: TieredThresholdFilter - Similarity-based filtering with auto-merge
+Stage 4: SameJudge - LLM verification (CPU, single-threaded)
 
-Notes:
-    - Implements 4-stage pipeline from PHASE_1C_DESIGN_JUSTIFICATION.md
-    - Based on Malkov & Yashunin (2020) HNSW, Papadakis et al. (2021) blocking survey
-    - Extends RAKG methodology with FAISS blocking for scalability
+For GPU versions, use server_scripts/disambiguation_server.py
 """
 
 # Standard library
@@ -50,6 +22,55 @@ import numpy as np
 
 # Logger
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# ENTITY KEY UTILITIES
+# ============================================================================
+
+def get_entity_key(entity: Dict) -> Tuple[str, str]:
+    """
+    Get hashable key for entity (name, type) tuple
+    
+    This is THE canonical way to identify entities throughout the pipeline.
+    Replaces fragile index-based lookups with human-readable keys.
+    
+    Args:
+        entity: Entity dict with 'name' and 'type' fields
+        
+    Returns:
+        (name, type) tuple - hashable and human-readable
+        
+    Example:
+        >>> entity = {'name': 'UAE', 'type': 'Country'}
+        >>> get_entity_key(entity)
+        ('UAE', 'Country')
+    """
+    return (entity['name'], entity['type'])
+
+
+def build_entity_map(entities: List[Dict]) -> Dict[Tuple[str, str], Dict]:
+    """
+    Build O(1) lookup map from entity keys to entity dicts
+    
+    Args:
+        entities: List of entity dicts
+        
+    Returns:
+        Dict mapping (name, type) -> entity dict
+        
+    Example:
+        >>> entities = [{'name': 'UAE', 'type': 'Country'}, ...]
+        >>> entity_map = build_entity_map(entities)
+        >>> entity_map[('UAE', 'Country')]
+        {'name': 'UAE', 'type': 'Country', ...}
+    """
+    return {get_entity_key(e): e for e in entities}
+
+
+# ============================================================================
+# STAGE 1: EXACT DEDUPLICATION
+# ============================================================================
 
 
 class ExactDeduplicator:
@@ -213,7 +234,6 @@ class ExactDeduplicator:
         
         # Add metadata about merge
         canonical['duplicate_count'] = len(group)
-        canonical['merged_types'] = list(type_counts.keys()) if len(type_counts) > 1 else None
         
         return canonical
 
@@ -290,9 +310,12 @@ class FAISSBlocker:
     def find_candidates(self, 
                        entities: List[Dict], 
                        k: int = 50,
-                       ef_search: int = 64) -> List[Tuple[int, int, float]]:
+                       ef_search: int = 64) -> List[Dict]:
         """
         Find candidate pairs using approximate nearest neighbor search
+        
+        Returns pairs with entity KEYS (name, type) instead of indices.
+        This makes the output human-readable and robust to list reordering.
         
         Args:
             entities: List of entities with embeddings
@@ -300,7 +323,12 @@ class FAISSBlocker:
             ef_search: HNSW parameter (higher = better recall, slower search)
             
         Returns:
-            List of (entity_i_idx, entity_j_idx, similarity) tuples
+            List of pair dicts:
+            {
+                'entity1_key': (name, type),
+                'entity2_key': (name, type),
+                'similarity': float
+            }
         """
         logger.info(f"Searching k={k} nearest neighbors (ef_search={ef_search})...")
         
@@ -311,33 +339,50 @@ class FAISSBlocker:
         import faiss
         faiss.normalize_L2(embeddings)
         
+        # TEMPORARY: Add _index for FAISS operations only
+        for i, entity in enumerate(entities):
+            entity['_index'] = i
+        
         # Search k+1 neighbors (includes self-match)
         distances, indices = self.index.search(embeddings, k + 1)
         
-        # Convert to candidate pairs
+        # Convert to candidate pairs with entity KEYS
         pairs = []
         seen_pairs = set()  # Track unique pairs
         
         for i, (dists, neighbors) in enumerate(zip(distances, indices)):
+            entity1 = entities[i]
+            entity1_key = get_entity_key(entity1)
+            
             for neighbor_idx, dist in zip(neighbors, dists):
                 # Skip self-matches
                 if neighbor_idx == i:
                     continue
+                
+                entity2 = entities[neighbor_idx]
+                entity2_key = get_entity_key(entity2)
                 
                 # Convert L2 distance to cosine similarity
                 # Since vectors are normalized: cos_sim = 1 - (L2_dist^2 / 2)
                 similarity = float(1 - (dist ** 2) / 2)
                 
                 # Filter out dissimilar pairs (negative cosine similarity)
-                # For entity disambiguation, we only care about similar entities
                 if similarity < 0.0:
                     continue
                 
-                # Only keep unique pairs (i < j to avoid duplicates)
-                pair_key = (min(i, neighbor_idx), max(i, neighbor_idx))
+                # Only keep unique pairs (use sorted keys to avoid duplicates)
+                pair_key = tuple(sorted([entity1_key, entity2_key]))
                 if pair_key not in seen_pairs:
                     seen_pairs.add(pair_key)
-                    pairs.append((pair_key[0], pair_key[1], similarity))
+                    pairs.append({
+                        'entity1_key': entity1_key,
+                        'entity2_key': entity2_key,
+                        'similarity': similarity
+                    })
+        
+        # CLEANUP: Remove temporary _index field
+        for entity in entities:
+            entity.pop('_index', None)
         
         self.stats['candidate_pairs'] = len(pairs)
         self.stats['avg_neighbors'] = len(pairs) / len(entities) if entities else 0.0
@@ -382,20 +427,22 @@ class TieredThresholdFilter:
         }
     
     def filter_pairs(self, 
-                    pairs: List[Tuple[int, int, float]],
+                    pairs: List[Dict],
                     entities: List[Dict]) -> Dict:
         """
         Classify pairs into auto-merge, auto-reject, uncertain
         
+        Works with entity KEYS (name, type) instead of indices for robustness.
+        
         Args:
-            pairs: List of (i, j, similarity) tuples
-            entities: List of entities (for context)
+            pairs: List of pair dicts with entity1_key, entity2_key, similarity
+            entities: List of entities (for context, not used in filtering)
             
         Returns:
             {
-                'merged': List[Tuple[int, int]],
-                'rejected': List[Tuple[int, int]],
-                'uncertain': List[Tuple[int, int, float]]
+                'merged': List of pair dicts,
+                'rejected': List of pair dicts,
+                'uncertain': List of pair dicts
             }
         """
         logger.info(f"Stage 3: Filtering {len(pairs)} pairs with tiered thresholds...")
@@ -404,15 +451,17 @@ class TieredThresholdFilter:
         rejected = []
         uncertain = []
         
-        for i, j, sim in pairs:
+        for pair in pairs:
+            sim = pair['similarity']
+            
             # Apply similarity thresholds
             # Note: Different types are allowed through - LLM will decide in Stage 4
             if sim >= self.merge_threshold:
-                merged.append((i, j))
+                merged.append(pair)
             elif sim < self.reject_threshold:
-                rejected.append((i, j))
+                rejected.append(pair)
             else:
-                uncertain.append((i, j, sim))
+                uncertain.append(pair)
         
         self.stats['input_pairs'] = len(pairs)
         self.stats['auto_merged'] = len(merged)
@@ -432,26 +481,32 @@ class TieredThresholdFilter:
     
     def apply_merges(self, 
                     entities: List[Dict],
-                    merged_pairs: List[Tuple[int, int]]) -> Tuple[List[Dict], Dict[int, int]]:
+                    merged_pairs: List[Dict]) -> List[Dict]:
         """
         Apply merge decisions using Union-Find algorithm
         
         Uses Union-Find to handle transitivity:
             If A=B and B=C, then A=C
         
+        Now works with entity KEYS instead of indices - much cleaner!
+        No index validation needed, no index mapping to return.
+        
         Args:
             entities: List of entities
-            merged_pairs: List of (i, j) pairs to merge
+            merged_pairs: List of pair dicts with entity1_key, entity2_key
             
         Returns:
-            Tuple of:
-            - List of canonical entities after merging
-            - Dict mapping old indices to new indices
+            List of canonical entities after merging
         """
         logger.info(f"Applying {len(merged_pairs)} merge decisions...")
         
-        # Build Union-Find structure
-        parent = {i: i for i in range(len(entities))}
+        # Build Union-Find structure using entity KEYS
+        parent = {}
+        
+        # Initialize: each entity is its own parent
+        for entity in entities:
+            key = get_entity_key(entity)
+            parent[key] = key
         
         def find(x):
             """Find root with path compression"""
@@ -465,36 +520,30 @@ class TieredThresholdFilter:
             if px != py:
                 parent[py] = px
         
-        # Union all merged pairs
-        for i, j in merged_pairs:
-            union(i, j)
+        # Union all merged pairs (using entity keys - no index validation needed!)
+        for pair in merged_pairs:
+            key1 = pair['entity1_key']
+            key2 = pair['entity2_key']
+            union(key1, key2)
         
         # Group entities by root
         groups = defaultdict(list)
-        group_roots = {}  # root → new index
-        for i in range(len(entities)):
-            root = find(i)
-            groups[root].append(entities[i])
-            if root not in group_roots:
-                group_roots[root] = len(group_roots)
-        
-        # Create index mapping (old index → new index)
-        index_mapping = {}
-        for i in range(len(entities)):
-            root = find(i)
-            index_mapping[i] = group_roots[root]
+        for entity in entities:
+            key = get_entity_key(entity)
+            root = find(key)
+            groups[root].append(entity)
         
         # Merge each group using ExactDeduplicator logic
         deduplicator = ExactDeduplicator()
         canonical = []
-        for root in sorted(group_roots.keys()):
+        for root in sorted(groups.keys()):
             group = groups[root]
             merged = deduplicator._merge_group(group)
             canonical.append(merged)
         
         logger.info(f"Merged {len(entities)} → {len(canonical)} entities")
         
-        return canonical, index_mapping
+        return canonical
 
 
 
@@ -603,29 +652,41 @@ class SameJudge:
     def verify_batch(self, 
                     uncertain_pairs: List[Tuple[int, int, float]],
                     entities: List[Dict],
-                    log_interval: int = 100) -> List[Tuple[int, int]]:
+                    log_interval: int = 100) -> List[Dict]:
         """
         Verify batch of uncertain pairs (single-threaded)
         
+        Works with entity KEYS - much cleaner than index-based approach!
+        
         Args:
-            uncertain_pairs: List of (i, j, similarity) tuples
+            uncertain_pairs: List of pair dicts with entity1_key, entity2_key, similarity
             entities: List of entities
             log_interval: Log progress every N pairs
             
         Returns:
-            List of (i, j) pairs confirmed as matches
+            List of pair dicts confirmed as matches
         """
         logger.info(f"Stage 4: Verifying {len(uncertain_pairs)} pairs with LLM...")
         logger.info(f"Estimated cost: ${len(uncertain_pairs) * self.cost_per_call:.2f}")
         logger.info("Single-threaded - for faster processing, use disambiguation_server.py")
         
+        # Build entity map for O(1) lookups (no index validation needed!)
+        entity_map = build_entity_map(entities)
+        
         matches = []
         
-        for idx, (i, j, sim) in enumerate(uncertain_pairs):
-            result = self.verify_pair(entities[i], entities[j])
+        for idx, pair in enumerate(uncertain_pairs):
+            key1 = pair['entity1_key']
+            key2 = pair['entity2_key']
+            
+            # Lookup entities (KeyError only if entity was removed, which shouldn't happen)
+            entity1 = entity_map[key1]
+            entity2 = entity_map[key2]
+            
+            result = self.verify_pair(entity1, entity2)
             
             if result['is_same']:
-                matches.append((i, j))
+                matches.append(pair)
             
             # Log progress
             if (idx + 1) % log_interval == 0 or (idx + 1) == len(uncertain_pairs):
@@ -635,7 +696,7 @@ class SameJudge:
         
         logger.info(f"LLM verification complete:")
         logger.info(f"  Total pairs: {len(uncertain_pairs)}")
-        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / len(uncertain_pairs):.1f}%)")
+        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / len(uncertain_pairs) if uncertain_pairs else 0:.1f}%)")
         logger.info(f"  Total cost: ${self.stats['total_cost']:.2f}")
         
         return matches

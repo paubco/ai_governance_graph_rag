@@ -1,39 +1,10 @@
 """
-Server Script: disambiguation_server.py
-Phase: 1C - Entity Disambiguation  
-Purpose: GPU-optimized disambiguation with multithreading for server deployment
-Author: Pau Barba i Colomer
-Created: 2025-11-29
-Last Modified: 2025-11-29
+Entity Disambiguation Server - GPU Version
 
-**GPU Optimization**:
-    - Uses faiss-gpu for GPU-accelerated HNSW index
-    - Multithreaded FAISS search (4-8 workers)
-    - Thread-safe with explicit locks
-    - Optimized for RTX 3060 / server GPU
+GPU-optimized pipeline with multithreading for production use.
+All 4 stages: dedup → embed → FAISS → thresholds → LLM
 
-Thread Safety:
-    - FAISS index built once (main thread)
-    - Search parallelized across workers (read-only, safe)
-    - Result collection with locks
-    - Checkpoint saves atomic
-    
-Usage:
-    # On server with GPU
-    nohup python server_scripts/disambiguation_server.py \
-        --input data/interim/entities/stage1_deduplicated_embedded.json \
-        --output data/interim/entities/stage3_output.json \
-        --workers 4 \
-        --gpu-id 0 \
-        > logs/disambiguation.log 2>&1 &
-    
-    # Monitor
-    tail -f logs/disambiguation.log
-
-Notes:
-    - Runs Stages 2-3 only (assumes entities already deduplicated+embedded)
-    - For CPU version, use src/phase1_graph_construction/disambiguation_processor.py
-    - Auto-detects GPU, falls back to CPU if unavailable
+For CPU/development version, use src/phase1_graph_construction/disambiguation_processor.py
 """
 
 # Standard library
@@ -194,9 +165,11 @@ class FAISSBlockerGPU:
     def find_candidates_batch(self,
                               entities: List[Dict],
                               batch_indices: List[int],
-                              k: int = 50) -> List[Tuple[int, int, float]]:
+                              k: int = 50) -> List[Dict]:
         """
         Find candidates for a batch of entities (thread-safe worker function)
+        
+        Returns pairs with entity KEYS instead of indices.
         
         Thread Safety:
             - Index search is read-only (thread-safe, no lock needed)
@@ -204,14 +177,15 @@ class FAISSBlockerGPU:
             - Each worker processes different batch
         
         Args:
-            entities: Full entity list
+            entities: Full entity list (must have _index field!)
             batch_indices: Indices of entities to process in this batch
             k: Number of neighbors
             
         Returns:
-            List of (i, j, similarity) tuples for this batch
+            List of pair dicts with entity1_key, entity2_key, similarity
         """
         import faiss
+        from src.phase1_graph_construction.entity_disambiguator import get_entity_key
         
         # Get embeddings for this batch
         batch_embeddings = np.array([entities[i]['embedding'] for i in batch_indices]).astype('float32')
@@ -221,12 +195,20 @@ class FAISSBlockerGPU:
         # efSearch already set in build_index()
         distances, indices = self.index.search(batch_embeddings, k + 1)
         
-        # Convert to pairs
+        # Convert to pairs with entity KEYS
         pairs = []
+        seen_pairs = set()  # Track unique pairs using entity keys
+        
         for batch_idx, (i, (dists, neighbors)) in enumerate(zip(batch_indices, zip(distances, indices))):
+            entity1 = entities[i]
+            entity1_key = get_entity_key(entity1)
+            
             for neighbor_idx, dist in zip(neighbors, dists):
                 if neighbor_idx == i:  # Skip self
                     continue
+                
+                entity2 = entities[neighbor_idx]
+                entity2_key = get_entity_key(entity2)
                 
                 # Convert L2 distance to cosine similarity
                 similarity = float(1 - (dist ** 2) / 2)
@@ -235,18 +217,26 @@ class FAISSBlockerGPU:
                 if similarity < 0.0:
                     continue
                 
-                # Only keep unique pairs (i < j)
-                if i < neighbor_idx:
-                    pairs.append((i, neighbor_idx, similarity))
+                # Only keep unique pairs (use sorted keys)
+                pair_key = tuple(sorted([entity1_key, entity2_key]))
+                if pair_key not in seen_pairs:
+                    seen_pairs.add(pair_key)
+                    pairs.append({
+                        'entity1_key': entity1_key,
+                        'entity2_key': entity2_key,
+                        'similarity': similarity
+                    })
         
         return pairs
     
     def find_candidates_parallel(self,
                                 entities: List[Dict],
                                 k: int = 50,
-                                num_workers: int = 4) -> List[Tuple[int, int, float]]:
+                                num_workers: int = 4) -> List[Dict]:
         """
         Find candidates with parallel search across workers
+        
+        Returns pairs with entity KEYS - much cleaner than indices!
         
         Thread Safety:
             - Index search is read-only and thread-safe
@@ -259,9 +249,13 @@ class FAISSBlockerGPU:
             num_workers: Number of parallel threads
             
         Returns:
-            List of unique (i, j, similarity) tuples
+            List of pair dicts with entity1_key, entity2_key, similarity
         """
         logger.info(f"Searching k={k} neighbors with {num_workers} workers...")
+        
+        # TEMPORARY: Add _index for FAISS operations only
+        for i, entity in enumerate(entities):
+            entity['_index'] = i
         
         # Split entities into batches for workers
         n_entities = len(entities)
@@ -285,8 +279,19 @@ class FAISSBlockerGPU:
                 batch_pairs = future.result()
                 all_pairs.extend(batch_pairs)
         
-        # Remove duplicates (same pair from different batches)
-        unique_pairs = list(set(all_pairs))
+        # Remove duplicates using entity keys
+        unique_pairs_dict = {}
+        for pair in all_pairs:
+            # Create unique key from sorted entity keys
+            pair_key = tuple(sorted([pair['entity1_key'], pair['entity2_key']]))
+            if pair_key not in unique_pairs_dict:
+                unique_pairs_dict[pair_key] = pair
+        
+        unique_pairs = list(unique_pairs_dict.values())
+        
+        # CLEANUP: Remove temporary _index field
+        for entity in entities:
+            entity.pop('_index', None)
         
         self.stats['candidate_pairs'] = len(unique_pairs)
         self.stats['avg_neighbors'] = len(unique_pairs) / len(entities) if entities else 0
@@ -355,22 +360,28 @@ class SameJudgeGPU:
         from together import Together
         return Together(api_key=self.api_key)
     
-    def verify_pair(self, i: int, j: int, entities: List[Dict]) -> Tuple[int, int, bool]:
+    def verify_pair(self, 
+                    entity1_key: Tuple[str, str], 
+                    entity2_key: Tuple[str, str],
+                    entity_map: Dict[Tuple[str, str], Dict]) -> Tuple[Tuple[str, str], Tuple[str, str], bool]:
         """
         Verify a single pair (thread-safe worker function)
+        
+        Uses entity KEYS instead of indices - much cleaner!
         
         Note: LLM can decide that entities with different types are actually the same
         (e.g., "EU" [Organization] vs "European Union" [Political Union])
         
         Args:
-            i, j: Entity indices
-            entities: Full entity list (read-only, thread-safe)
+            entity1_key: (name, type) tuple for first entity
+            entity2_key: (name, type) tuple for second entity
+            entity_map: Entity lookup dict (read-only, thread-safe)
             
         Returns:
-            (i, j, is_same) tuple
+            (entity1_key, entity2_key, is_same) tuple
         """
-        entity1 = entities[i]
-        entity2 = entities[j]
+        entity1 = entity_map[entity1_key]
+        entity2 = entity_map[entity2_key]
         
         # Import prompt from centralized location (FAIL HARD if missing)
         from src.prompts.prompts import SAMEJUDGE_PROMPT
@@ -403,39 +414,47 @@ class SameJudgeGPU:
                 result = json.loads(response_text)
                 
                 is_same = result.get('result', False)
-                return (i, j, is_same)
+                return (entity1_key, entity2_key, is_same)
                 
             except Exception as e:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
                 else:
-                    logger.error(f"Failed pair {i}-{j}: {e}")
-                    return (i, j, False)  # Default to not matching on error
+                    logger.error(f"Failed pair {entity1_key}-{entity2_key}: {e}")
+                    return (entity1_key, entity2_key, False)  # Default to not matching on error
     
     def verify_batch(self, 
-                    uncertain_pairs: List[Tuple[int, int, float]],
+                    uncertain_pairs: List[Dict],
                     entities: List[Dict],
-                    checkpoint_path: Path = None) -> List[Tuple[int, int]]:
+                    checkpoint_path: Path = None) -> List[Dict]:
         """
         Verify batch of uncertain pairs with multithreading
         
+        Works with entity KEYS - much cleaner than indices!
+        No validation needed - keys either exist or don't.
+        
         Thread Safety:
-            - Entities list is read-only (safe)
+            - Entity map is read-only (safe)
             - Each worker processes different pairs
             - Results collected atomically
             - Checkpoints saved with lock
         
         Args:
-            uncertain_pairs: List of (i, j, similarity) tuples
-            entities: List of entities (read-only)
+            uncertain_pairs: List of pair dicts with entity1_key, entity2_key, similarity
+            entities: List of entities (for building map)
             checkpoint_path: Optional checkpoint file
             
         Returns:
-            List of (i, j) pairs confirmed as matches
+            List of pair dicts confirmed as matches
         """
+        from src.phase1_graph_construction.entity_disambiguator import build_entity_map
+        
         logger.info(f"Stage 4: Verifying {len(uncertain_pairs)} pairs with {self.num_workers} workers...")
         logger.info(f"Estimated cost: ${len(uncertain_pairs) * self.cost_per_call:.2f}")
+        
+        # Build entity map once for all workers (read-only, thread-safe)
+        entity_map = build_entity_map(entities)
         
         matches = []
         processed = 0
@@ -453,21 +472,24 @@ class SameJudgeGPU:
         # Process remaining
         remaining_pairs = uncertain_pairs[processed:]
         
-        # Multithreaded processing
+        # Multithreaded processing (no validation needed with entity keys!)
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             # Submit all tasks
             futures = [
-                executor.submit(self.verify_pair, i, j, entities)
-                for i, j, sim in remaining_pairs
+                executor.submit(self.verify_pair, pair['entity1_key'], pair['entity2_key'], entity_map)
+                for pair in remaining_pairs
             ]
             
             # Collect results as they complete (main thread - atomic)
             with tqdm(total=len(remaining_pairs), desc="SameJudge GPU") as pbar:
                 for future in as_completed(futures):
-                    i, j, is_same = future.result()
+                    entity1_key, entity2_key, is_same = future.result()
                     
                     if is_same:
-                        matches.append((i, j))
+                        matches.append({
+                            'entity1_key': entity1_key,
+                            'entity2_key': entity2_key
+                        })
                     
                     processed += 1
                     pbar.update(1)
@@ -483,13 +505,13 @@ class SameJudgeGPU:
                 self._save_checkpoint(checkpoint_path, matches, processed, len(uncertain_pairs), final=True)
         
         elapsed = time.time() - start_time
-        self.stats['pairs_verified'] = len(uncertain_pairs)
+        self.stats['pairs_verified'] = processed  # Actual pairs attempted
         self.stats['matches_found'] = len(matches)
-        self.stats['total_cost'] = len(uncertain_pairs) * self.cost_per_call
+        self.stats['total_cost'] = processed * self.cost_per_call
         
         logger.info(f"LLM verification complete:")
-        logger.info(f"  Pairs: {len(uncertain_pairs)}")
-        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / len(uncertain_pairs):.1f}%)")
+        logger.info(f"  Pairs attempted: {processed} / {len(uncertain_pairs)} total")
+        logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / processed if processed > 0 else 0:.1f}%)")
         logger.info(f"  Time: {elapsed/60:.1f} minutes")
         logger.info(f"  Cost: ${self.stats['total_cost']:.2f}")
         
@@ -684,7 +706,7 @@ class DisambiguationServerProcessor:
         
         return entities
     
-    def run_stage2(self, entities: List[Dict]) -> List[tuple]:
+    def run_stage2(self, entities: List[Dict]) -> List[Dict]:
         """Run Stage 2: GPU-accelerated FAISS blocking"""
         logger.info("="*60)
         logger.info("STAGE 2: FAISS BLOCKING (GPU)")
@@ -693,108 +715,46 @@ class DisambiguationServerProcessor:
         # Build index
         self.stage2.build_index(entities)
         
-        # Parallel search
+        # Parallel search (returns pairs with entity keys already!)
         pairs = self.stage2.find_candidates_parallel(
             entities,
             k=50,
             num_workers=self.faiss_workers
         )
         
-        # Save intermediate result with entity info for traceability
+        # Save intermediate result (already has entity keys!)
         output_file = self.data_dir / "stage2_candidate_pairs.json"
-        pairs_enriched = []
-        for i, j, sim in pairs:
-            pairs_enriched.append({
-                'entity1_idx': int(i),
-                'entity1_name': entities[i]['name'],
-                'entity1_type': entities[i]['type'],
-                'entity2_idx': int(j),
-                'entity2_name': entities[j]['name'],
-                'entity2_type': entities[j]['type'],
-                'similarity': float(sim)
-            })
-        
         with open(output_file, 'w') as f:
-            json.dump(pairs_enriched, f, indent=2)
-        logger.info(f"Saved {len(pairs)} candidate pairs with entity names for traceability")
+            json.dump(pairs, f, indent=2)
+        logger.info(f"Saved {len(pairs)} candidate pairs")
         
         self.stats['stage2'] = self.stage2.stats
         
         return pairs
     
     def run_stage3(self, 
-                   pairs: List[tuple], 
+                   pairs: List[Dict], 
                    entities: List[Dict]) -> Tuple[Dict, List[Dict]]:
-        """Run Stage 3: Tiered threshold filtering"""
+        """
+        Run Stage 3: Tiered threshold filtering
+        
+        MUCH SIMPLER with entity keys - no index remapping needed!
+        """
         logger.info("="*60)
         logger.info("STAGE 3: TIERED THRESHOLD FILTERING")
         logger.info("="*60)
         
+        # Filter pairs into merged/rejected/uncertain
         filtered = self.stage3.filter_pairs(pairs, entities)
         
-        # Apply auto-merges and get index mapping
-        logger.info("Applying auto-merge decisions...")
-        entities, index_mapping = self.stage3.apply_merges(entities, filtered['merged'])
-        
-        # Update uncertain pairs with new indices
-        updated_uncertain = []
-        for i, j, sim in filtered['uncertain']:
-            new_i = index_mapping.get(i, i)
-            new_j = index_mapping.get(j, j)
-            
-            # Skip if both merged into same entity
-            if new_i == new_j:
-                continue
-            
-            # Ensure i < j for consistency
-            if new_i > new_j:
-                new_i, new_j = new_j, new_i
-            
-            updated_uncertain.append((new_i, new_j, sim))
-        
-        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
-        filtered['uncertain'] = updated_uncertain
-        
-        # Save intermediate results with entity info for traceability
+        # Save filtered pairs (already have entity keys!)
         output_file = self.data_dir / "stage3_filtered_pairs.json"
-        filtered_json = {
-            'merged': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type']
-                }
-                for i, j in filtered['merged']
-            ],
-            'rejected': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type']
-                }
-                for i, j in filtered['rejected']
-            ],
-            'uncertain': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type'],
-                    'similarity': float(sim)
-                }
-                for i, j, sim in filtered['uncertain']
-            ]
-        }
         with open(output_file, 'w') as f:
-            json.dump(filtered_json, f, indent=2)
+            json.dump(filtered, f, indent=2)
+        
+        # Apply auto-merges (no index mapping needed or returned!)
+        logger.info("Applying auto-merge decisions...")
+        entities = self.stage3.apply_merges(entities, filtered['merged'])
         
         # Save entities after auto-merges
         output_file = self.data_dir / "stage3_entities_after_automerge.json"
@@ -806,7 +766,7 @@ class DisambiguationServerProcessor:
     
     
     def run_stage4(self, 
-                   uncertain_pairs: List[tuple],
+                   uncertain_pairs: List[Dict],
                    entities: List[Dict]) -> List[Dict]:
         """Run Stage 4: GPU-accelerated LLM verification"""
         logger.info("="*60)
@@ -821,9 +781,9 @@ class DisambiguationServerProcessor:
             checkpoint_path=checkpoint_path
         )
         
-        # Apply LLM match decisions
+        # Apply LLM match decisions (no index mapping returned!)
         logger.info("Applying LLM match decisions...")
-        entities, _ = self.stage3.apply_merges(entities, llm_matches)  # Discard mapping (final stage)
+        entities = self.stage3.apply_merges(entities, llm_matches)
         
         self.stats['stage4'] = self.stage4.stats
         
@@ -1042,8 +1002,11 @@ Note: For CPU version, use src/phase1_graph_construction/disambiguation_processo
         )
         elapsed = time.time() - start_time
         
-        logger.info(f"\nCompleted in {elapsed/60:.1f} minutes")
-        logger.info(f"Output saved to: {args.output}")
+        if args.stop_at_stage:
+            logger.info(f"\n✓ Stopped at Stage {args.stop_at_stage} (completed in {elapsed/60:.1f} minutes)")
+        else:
+            logger.info(f"\n✓ Pipeline completed in {elapsed/60:.1f} minutes")
+            logger.info(f"Output saved to: {args.output}")
         sys.exit(0)
         
     except Exception as e:

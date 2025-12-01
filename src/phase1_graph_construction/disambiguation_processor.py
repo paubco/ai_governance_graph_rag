@@ -1,10 +1,8 @@
 """
-Module: disambiguation_processor.py
-Phase: 1C - Entity Disambiguation
-Purpose: Orchestrate 4-stage entity disambiguation pipeline
-Author: Pau Barba i Colomer
-Created: 2025-11-29
-Last Modified: 2025-11-29
+Entity Disambiguation Processor - CPU Version
+
+Orchestrates 4-stage pipeline: dedup → embed → FAISS → thresholds → LLM
+For GPU version, use server_scripts/disambiguation_server.py
 """
 
 # Standard library
@@ -13,7 +11,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -208,7 +206,7 @@ class DisambiguationProcessor:
         
         return entities
     
-    def run_stage2(self, entities: List[Dict]) -> List[tuple]:
+    def run_stage2(self, entities: List[Dict]) -> List[Dict]:
         """
         Run Stage 2: FAISS HNSW blocking
         
@@ -216,120 +214,57 @@ class DisambiguationProcessor:
             entities: Entities with embeddings
             
         Returns:
-            Candidate pairs
+            Candidate pairs (already enriched with entity keys!)
         """
         logger.info("="*60)
         logger.info("STAGE 2: FAISS HNSW BLOCKING")
         logger.info("="*60)
         
         # Build index and search
+        # Returns pairs with entity keys - no enrichment needed!
         self.stage2.build_index(entities)
         pairs = self.stage2.find_candidates(entities, k=50)
         
-        # Save intermediate result with entity info for traceability
+        # Save intermediate result (pairs already have entity keys!)
         output_file = self.data_dir / "stage2_candidate_pairs.json"
-        pairs_enriched = []
-        for i, j, sim in pairs:
-            pairs_enriched.append({
-                'entity1_idx': int(i),
-                'entity1_name': entities[i]['name'],
-                'entity1_type': entities[i]['type'],
-                'entity2_idx': int(j),
-                'entity2_name': entities[j]['name'],
-                'entity2_type': entities[j]['type'],
-                'similarity': float(sim)
-            })
-        
         with open(output_file, 'w') as f:
-            json.dump(pairs_enriched, f, indent=2)
-        logger.info(f"Saved {len(pairs)} candidate pairs with entity names for traceability")
+            json.dump(pairs, f, indent=2)
+        logger.info(f"Saved {len(pairs)} candidate pairs")
         
         self.stats['stage2'] = self.stage2.stats
         
         return pairs
     
     def run_stage3(self, 
-                   pairs: List[tuple], 
-                   entities: List[Dict]) -> Dict:
+                   pairs: List[Dict], 
+                   entities: List[Dict]) -> Tuple[Dict, List[Dict]]:
         """
         Run Stage 3: Tiered threshold filtering
         
+        MUCH SIMPLER with entity keys - no index remapping needed!
+        
         Args:
-            pairs: Candidate pairs from Stage 2
+            pairs: Candidate pairs from Stage 2 (already have entity keys!)
             entities: Entities
             
         Returns:
-            Filtered pairs dict
+            Tuple of (filtered pairs dict, entities after merging)
         """
         logger.info("="*60)
         logger.info("STAGE 3: TIERED THRESHOLD FILTERING")
         logger.info("="*60)
         
+        # Filter pairs into merged/rejected/uncertain
         filtered = self.stage3.filter_pairs(pairs, entities)
         
-        # Apply auto-merges and get index mapping
-        logger.info("Applying auto-merge decisions...")
-        entities, index_mapping = self.stage3.apply_merges(entities, filtered['merged'])
-        
-        # Update uncertain pairs with new indices
-        updated_uncertain = []
-        for i, j, sim in filtered['uncertain']:
-            new_i = index_mapping.get(i, i)
-            new_j = index_mapping.get(j, j)
-            
-            # Skip if both merged into same entity
-            if new_i == new_j:
-                continue
-            
-            # Ensure i < j for consistency
-            if new_i > new_j:
-                new_i, new_j = new_j, new_i
-            
-            updated_uncertain.append((new_i, new_j, sim))
-        
-        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
-        filtered['uncertain'] = updated_uncertain
-        
-        # Save intermediate results with entity info for traceability
+        # Save filtered pairs (already have entity keys - no enrichment needed!)
         output_file = self.data_dir / "stage3_filtered_pairs.json"
-        filtered_json = {
-            'merged': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type']
-                }
-                for i, j in filtered['merged']
-            ],
-            'rejected': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type']
-                }
-                for i, j in filtered['rejected']
-            ],
-            'uncertain': [
-                {
-                    'entity1_idx': int(i),
-                    'entity1_name': entities[i]['name'],
-                    'entity1_type': entities[i]['type'],
-                    'entity2_idx': int(j),
-                    'entity2_name': entities[j]['name'],
-                    'entity2_type': entities[j]['type'],
-                    'similarity': float(sim)
-                }
-                for i, j, sim in filtered['uncertain']
-            ]
-        }
         with open(output_file, 'w') as f:
-            json.dump(filtered_json, f, indent=2)
+            json.dump(filtered, f, indent=2)
+        
+        # Apply auto-merges (no index mapping needed or returned!)
+        logger.info("Applying auto-merge decisions...")
+        entities = self.stage3.apply_merges(entities, filtered['merged'])
         
         # Save entities after auto-merges
         output_file = self.data_dir / "stage3_entities_after_automerge.json"
@@ -341,13 +276,13 @@ class DisambiguationProcessor:
     
     
     def run_stage4(self, 
-                   uncertain_pairs: List[tuple],
+                   uncertain_pairs: List[Dict],
                    entities: List[Dict]) -> List[Dict]:
         """
         Run Stage 4: LLM verification (CPU version - single-threaded)
         
         Args:
-            uncertain_pairs: Uncertain pairs from Stage 3
+            uncertain_pairs: Uncertain pairs from Stage 3 (with entity keys!)
             entities: Entities after Stage 3 auto-merges
             
         Returns:
@@ -373,9 +308,9 @@ class DisambiguationProcessor:
         # Verify uncertain pairs with LLM
         llm_matches = self.stage4.verify_batch(uncertain_pairs, entities)
         
-        # Apply LLM match decisions
+        # Apply LLM match decisions (no index mapping returned!)
         logger.info("Applying LLM match decisions...")
-        entities, _ = self.stage3.apply_merges(entities, llm_matches)  # Discard mapping (final stage)
+        entities = self.stage3.apply_merges(entities, llm_matches)
         
         self.stats['stage4'] = self.stage4.stats
         
@@ -543,7 +478,10 @@ def main():
             stop_at_stage=args.stop_at_stage
         )
         
-        logger.info("Pipeline succeeded!")
+        if args.stop_at_stage:
+            logger.info(f"✓ Stopped at Stage {args.stop_at_stage} as requested")
+        else:
+            logger.info("✓ Pipeline completed!")
         sys.exit(0)
         
     except Exception as e:
