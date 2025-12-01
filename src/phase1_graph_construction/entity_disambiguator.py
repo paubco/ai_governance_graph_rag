@@ -572,7 +572,7 @@ class SameJudge:
     """
     
     def __init__(self, 
-                 model: str = "Qwen/Qwen2-7B-Instruct",
+                 model: str = "Qwen/Qwen2.5-7B-Instruct-Turbo",
                  api_key: str = None):
         """
         Initialize LLM judge (CPU version)

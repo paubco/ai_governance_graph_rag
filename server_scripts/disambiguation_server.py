@@ -322,7 +322,7 @@ class SameJudgeGPU:
     """
     
     def __init__(self, 
-                 model: str = "Qwen/Qwen2-7B-Instruct",
+                 model: str = "Qwen/Qwen2.5-7B-Instruct-Turbo",
                  api_key: str = None,
                  num_workers: int = 8,
                  checkpoint_interval: int = 100):
