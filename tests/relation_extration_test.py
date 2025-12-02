@@ -291,7 +291,7 @@ Examples:
 
 Default file locations:
     entities: data/interim/entities/normalized_entities.json
-    chunks: data/interim/chunks/final_chunks.json
+    chunks: data/interim/chunks/chunks_embedded.json
         """
     )
     
@@ -304,7 +304,7 @@ Default file locations:
     parser.add_argument(
         '--chunks',
         type=str,
-        default='data/interim/chunks/final_chunks.json',
+        default='data/interim/chunks/chunks_embedded.json',
         help='Path to chunks file'
     )
     parser.add_argument(
