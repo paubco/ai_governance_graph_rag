@@ -405,7 +405,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 2000
+        max_tokens: int = 4000
     ):
         """
         Initialize RAKG Relation Extractor
@@ -420,7 +420,7 @@ class RAKGRelationExtractor:
                                  Why 200? Large enough for MMR diversity,
                                  small enough for reasonable computation
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 2000)
+            max_tokens: Max LLM response tokens (default: 4000)
         """
         self.model_name = model_name
         
@@ -690,6 +690,15 @@ class RAKGRelationExtractor:
             logger.debug(f"  ✓ Response received: {len(raw_text)} chars")
             logger.debug(f"  Response preview (first 200 chars):")
             logger.debug(f"    {raw_text[:200]}")
+            
+            # Check for truncation (incomplete response)
+            if not raw_text.rstrip().endswith('}'):
+                logger.error(f"  ✗ Response truncated (doesn't end with '}}')!")
+                logger.error(f"    Response length: {len(raw_text)} chars")
+                logger.error(f"    Last 100 chars: ...{raw_text[-100:]}")
+                logger.error(f"    This means max_tokens ({self.max_tokens}) was too small")
+                logger.error(f"    Try increasing max_tokens or reducing num_chunks")
+                return {"relations": []}  # Graceful fallback
             
             # Handle empty response
             if not raw_text:
