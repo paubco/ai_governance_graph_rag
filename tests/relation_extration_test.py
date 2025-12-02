@@ -15,6 +15,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 # Add project root to path
@@ -32,6 +33,130 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# HELPER FUNCTIONS - Entity Lookup
+# ============================================================================
+
+def find_entity_by_name(entities: List[Dict], target_name: str, 
+                        partial_match: bool = True) -> Optional[Dict]:
+    """
+    Find entity by name (case-insensitive, supports partial matching)
+    
+    Args:
+        entities: List of entity dictionaries
+        target_name: Name to search for
+        partial_match: If True, match if target is substring of name or vice versa
+    
+    Returns:
+        First matching entity or None if not found
+    
+    Example:
+        >>> entity = find_entity_by_name(entities, "artificial intelligence")
+        >>> entity['name']
+        'artificial intelligence'
+    """
+    target = target_name.lower().strip()
+    
+    for entity in entities:
+        name = entity.get('name', '').lower().strip()
+        
+        if partial_match:
+            # Match if either is substring of the other
+            if target in name or name in target:
+                return entity
+        else:
+            # Exact match only
+            if name == target:
+                return entity
+    
+    return None
+
+
+def validate_entity_quality(entity: Dict) -> tuple[bool, str]:
+    """
+    Check if entity has required fields for relation extraction
+    
+    Args:
+        entity: Entity dictionary
+    
+    Returns:
+        (is_valid, reason) tuple
+    
+    Example:
+        >>> valid, reason = validate_entity_quality(entity)
+        >>> if not valid:
+        ...     print(f"Invalid: {reason}")
+    """
+    required_fields = ['name', 'type', 'description']
+    
+    # Check required fields exist
+    for field in required_fields:
+        if not entity.get(field):
+            return False, f"Missing required field: {field}"
+    
+    # Check has chunk_ids (optional but recommended)
+    chunk_ids = entity.get('chunk_ids', [])
+    if not chunk_ids:
+        logger.warning(f"Entity '{entity['name']}' has no chunk_ids - may have poor retrieval")
+    
+    return True, "OK"
+
+
+def find_good_test_entities(entities: List[Dict], 
+                            preferred_names: List[str],
+                            min_chunks: int = 5,
+                            max_results: int = 3) -> List[Dict]:
+    """
+    Find high-quality test entities by name with quality filtering
+    
+    Args:
+        entities: List of all entities
+        preferred_names: Names to look for (in order of preference)
+        min_chunks: Minimum chunk_ids required
+        max_results: Maximum entities to return
+    
+    Returns:
+        List of good test entities (up to max_results)
+    
+    Example:
+        >>> test_entities = find_good_test_entities(
+        ...     entities, 
+        ...     ["artificial intelligence", "GDPR", "EU"],
+        ...     min_chunks=5,
+        ...     max_results=2
+        ... )
+    """
+    results = []
+    
+    for name in preferred_names:
+        if len(results) >= max_results:
+            break
+        
+        entity = find_entity_by_name(entities, name)
+        
+        if entity:
+            # Validate quality
+            valid, reason = validate_entity_quality(entity)
+            if not valid:
+                logger.warning(f"Skipping '{name}': {reason}")
+                continue
+            
+            # Check chunk count
+            chunk_count = len(entity.get('chunk_ids', []))
+            if chunk_count < min_chunks:
+                logger.warning(f"Skipping '{name}': only {chunk_count} chunks (need {min_chunks}+)")
+                continue
+            
+            results.append(entity)
+            logger.info(f"Found good test entity: '{entity['name']}' ({chunk_count} chunks)")
+    
+    return results
+
+
+# ============================================================================
+# DATA LOADING
+# ============================================================================
 
 def load_data():
     """Load real entities and chunks"""
@@ -86,14 +211,47 @@ def load_data():
     return entities, chunks
 
 
+# ============================================================================
+# TEST FUNCTIONS
+# ============================================================================
+
 def test_basic(entities, chunks):
-    """Basic test - 2 entities with default params"""
+    """Basic test - 2 good entities with default params"""
     print("=" * 80)
     print("PHASE 1D - BASIC INTEGRATION TEST")
     print("=" * 80)
     print()
     
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
+    
+    # Find good test entities by name
+    preferred_entities = [
+        "artificial intelligence",
+        "GDPR",
+        "EU",
+        "machine learning",
+        "neural network"
+    ]
+    
+    print("Finding good test entities...")
+    test_entities = find_good_test_entities(
+        entities, 
+        preferred_entities, 
+        min_chunks=5, 
+        max_results=2
+    )
+    
+    if not test_entities:
+        print("\n❌ ERROR: No good test entities found!")
+        print(f"\nSearched for: {preferred_entities}")
+        print(f"\nAvailable entities (first 20):")
+        for i, e in enumerate(entities[:20], 1):
+            chunk_count = len(e.get('chunk_ids', []))
+            print(f"  {i}. {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}) - {chunk_count} chunks")
+        print("\nTip: Update 'preferred_entities' list with entity names from above")
+        return
+    
+    print(f"✓ Found {len(test_entities)} test entities\n")
     
     # Initialize extractor
     print("Initializing extractor (default params)...")
@@ -105,13 +263,12 @@ def test_basic(entities, chunks):
     )
     print(f"  ✓ Ready (threshold=0.85, lambda=0.55)\n")
     
-    # Test on 2 entities
-    test_entities = entities[:2]
-    
+    # Test extraction on each entity
     print(f"Testing extraction on {len(test_entities)} entities:\n")
     for i, entity in enumerate(test_entities, 1):
         print(f"Entity {i}: {entity.get('name', 'Unknown')} ({entity.get('type', 'Unknown')})")
         print(f"  Description: {entity.get('description', 'N/A')[:100]}...")
+        print(f"  Available chunks: {len(entity.get('chunk_ids', []))}")
         
         try:
             print(f"  Extracting relations...")
@@ -145,25 +302,50 @@ def test_parameters(entities, chunks):
     
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
-    # Hardcoded entity indices for testing
-    GOOD_TEST_ENTITY_INDICES = [
-        42,    # artificial intelligence
-        156,   # GDPR
-        789,   # EU
+    # Preferred test entities (in order of preference)
+    preferred_names = [
+        "artificial intelligence",
+        "GDPR",
+        "EU",
+        "machine learning",
+        "ChatGPT"
     ]
     
-    # Select test entity
-    if not GOOD_TEST_ENTITY_INDICES:
-        print("⚠️  GOOD_TEST_ENTITY_INDICES is empty!")
-        print("Run: python browse_entities.py --search 'AI'")
-        print("Then add indices to test file.\n")
-        print("Using entity[100] as fallback...\n")
-        test_entity = entities[42]
-    else:
-        idx = GOOD_TEST_ENTITY_INDICES[0]
-        test_entity = entities[idx]
-        print(f"Using entity index {idx}\n")
+    print("Finding optimal test entity...")
+    print(f"Searching for: {', '.join(preferred_names)}\n")
     
+    # Try to find best entity
+    test_entity = None
+    for name in preferred_names:
+        entity = find_entity_by_name(entities, name)
+        if entity:
+            valid, reason = validate_entity_quality(entity)
+            if valid and len(entity.get('chunk_ids', [])) >= 10:
+                test_entity = entity
+                print(f"✓ Selected: '{entity['name']}'\n")
+                break
+    
+    # Fallback: use first entity with enough chunks
+    if not test_entity:
+        print("⚠️  Preferred entities not found, using fallback...\n")
+        for entity in entities:
+            if len(entity.get('chunk_ids', [])) >= 10:
+                valid, reason = validate_entity_quality(entity)
+                if valid:
+                    test_entity = entity
+                    print(f"✓ Using fallback: '{entity['name']}'\n")
+                    break
+    
+    if not test_entity:
+        print("\n❌ ERROR: No suitable test entity found!")
+        print(f"\nNeeds: 10+ chunks, valid name/type/description")
+        print(f"\nAvailable entities (first 20):")
+        for i, e in enumerate(entities[:20], 1):
+            chunk_count = len(e.get('chunk_ids', []))
+            print(f"  {i}. {e.get('name', 'Unknown')} ({e.get('type', 'Unknown')}) - {chunk_count} chunks")
+        return
+    
+    # Display selected entity info
     print(f"Test entity: {test_entity.get('name', 'Unknown')}")
     print(f"Type: {test_entity.get('type', 'Unknown')}")
     print(f"Description: {test_entity.get('description', 'N/A')[:100]}...")
