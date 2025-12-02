@@ -221,7 +221,7 @@ def build_relation_extraction_prompt(entity: dict, chunks: list) -> str:
 
 def extract_relations_json(response_text: str) -> str:
     """
-    Extract relations JSON from LLM response with repair attempts
+    Extract JSON from LLM response (removes markdown wrappers only)
     
     Args:
         response_text: Raw LLM response
@@ -229,50 +229,12 @@ def extract_relations_json(response_text: str) -> str:
     Returns:
         str: Cleaned JSON string
     """
-    # Remove markdown
-    cleaned = response_text.replace("```json\n", "").replace("```json", "")
-    cleaned = cleaned.replace("\n```", "").replace("```", "")
+    # Remove markdown code blocks
+    cleaned = response_text.strip()
+    cleaned = cleaned.replace("```json", "").replace("```", "")
+    cleaned = cleaned.strip()
     
-    # Extract first JSON object
-    import re
-    pattern = re.compile(r'\{[\s\S]*?\}', re.MULTILINE)
-    match = pattern.search(cleaned)
-    if match:
-        json_str = match.group(0).strip()
-    else:
-        json_str = cleaned.strip()
-    
-    # Try to repair common JSON issues
-    json_str = repair_json(json_str)
-    
-    return json_str
-
-
-def repair_json(json_str: str) -> str:
-    """
-    Attempt to repair common JSON formatting issues
-    
-    Common issues:
-    - Trailing commas in arrays/objects
-    - Missing commas between array elements
-    - Unescaped quotes in strings
-    - Single quotes instead of double quotes
-    """
-    import re
-    
-    # Fix single quotes to double quotes (but not in strings)
-    json_str = json_str.replace("'", '"')
-    
-    # Remove trailing commas before } or ]
-    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-    
-    # Fix missing commas between objects in array (} followed by {)
-    json_str = re.sub(r'\}(\s*)\{', r'},\1{', json_str)
-    
-    # Fix missing commas between array elements
-    json_str = re.sub(r'\](\s*)\[', r'],\1[', json_str)
-    
-    return json_str
+    return cleaned
 
 
 # ============================================================================
