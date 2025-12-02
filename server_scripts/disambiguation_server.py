@@ -850,7 +850,14 @@ class DisambiguationServerProcessor:
         entities, key_mapping = self.stage3.apply_merges(entities, filtered['merged'])
         
         # Update uncertain pairs with canonical entity keys
+        # Build entity map for validation (entities may have been removed in merging)
+        from src.phase1_graph_construction.entity_disambiguator import build_entity_map
+        entity_map = build_entity_map(entities)
+        
         updated_uncertain = []
+        skipped_same_entity = 0
+        skipped_missing = 0
+        
         for pair in filtered['uncertain']:
             key1 = pair['entity1_key']
             key2 = pair['entity2_key']
@@ -861,6 +868,12 @@ class DisambiguationServerProcessor:
             
             # Skip if both merged into same entity
             if canonical_key1 == canonical_key2:
+                skipped_same_entity += 1
+                continue
+            
+            # Skip if either entity no longer exists (merged away)
+            if canonical_key1 not in entity_map or canonical_key2 not in entity_map:
+                skipped_missing += 1
                 continue
             
             # Keep pair with updated keys
@@ -871,6 +884,8 @@ class DisambiguationServerProcessor:
             })
         
         logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} â†’ {len(updated_uncertain)}")
+        logger.info(f"  Removed {skipped_same_entity} pairs (merged into same entity)")
+        logger.info(f"  Removed {skipped_missing} pairs (entity no longer exists)")
         filtered['uncertain'] = updated_uncertain
         
         # Save entities after auto-merges
