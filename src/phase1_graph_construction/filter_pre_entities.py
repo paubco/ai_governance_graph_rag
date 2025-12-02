@@ -48,12 +48,13 @@ class PreEntityFilter:
     Philosophy: Conservative - preserve legitimate entities, only remove obvious junk
     """
     
-    def __init__(self, min_chunks: int = 2):
+    def __init__(self, min_chunks: int = 1):
         """
         Initialize filter with conservative defaults
         
         Args:
-            min_chunks: Minimum chunk mentions (default: 2, use 1 to keep all)
+            min_chunks: Minimum chunk mentions (default: 1 for Phase 1B, 
+                       deduplication in Stage 1 will merge multi-mention entities)
         """
         self.min_chunks = min_chunks
         
@@ -180,11 +181,11 @@ class PreEntityFilter:
             return False, 'name_too_long'
         
         # Description too short (< 10 chars) - not informative
-        if len(description) < 10:
+        if len(description) < 30:
             return False, 'description_too_short'
         
         # Description too long (> 2000 chars) - probably paragraph
-        if len(description) > 2000:
+        if len(description) > 500:
             return False, 'description_too_long'
         
         return True, 'OK'
@@ -216,15 +217,23 @@ class PreEntityFilter:
         """
         Check entity has sufficient mentions (optional, configurable)
         
+        NOTE: Phase 1B outputs 'chunk_id' (singular), but after deduplication
+        entities will have 'chunk_ids' (plural). Handle both formats.
+        
         Args:
             entity: Entity dict
             
         Returns:
             (keep: bool, reason: str)
         """
+        # Try plural first (after deduplication)
         chunk_ids = entity.get('chunk_ids', [])
         
-        # Handle both formats (string or list)
+        # Phase 1B uses singular 'chunk_id' (before deduplication)
+        if not chunk_ids and 'chunk_id' in entity:
+            chunk_ids = [entity['chunk_id']]
+        
+        # Handle string format
         if isinstance(chunk_ids, str):
             chunk_ids = [chunk_ids]
         
@@ -295,7 +304,7 @@ class PreEntityFilter:
         self.stats['input_entities'] = len(flat_entities)
         
         logger.info(f"Input: {len(flat_entities)} entities")
-        logger.info(f"Minimum chunks: {self.min_chunks}")
+        logger.info(f"Minimum chunks: {self.min_chunks} (Phase 1B has single chunk_id per entity)")
         logger.info("")
         logger.info("Filtering...")
         
@@ -433,17 +442,16 @@ Examples:
         --output data/interim/entities/pre_entities_clean.json \\
         --min-chunks 3
     
-    # Keep all entities including single mentions
+    # Keep all entities (default)
     python scripts/filter_pre_entities.py \\
         --input data/interim/entities/pre_entities.json \\
-        --output data/interim/entities/pre_entities_clean.json \\
-        --min-chunks 1
+        --output data/interim/entities/pre_entities_clean.json
 
 Conservative defaults:
     - Min name length: 2 chars (allows acronyms)
     - Max name length: 200 chars (prevents sentences)
     - Min description: 10 chars (must be informative)
-    - Min chunks: 2 mentions (filters noise)
+    - Min chunks: 1 mention (Phase 1B has single chunk_id per entity)
         """
     )
     
@@ -462,8 +470,8 @@ Conservative defaults:
     parser.add_argument(
         '--min-chunks',
         type=int,
-        default=2,
-        help='Minimum chunk mentions (default: 2, use 1 to keep all)'
+        default=1,
+        help='Minimum chunk mentions (default: 1, use 2+ for stricter filtering after deduplication)'
     )
     
     args = parser.parse_args()
