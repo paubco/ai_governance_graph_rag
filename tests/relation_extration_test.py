@@ -1,14 +1,19 @@
 """
 Phase 1D Real Integration Test
+Tests extraction with real LLM + optional parameter tuning
 
 Usage:
-    cd ~/Graph_RAG
+    # Quick test (2 entities, default params)
     python tests/test_phase_1d_real.py
+
+    # Parameter tuning mode
+    python tests/test_phase_1d_real.py --tune-params
 """
 
 import sys
 import json
 import logging
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -21,8 +26,8 @@ load_dotenv()
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.WARNING,  # Quieter
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
@@ -47,7 +52,7 @@ def load_data():
     if not entities_path:
         raise FileNotFoundError("normalized_entities.json not found")
     
-    logger.info(f"Loading entities from: {entities_path}")
+    print(f"Loading entities from: {entities_path}")
     with open(entities_path, 'r', encoding='utf-8') as f:
         entities_data = json.load(f)
     
@@ -58,14 +63,14 @@ def load_data():
     else:
         raise ValueError("Unknown entity format")
     
-    logger.info(f"  Loaded: {len(entities)} entities")
+    print(f"  Loaded: {len(entities)} entities\n")
     
     # Load chunks
     chunks_path = PROJECT_ROOT / 'data/interim/chunks/chunks_embedded.json'
     if not chunks_path.exists():
         raise FileNotFoundError(f"chunks_embedded.json not found at {chunks_path}")
     
-    logger.info(f"Loading chunks from: {chunks_path}")
+    print(f"Loading chunks from: {chunks_path}")
     with open(chunks_path, 'r', encoding='utf-8') as f:
         chunks_data = json.load(f)
     
@@ -76,76 +81,184 @@ def load_data():
     else:
         raise ValueError("Unknown chunk format")
     
-    logger.info(f"  Loaded: {len(chunks)} chunks")
+    print(f"  Loaded: {len(chunks)} chunks\n")
     
     return entities, chunks
 
 
-def test_real_extraction():
-    """Test actual relation extraction with LLM"""
+def test_basic(entities, chunks):
+    """Basic test - 2 entities with default params"""
     print("=" * 80)
-    print("PHASE 1D - REAL INTEGRATION TEST")
+    print("PHASE 1D - BASIC INTEGRATION TEST")
     print("=" * 80)
     print()
     
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
-    # Load data
-    print("1. Loading data...")
-    entities, chunks = load_data()
-    
-    # Initialize extractor (will use API key from .env)
-    print("\n2. Initializing extractor...")
+    # Initialize extractor
+    print("Initializing extractor (default params)...")
     extractor = RAKGRelationExtractor(
         model_name="Qwen/Qwen2.5-7B-Instruct",
         semantic_threshold=0.85,
         mmr_lambda=0.55,
         num_chunks=20
     )
-    print(f"   ✓ Extractor ready (API key loaded from .env)")
+    print(f"  ✓ Ready (threshold=0.85, lambda=0.55)\n")
     
     # Test on 2 entities
     test_entities = entities[:2]
     
-    print(f"\n3. Testing extraction on {len(test_entities)} entities:")
+    print(f"Testing extraction on {len(test_entities)} entities:\n")
     for i, entity in enumerate(test_entities, 1):
-        print(f"\n   Entity {i}: {entity.get('name', 'Unknown')} ({entity.get('type', 'Unknown')})")
-        print(f"   Description: {entity.get('description', 'N/A')[:100]}...")
+        print(f"Entity {i}: {entity.get('name', 'Unknown')} ({entity.get('type', 'Unknown')})")
+        print(f"  Description: {entity.get('description', 'N/A')[:100]}...")
         
         try:
-            print(f"   Extracting relations...")
+            print(f"  Extracting relations...")
             relations = extractor.extract_relations_for_entity(entity, chunks)
             
-            print(f"   ✓ Extracted {len(relations)} relations")
+            print(f"  ✓ Extracted {len(relations)} relations")
             
             if relations:
-                print(f"\n   Sample relations:")
+                print(f"\n  Sample relations:")
                 for j, rel in enumerate(relations[:3], 1):
-                    print(f"     {j}. ({rel.get('subject')}) --[{rel.get('predicate')}]--> ({rel.get('object')})")
-                    print(f"        From chunks: {rel.get('chunk_ids', [])[:2]}...")
+                    print(f"    {j}. ({rel.get('subject')}) --[{rel.get('predicate')}]--> ({rel.get('object')})")
             else:
-                print(f"   (No relations found for this entity)")
+                print(f"  ℹ️  No relations found")
                 
-        except Exception as e:
-            print(f"   ✗ Extraction failed: {e}")
+        except KeyboardInterrupt:
             raise
-    
-    print("\n" + "=" * 80)
-    print("✅ REAL EXTRACTION TEST PASSED")
+        except Exception as e:
+            print(f"  ⚠️  Failed: {e}")
+            print(f"  → Skipping to next entity")
+            continue
+        
+        print()
+
+
+def test_parameters(entities, chunks):
+    """Parameter tuning test - 1 entity, multiple param combinations"""
     print("=" * 80)
-    print("\nThe pipeline works! Ready for full run:")
-    print("  python server_scripts/relation_processor_server.py --workers 5 --test --test-size 10")
+    print("PHASE 1D - PARAMETER TUNING TEST")
+    print("=" * 80)
     print()
+    
+    from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
+    
+    # Find a good test entity
+    test_entity = None
+    for entity in entities[5:50]:
+        name = entity.get('name', '')
+        etype = entity.get('type', '')
+        if len(name) > 4 and etype not in ['Statistical Measure', 'Number']:
+            if not any(c in name for c in ['=', '$', '>', '<']):
+                test_entity = entity
+                break
+    
+    if not test_entity:
+        test_entity = entities[10]
+    
+    print(f"Test entity: {test_entity.get('name', 'Unknown')}")
+    print(f"Type: {test_entity.get('type', 'Unknown')}")
+    print(f"Description: {test_entity.get('description', 'N/A')[:100]}...\n")
+    
+    # Parameter combinations
+    params_list = [
+        {'semantic_threshold': 0.80, 'mmr_lambda': 0.55, 'label': 'threshold=0.80'},
+        {'semantic_threshold': 0.85, 'mmr_lambda': 0.55, 'label': 'threshold=0.85 (default)'},
+        {'semantic_threshold': 0.90, 'mmr_lambda': 0.55, 'label': 'threshold=0.90'},
+        {'semantic_threshold': 0.85, 'mmr_lambda': 0.45, 'label': 'lambda=0.45 (more diversity)'},
+        {'semantic_threshold': 0.85, 'mmr_lambda': 0.55, 'label': 'lambda=0.55 (default)'},
+        {'semantic_threshold': 0.85, 'mmr_lambda': 0.65, 'label': 'lambda=0.65 (more relevance)'},
+    ]
+    
+    print(f"Testing {len(params_list)} parameter combinations...")
+    print(f"Cost: ~$0.10, Time: 3-5 minutes\n")
+    input("Press Enter to start...")
+    print()
+    
+    results = []
+    
+    for i, params in enumerate(params_list, 1):
+        print(f"Test {i}/{len(params_list)}: {params['label']}")
+        
+        try:
+            extractor = RAKGRelationExtractor(
+                model_name="Qwen/Qwen2.5-7B-Instruct",
+                semantic_threshold=params['semantic_threshold'],
+                mmr_lambda=params['mmr_lambda'],
+                num_chunks=20
+            )
+            
+            relations = extractor.extract_relations_for_entity(test_entity, chunks)
+            
+            result = {
+                'threshold': params['semantic_threshold'],
+                'lambda': params['mmr_lambda'],
+                'num_relations': len(relations),
+                'unique_predicates': len(set(r.get('predicate') for r in relations)),
+                'unique_objects': len(set(r.get('object') for r in relations)),
+                'relations': relations
+            }
+            results.append(result)
+            
+            print(f"  ✓ {len(relations)} relations, {result['unique_predicates']} unique predicates\n")
+            
+        except Exception as e:
+            print(f"  ✗ Failed: {e}\n")
+            results.append({'threshold': params['semantic_threshold'], 'lambda': params['mmr_lambda'], 'error': str(e)})
+    
+    # Compare results
+    print("\n" + "=" * 80)
+    print("COMPARISON")
+    print("=" * 80)
+    print()
+    print(f"{'Threshold':<12} {'Lambda':<8} {'Relations':<12} {'Predicates':<12} {'Objects':<10}")
+    print("-" * 80)
+    
+    for r in results:
+        if 'error' in r:
+            print(f"{r['threshold']:<12} {r['lambda']:<8} ERROR")
+        else:
+            print(f"{r['threshold']:<12} {r['lambda']:<8} {r['num_relations']:<12} "
+                  f"{r['unique_predicates']:<12} {r['unique_objects']:<10}")
+    
+    # Recommendations
+    valid = [r for r in results if 'error' not in r and r['num_relations'] > 0]
+    if valid:
+        best_count = max(valid, key=lambda x: x['num_relations'])
+        best_diversity = max(valid, key=lambda x: x['unique_predicates'])
+        
+        print(f"\nRecommendations:")
+        print(f"  Most relations: threshold={best_count['threshold']}, lambda={best_count['lambda']} ({best_count['num_relations']} relations)")
+        print(f"  Most diverse: threshold={best_diversity['threshold']}, lambda={best_diversity['lambda']} ({best_diversity['unique_predicates']} predicates)")
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Phase 1D Integration Test')
+    parser.add_argument('--tune-params', action='store_true', help='Run parameter tuning test')
+    args = parser.parse_args()
+    
     try:
-        test_real_extraction()
-        return 0
-    except Exception as e:
+        entities, chunks = load_data()
+        
+        if args.tune_params:
+            test_parameters(entities, chunks)
+        else:
+            test_basic(entities, chunks)
+        
         print("\n" + "=" * 80)
-        print(f"✗ Test failed: {e}")
+        print("✅ TEST COMPLETE")
         print("=" * 80)
+        print()
+        
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        return 1
+    except Exception as e:
+        print(f"\n✗ Test failed: {e}")
         import traceback
         traceback.print_exc()
         return 1
