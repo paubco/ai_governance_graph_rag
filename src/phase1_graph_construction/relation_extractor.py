@@ -639,18 +639,20 @@ class RAKGRelationExtractor:
             stop_sequences = ["```", "\n\nNote:", "Explanation:"]
         
         try:
-            # Call API
+            # Call API - Use CHAT endpoint for instruct models
             logger.debug(f"  Calling LLM API...")
-            response = self.client.completions.create(
+            response = self.client.chat.completions.create(
                 model=self.model_name,
-                prompt=prompt,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stop=stop_sequences
             )
             
-            # Extract raw response
-            raw_text = response.choices[0].text.strip()
+            # Extract raw response from chat format
+            raw_text = response.choices[0].message.content.strip()
             
             # Log response details
             logger.debug(f"  ✓ Response received: {len(raw_text)} chars")
