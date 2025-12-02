@@ -73,7 +73,7 @@ class ParallelRelationProcessor:
         num_workers: int = 3,
         checkpoint_interval: int = 100,
         output_file: str = "data/interim/relations/relations.json",
-        similarity_threshold: float = 0.85,
+        semantic_threshold: float = 0.85,
         mmr_lambda: float = 0.55,
         num_chunks: int = 20
     ):
@@ -85,13 +85,14 @@ class ParallelRelationProcessor:
             num_workers: Number of parallel workers (3-10 recommended)
             checkpoint_interval: Save every N entities
             output_file: Output path for results
-            similarity_threshold: Semantic similarity threshold
+            semantic_threshold: Semantic similarity threshold
             mmr_lambda: MMR diversity parameter
             num_chunks: Chunk count for MMR selection
         """
         self.extractor = RAKGRelationExtractor(
+            model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
             api_key=api_key,
-            similarity_threshold=similarity_threshold,
+            semantic_threshold=semantic_threshold,
             mmr_lambda=mmr_lambda,
             num_chunks=num_chunks
         )
@@ -122,7 +123,7 @@ class ParallelRelationProcessor:
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Initialized with {num_workers} workers")
-        logger.info(f"  Similarity threshold: {similarity_threshold}")
+        logger.info(f"  Semantic threshold: {semantic_threshold}")
         logger.info(f"  MMR lambda: {mmr_lambda}")
         logger.info(f"  Chunks for MMR: {num_chunks}")
     
@@ -518,7 +519,7 @@ Examples:
         api_key=api_key,
         num_workers=args.workers,
         output_file=args.output_file,
-        similarity_threshold=args.threshold,
+        semantic_threshold=args.threshold,
         mmr_lambda=args.mmr_lambda,
         num_chunks=args.num_chunks
     )

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Phase 1D Relation Extraction - Consolidated Test Script
 
@@ -150,8 +149,9 @@ def test_basic(entities: List[Dict],
     
     # Initialize extractor
     extractor = RAKGRelationExtractor(
+        model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
         api_key=api_key,
-        similarity_threshold=threshold,
+        semantic_threshold=threshold,
         mmr_lambda=mmr_lambda,
         num_chunks=num_chunks
     )
@@ -257,8 +257,9 @@ def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
         logger.info(f"threshold={params['threshold']}, lambda={params['mmr_lambda']}, chunks={params['num_chunks']}")
         
         extractor = RAKGRelationExtractor(
+            model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
             api_key=api_key,
-            similarity_threshold=params['threshold'],
+            semantic_threshold=params['threshold'],
             mmr_lambda=params['mmr_lambda'],
             num_chunks=params['num_chunks']
         )
