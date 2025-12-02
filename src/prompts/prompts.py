@@ -1,11 +1,10 @@
 """
-Entity extraction prompts for Phase 1B
-
-Following RAKG methodology:
-- Free entity types (LLM-discovered, not predefined)
-- High coverage principle (over-extract, filter later)
-- Citation-aware extraction
+Extraction Prompts for Phases 1B, 1C, 1D
 """
+
+# ============================================================================
+# PHASE 1B: ENTITY EXTRACTION
+# ============================================================================
 
 ENTITY_EXTRACTION_PROMPT = """You are an entity extraction assistant for AI governance and regulatory compliance documents.
 
@@ -32,9 +31,10 @@ Output ONLY valid JSON (no other text, no markdown):
 
 JSON output:"""
 
-"""
-Entity disambiguation prompts for Phase 1C
-"""
+
+# ============================================================================
+# PHASE 1C: ENTITY DISAMBIGUATION
+# ============================================================================
 
 SAMEJUDGE_PROMPT = """Are these two entities the SAME real-world entity?
 
@@ -57,3 +57,58 @@ Respond ONLY with valid JSON:
 }}
 
 JSON:"""
+
+
+# ============================================================================
+# PHASE 1D: RELATION EXTRACTION (OPENIE)
+# ============================================================================
+
+RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in OpenIE (Open Information Extraction).
+
+Your task: Extract relationship triplets from regulatory and academic text without predefined schemas.
+
+TARGET ENTITY:
+Name: {entity_name}
+Type: {entity_type}
+Description: {entity_description}
+
+CONTEXT CHUNKS:
+{chunks_text}
+
+EXTRACTION TASK:
+Extract ALL relationships where "{entity_name}" is the subject OR object of the relation.
+
+OPENIE PRINCIPLES:
+1. NO predefined relation types - discover relations from text
+2. Relation predicates are the linking phrases in text (e.g., "regulates", "applies to", "established by")
+3. Extract both directions if relevant: (A, predicate1, B) and (B, predicate2, A) are different
+4. Only extract relations explicitly stated or strongly implied in the chunks
+5. Subject and object should be entities, organizations, concepts, or regulations
+
+EXAMPLES:
+- Text: "The GDPR regulates data processing in the EU"
+  → ("GDPR", "regulates", "data processing")
+  → ("GDPR", "applies_in", "EU")
+  
+- Text: "AI systems must comply with GDPR requirements"
+  → ("AI systems", "must_comply_with", "GDPR")
+
+OUTPUT FORMAT (JSON only, no other text):
+{{
+  "relations": [
+    {{
+      "subject": "entity_name",
+      "predicate": "relationship_verb_phrase",
+      "object": "entity_name",
+      "chunk_ids": ["chunk_id_where_found"]
+    }}
+  ]
+}}
+
+CRITICAL RULES:
+- Output ONLY valid JSON
+- No explanations, notes, markdown, or code blocks
+- Predicates should be clear verb phrases (2-4 words typical)
+- If no relationships found, return: {{"relations": []}}
+
+Extract all relations now:"""
