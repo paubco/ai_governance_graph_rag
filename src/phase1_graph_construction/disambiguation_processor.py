@@ -2,7 +2,7 @@
 Entity Disambiguation Server - GPU Version
 
 GPU-optimized pipeline with multithreading for production use.
-All 4 stages: dedup → embed → FAISS → thresholds → LLM
+All 4 stages: dedup â†’ embed â†’ FAISS â†’ thresholds â†’ LLM
 
 For CPU/development version, use src/phase1_graph_construction/disambiguation_processor.py
 """
@@ -31,7 +31,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import local modules
 from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
-    TieredThresholdFilter
+    TieredThresholdFilter,
+    normalize_key
 )
 from src.utils.embedder import BGEEmbedder
 from src.utils.embed_processor import EmbedProcessor
@@ -322,10 +323,10 @@ class SameJudgeGPU:
     """
     
     def __init__(self, 
-                 model: str = "Qwen/Qwen2-7B-Instruct",
+                 model: str = "Qwen/Qwen2.5-7B-Instruct-Turbo",
                  api_key: str = None,
                  num_workers: int = 8,
-                 checkpoint_interval: int = 100):
+                 checkpoint_interval: int = 500):
         """
         Initialize GPU-optimized SameJudge
         
@@ -360,6 +361,45 @@ class SameJudgeGPU:
         from together import Together
         return Together(api_key=self.api_key)
     
+    def _parse_llm_response(self, response_text: str):
+        """
+        Robust JSON parsing with regex fallback
+        
+        Handles: markdown blocks, unescaped quotes/backslashes, malformed JSON
+        Returns: bool (is_same) or None if parsing failed
+        """
+        import re
+        
+        # Strategy 1: Clean and parse JSON
+        try:
+            text = response_text.replace('```json', '').replace('```', '').strip()
+            if '{' in text and '}' in text:
+                text = text[text.find('{'):text.rfind('}')+1]
+            result = json.loads(text)
+            return result.get('result', False)
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Regex extraction of "result" field
+        try:
+            match = re.search(r'"result"\s*:\s*(true|false)', response_text, re.IGNORECASE)
+            if match:
+                return match.group(1).lower() == 'true'
+        except Exception:
+            pass
+        
+        # Strategy 3: Look for YES/NO patterns in text
+        try:
+            lower_text = response_text.lower()
+            if '"result": true' in lower_text or 'same entity' in lower_text:
+                return True
+            if '"result": false' in lower_text or 'different entit' in lower_text:
+                return False
+        except Exception:
+            pass
+        
+        return None  # Parsing failed
+    
     def verify_pair(self, 
                     entity1_key: Tuple[str, str], 
                     entity2_key: Tuple[str, str],
@@ -380,6 +420,10 @@ class SameJudgeGPU:
         Returns:
             (entity1_key, entity2_key, is_same) tuple
         """
+        # Defensive key check (should be pre-filtered, but just in case)
+        if entity1_key not in entity_map or entity2_key not in entity_map:
+            return (entity1_key, entity2_key, False)
+        
         entity1 = entity_map[entity1_key]
         entity2 = entity_map[entity2_key]
         
@@ -410,10 +454,19 @@ class SameJudgeGPU:
                 )
                 
                 response_text = response.choices[0].message.content.strip()
-                response_text = response_text.replace('```json', '').replace('```', '').strip()
-                result = json.loads(response_text)
                 
-                is_same = result.get('result', False)
+                # Use robust parser with fallbacks
+                is_same = self._parse_llm_response(response_text)
+                
+                if is_same is None:
+                    # Parsing failed even with fallbacks
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        logger.error(f"Parse failed {entity1_key}-{entity2_key}: {response_text[:80]}")
+                        return (entity1_key, entity2_key, False)
+                
                 return (entity1_key, entity2_key, is_same)
                 
             except Exception as e:
@@ -432,7 +485,7 @@ class SameJudgeGPU:
         Verify batch of uncertain pairs with multithreading
         
         Works with entity KEYS - much cleaner than indices!
-        No validation needed - keys either exist or don't.
+        Pre-filters pairs with missing keys (from Stage 3 merges).
         
         Thread Safety:
             - Entity map is read-only (safe)
@@ -450,11 +503,25 @@ class SameJudgeGPU:
         """
         from src.phase1_graph_construction.entity_disambiguator import build_entity_map
         
-        logger.info(f"Stage 4: Verifying {len(uncertain_pairs)} pairs with {self.num_workers} workers...")
-        logger.info(f"Estimated cost: ${len(uncertain_pairs) * self.cost_per_call:.2f}")
-        
         # Build entity map once for all workers (read-only, thread-safe)
         entity_map = build_entity_map(entities)
+        
+        # Pre-filter pairs: remove those with missing keys (merged in Stage 3)
+        valid_pairs = []
+        skipped = 0
+        for pair in uncertain_pairs:
+            key1 = pair['entity1_key']
+            key2 = pair['entity2_key']
+            if key1 in entity_map and key2 in entity_map:
+                valid_pairs.append(pair)
+            else:
+                skipped += 1
+        
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} pairs with missing entity keys (merged in Stage 3)")
+        
+        logger.info(f"Stage 4: Verifying {len(valid_pairs)} pairs with {self.num_workers} workers...")
+        logger.info(f"Estimated cost: ${len(valid_pairs) * self.cost_per_call:.2f}")
         
         matches = []
         processed = 0
@@ -467,12 +534,26 @@ class SameJudgeGPU:
                 checkpoint = json.load(f)
             processed = checkpoint.get('processed', 0)
             matches = checkpoint.get('matches', [])
+            
+            # Normalize keys from JSON (tuples become lists in JSON)
+            matches = [
+                {
+                    'entity1_key': normalize_key(m['entity1_key']),
+                    'entity2_key': normalize_key(m['entity2_key'])
+                }
+                for m in matches
+            ]
+            
             logger.info(f"Resuming from: {processed} pairs processed")
         
         # Process remaining
-        remaining_pairs = uncertain_pairs[processed:]
+        remaining_pairs = valid_pairs[processed:]
         
-        # Multithreaded processing (no validation needed with entity keys!)
+        if not remaining_pairs:
+            logger.info("No pairs to process")
+            return matches
+        
+        # Multithreaded processing
         with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
             # Submit all tasks
             futures = [
@@ -481,7 +562,7 @@ class SameJudgeGPU:
             ]
             
             # Collect results as they complete (main thread - atomic)
-            with tqdm(total=len(remaining_pairs), desc="SameJudge GPU") as pbar:
+            with tqdm(total=len(remaining_pairs), desc="SameJudge") as pbar:
                 for future in as_completed(futures):
                     entity1_key, entity2_key, is_same = future.result()
                     
@@ -494,25 +575,37 @@ class SameJudgeGPU:
                     processed += 1
                     pbar.update(1)
                     
+                    # Progress logging every 500 pairs
+                    if processed % 500 == 0:
+                        elapsed = time.time() - start_time
+                        rate = processed / elapsed if elapsed > 0 else 0
+                        eta = (len(remaining_pairs) - processed) / rate if rate > 0 else 0
+                        logger.info(
+                            f"Progress: {processed}/{len(remaining_pairs)} "
+                            f"({100*processed/len(remaining_pairs):.1f}%) | "
+                            f"Matches: {len(matches)} | Rate: {rate:.1f}/s | ETA: {eta/60:.1f}min"
+                        )
+                    
                     # Checkpoint with lock
                     if checkpoint_path and processed % self.checkpoint_interval == 0:
                         with self.checkpoint_lock:
-                            self._save_checkpoint(checkpoint_path, matches, processed, len(uncertain_pairs))
+                            self._save_checkpoint(checkpoint_path, matches, processed, len(valid_pairs))
         
         # Final checkpoint
         if checkpoint_path:
             with self.checkpoint_lock:
-                self._save_checkpoint(checkpoint_path, matches, processed, len(uncertain_pairs), final=True)
+                self._save_checkpoint(checkpoint_path, matches, processed, len(valid_pairs), final=True)
         
         elapsed = time.time() - start_time
-        self.stats['pairs_verified'] = processed  # Actual pairs attempted
+        self.stats['pairs_verified'] = processed
         self.stats['matches_found'] = len(matches)
         self.stats['total_cost'] = processed * self.cost_per_call
         
         logger.info(f"LLM verification complete:")
-        logger.info(f"  Pairs attempted: {processed} / {len(uncertain_pairs)} total")
+        logger.info(f"  Pairs processed: {processed}/{len(valid_pairs)}")
         logger.info(f"  Matches: {len(matches)} ({100 * len(matches) / processed if processed > 0 else 0:.1f}%)")
         logger.info(f"  Time: {elapsed/60:.1f} minutes")
+        logger.info(f"  Rate: {processed/elapsed if elapsed > 0 else 0:.1f} pairs/sec")
         logger.info(f"  Cost: ${self.stats['total_cost']:.2f}")
         
         return matches
@@ -702,7 +795,7 @@ class DisambiguationServerProcessor:
         stats = self.embed_processor.verify_embeddings(embedded_dict)
         self.stats['stage1_5'] = stats
         
-        logger.info(f"✓ Stage 1.5 complete: {len(entities)} entities embedded")
+        logger.info(f"âœ“ Stage 1.5 complete: {len(entities)} entities embedded")
         
         return entities
     
@@ -777,7 +870,7 @@ class DisambiguationServerProcessor:
                 'similarity': pair['similarity']
             })
         
-        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} → {len(updated_uncertain)}")
+        logger.info(f"Updated uncertain pairs: {len(filtered['uncertain'])} â†’ {len(updated_uncertain)}")
         filtered['uncertain'] = updated_uncertain
         
         # Save entities after auto-merges
@@ -844,7 +937,7 @@ class DisambiguationServerProcessor:
             logger.info(f"Stop at stage: {stop_at_stage}")
         
         if start_from_stage == 1:
-            # Full pipeline: dedup → embed → FAISS → thresholds → LLM
+            # Full pipeline: dedup â†’ embed â†’ FAISS â†’ thresholds â†’ LLM
             if not input_file:
                 raise ValueError("input_file required when starting from Stage 1")
             
@@ -852,14 +945,14 @@ class DisambiguationServerProcessor:
             entities = self.run_stage1(input_file)
             
             if stop_at_stage == 1:
-                logger.info("✓ Stopping after Stage 1 (exact dedup)")
+                logger.info("âœ“ Stopping after Stage 1 (exact dedup)")
                 return self.stats
             
             # Stage 1.5: Embed
             entities = self.run_stage1_5(entities)
             
             if stop_at_stage == 2:
-                logger.info("✓ Stopping after Stage 1.5 (embedding complete)")
+                logger.info("âœ“ Stopping after Stage 1.5 (embedding complete)")
                 return self.stats
                 
         elif start_from_stage == 2:
@@ -879,14 +972,14 @@ class DisambiguationServerProcessor:
         pairs = self.run_stage2(entities)
         
         if stop_at_stage == 2:
-            logger.info("✓ Stopping after Stage 2 (FAISS blocking)")
+            logger.info("âœ“ Stopping after Stage 2 (FAISS blocking)")
             return self.stats
         
         # Stage 3: Tiered thresholds
         filtered, entities = self.run_stage3(pairs, entities)
         
         if stop_at_stage == 3:
-            logger.info("✓ Stopping after Stage 3 (threshold filtering)")
+            logger.info("âœ“ Stopping after Stage 3 (threshold filtering)")
             return self.stats
         
         # Stage 4: GPU LLM verification
@@ -1027,9 +1120,9 @@ Note: For CPU version, use src/phase1_graph_construction/disambiguation_processo
         elapsed = time.time() - start_time
         
         if args.stop_at_stage:
-            logger.info(f"\n✓ Stopped at Stage {args.stop_at_stage} (completed in {elapsed/60:.1f} minutes)")
+            logger.info(f"\nâœ“ Stopped at Stage {args.stop_at_stage} (completed in {elapsed/60:.1f} minutes)")
         else:
-            logger.info(f"\n✓ Pipeline completed in {elapsed/60:.1f} minutes")
+            logger.info(f"\nâœ“ Pipeline completed in {elapsed/60:.1f} minutes")
             logger.info(f"Output saved to: {args.output}")
         sys.exit(0)
         

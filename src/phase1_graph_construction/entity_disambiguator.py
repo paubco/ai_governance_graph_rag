@@ -49,6 +49,33 @@ def get_entity_key(entity: Dict) -> Tuple[str, str]:
     return (entity['name'], entity['type'])
 
 
+def normalize_key(key):
+    """
+    Normalize entity key to hashable tuple
+    
+    Handles JSON deserialization where tuples become lists.
+    Critical for checkpoint resume functionality.
+    
+    JSON serialization converts tuples to lists. When loading from checkpoint,
+    we need to convert list keys back to tuples for use as dict keys.
+    
+    Args:
+        key: Either tuple (name, type) or list [name, type]
+        
+    Returns:
+        Tuple (name, type) - always hashable
+        
+    Example:
+        >>> normalize_key(['UAE', 'Country'])  # From JSON checkpoint
+        ('UAE', 'Country')
+        >>> normalize_key(('UAE', 'Country'))  # Already tuple
+        ('UAE', 'Country')
+    """
+    if isinstance(key, list):
+        return tuple(key)
+    return key
+
+
 def build_entity_map(entities: List[Dict]) -> Dict[Tuple[str, str], Dict]:
     """
     Build O(1) lookup map from entity keys to entity dicts
@@ -535,21 +562,29 @@ class TieredThresholdFilter:
             parent[key] = key
         
         def find(x):
-            """Find root with path compression"""
+            """Find root with path compression (handles list/tuple keys from JSON)"""
+            # Normalize key (JSON checkpoint may have converted tuples to lists)
+            x = normalize_key(x)
+            # Auto-initialize if missing (defensive programming)
+            if x not in parent:
+                parent[x] = x
             if parent[x] != x:
                 parent[x] = find(parent[x])
             return parent[x]
         
         def union(x, y):
-            """Union two sets"""
+            """Union two sets (handles list/tuple keys from JSON)"""
+            # Normalize keys first (critical for checkpoint resume)
+            x = normalize_key(x)
+            y = normalize_key(y)
             px, py = find(x), find(y)
             if px != py:
                 parent[py] = px
         
         # Union all merged pairs (using entity keys - no index validation needed!)
         for pair in merged_pairs:
-            key1 = pair['entity1_key']
-            key2 = pair['entity2_key']
+            key1 = normalize_key(pair['entity1_key'])  # Normalize from checkpoint
+            key2 = normalize_key(pair['entity2_key'])  # Normalize from checkpoint
             union(key1, key2)
         
         # Group entities by root

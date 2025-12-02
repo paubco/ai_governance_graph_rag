@@ -31,7 +31,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import local modules
 from src.phase1_graph_construction.entity_disambiguator import (
     ExactDeduplicator,
-    TieredThresholdFilter
+    TieredThresholdFilter,
+    normalize_key
 )
 from src.utils.embedder import BGEEmbedder
 from src.utils.embed_processor import EmbedProcessor
@@ -533,6 +534,16 @@ class SameJudgeGPU:
                 checkpoint = json.load(f)
             processed = checkpoint.get('processed', 0)
             matches = checkpoint.get('matches', [])
+            
+            # Normalize keys from JSON (tuples become lists in JSON)
+            matches = [
+                {
+                    'entity1_key': normalize_key(m['entity1_key']),
+                    'entity2_key': normalize_key(m['entity2_key'])
+                }
+                for m in matches
+            ]
+            
             logger.info(f"Resuming from: {processed} pairs processed")
         
         # Process remaining
