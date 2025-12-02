@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Phase 1D Relation Extraction - Consolidated Test Script
 
@@ -65,19 +66,40 @@ PREFERRED_ENTITIES = [
 
 
 def load_data(entities_file: str, chunks_file: str):
-    """Load entities and chunks"""
+    """Load entities and chunks.
+    
+    Expected formats:
+    - Entities: {entity_id: entity_obj, ...} or {"entities": [...]}
+    - Chunks: {chunk_id: chunk_obj, ...}
+    """
     logger.info(f"Loading entities from {entities_file}")
     with open(entities_file, 'r', encoding='utf-8') as f:
         entities_data = json.load(f)
     
-    entities = entities_data.get('entities', entities_data) if isinstance(entities_data, dict) else entities_data
+    # Handle dict with 'entities' key or dict with entity_ids as keys
+    if isinstance(entities_data, dict) and 'entities' in entities_data:
+        entities = entities_data['entities']
+    elif isinstance(entities_data, dict):
+        entities = list(entities_data.values())
+    elif isinstance(entities_data, list):
+        entities = entities_data
+    else:
+        raise ValueError(f"Unexpected entities format: {type(entities_data).__name__}")
+    
     logger.info(f"✓ Loaded {len(entities)} entities")
     
     logger.info(f"Loading chunks from {chunks_file}")
     with open(chunks_file, 'r', encoding='utf-8') as f:
         chunks_data = json.load(f)
     
-    chunks = chunks_data.get('chunks', chunks_data) if isinstance(chunks_data, dict) else chunks_data
+    # Convert dict of {chunk_id: chunk_obj} to list
+    if isinstance(chunks_data, dict):
+        chunks = list(chunks_data.values())
+    elif isinstance(chunks_data, list):
+        chunks = chunks_data
+    else:
+        raise ValueError(f"Expected dict or list for chunks, got {type(chunks_data).__name__}")
+    
     logger.info(f"✓ Loaded {len(chunks)} chunks")
     
     return entities, chunks

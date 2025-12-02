@@ -128,15 +128,23 @@ class ParallelRelationProcessor:
         logger.info(f"  Chunks for MMR: {num_chunks}")
     
     def load_normalized_entities(self, entities_file: str = "data/interim/entities/normalized_entities.json"):
-        """Load normalized entities from JSON file."""
+        """Load normalized entities from JSON file.
+        
+        Expected format: {entity_id: {entity_object}, ...} or {"entities": [...]}
+        Converts dict to list if needed.
+        """
         logger.info(f"Loading entities from {entities_file}...")
         
         with open(entities_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Handle different formats
+        # Handle dict with 'entities' key (metadata wrapper)
         if isinstance(data, dict) and 'entities' in data:
             entities = data['entities']
+        # Handle dict with entity_ids as keys
+        elif isinstance(data, dict):
+            entities = list(data.values())
+        # Handle direct list
         elif isinstance(data, list):
             entities = data
         else:
@@ -146,19 +154,23 @@ class ParallelRelationProcessor:
         return entities
     
     def load_chunks_embedded(self, chunks_file: str = "data/interim/chunks/chunks_embedded.json"):
-        """Load embedded chunks from JSON file."""
+        """Load embedded chunks from JSON file.
+        
+        Expected format: {"chunk_id": {chunk_object}, ...}
+        Converts to list of chunk objects for processing.
+        """
         logger.info(f"Loading chunks from {chunks_file}...")
         
         with open(chunks_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Handle different formats
-        if isinstance(data, dict) and 'chunks' in data:
-            chunks = data['chunks']
+        # Convert dict of {chunk_id: chunk_obj} to list
+        if isinstance(data, dict):
+            chunks = list(data.values())
         elif isinstance(data, list):
             chunks = data
         else:
-            raise ValueError(f"Unexpected format in {chunks_file}")
+            raise ValueError(f"Expected dict or list, got {type(data).__name__}")
         
         logger.info(f"✅ Loaded {len(chunks)} chunks")
         return chunks
