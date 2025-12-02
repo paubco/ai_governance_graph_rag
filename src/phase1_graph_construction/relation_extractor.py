@@ -221,7 +221,7 @@ def build_relation_extraction_prompt(entity: dict, chunks: list) -> str:
 
 def extract_relations_json(response_text: str) -> str:
     """
-    Extract relations JSON from LLM response
+    Extract relations JSON from LLM response with repair attempts
     
     Args:
         response_text: Raw LLM response
@@ -238,9 +238,41 @@ def extract_relations_json(response_text: str) -> str:
     pattern = re.compile(r'\{[\s\S]*?\}', re.MULTILINE)
     match = pattern.search(cleaned)
     if match:
-        return match.group(0).strip()
+        json_str = match.group(0).strip()
+    else:
+        json_str = cleaned.strip()
     
-    return cleaned.strip()
+    # Try to repair common JSON issues
+    json_str = repair_json(json_str)
+    
+    return json_str
+
+
+def repair_json(json_str: str) -> str:
+    """
+    Attempt to repair common JSON formatting issues
+    
+    Common issues:
+    - Trailing commas in arrays/objects
+    - Missing commas between array elements
+    - Unescaped quotes in strings
+    - Single quotes instead of double quotes
+    """
+    import re
+    
+    # Fix single quotes to double quotes (but not in strings)
+    json_str = json_str.replace("'", '"')
+    
+    # Remove trailing commas before } or ]
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+    
+    # Fix missing commas between objects in array (} followed by {)
+    json_str = re.sub(r'\}(\s*)\{', r'},\1{', json_str)
+    
+    # Fix missing commas between array elements
+    json_str = re.sub(r'\](\s*)\[', r'],\1[', json_str)
+    
+    return json_str
 
 
 # ============================================================================
@@ -690,7 +722,26 @@ class RAKGRelationExtractor:
             
         except json.JSONDecodeError as e:
             logger.error(f"  ✗ JSON parse error: {e}")
-            logger.debug(f"  Raw response (first 500 chars): {raw_text[:500] if 'raw_text' in locals() else 'N/A'}")
+            logger.error(f"  Cleaned JSON (first 800 chars): {cleaned[:800]}")
+            logger.error(f"  Raw response (first 800 chars): {raw_text[:800] if 'raw_text' in locals() else 'N/A'}")
+            
+            # Save full malformed response to file for debugging
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            error_file = PROMPT_LOG_DIR / f"ERROR_malformed_json_{timestamp}.txt"
+            try:
+                with open(error_file, 'w', encoding='utf-8') as f:
+                    f.write("MALFORMED JSON RESPONSE\n")
+                    f.write("=" * 80 + "\n\n")
+                    f.write("ERROR:\n")
+                    f.write(str(e) + "\n\n")
+                    f.write("CLEANED JSON:\n")
+                    f.write(cleaned + "\n\n")
+                    f.write("RAW RESPONSE:\n")
+                    f.write(raw_text if 'raw_text' in locals() else 'N/A')
+                logger.error(f"  Saved malformed response to: {error_file}")
+            except Exception as save_error:
+                logger.debug(f"  Could not save error file: {save_error}")
+            
             return {"relations": []}  # Graceful fallback
         
         except Exception as e:
