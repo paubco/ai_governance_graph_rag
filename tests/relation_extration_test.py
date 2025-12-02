@@ -146,12 +146,10 @@ def test_parameters(entities, chunks):
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
     # Hardcoded entity indices for testing
-    # Use: python browse_entities.py --search "AI" to find indices
     GOOD_TEST_ENTITY_INDICES = [
-        # Add your entity indices here, e.g.:
-        # 42,    # artificial intelligence
-        # 156,   # GDPR
-        # 789,   # EU
+        42,    # artificial intelligence
+        156,   # GDPR
+        789,   # EU
     ]
     
     # Select test entity
@@ -160,7 +158,7 @@ def test_parameters(entities, chunks):
         print("Run: python browse_entities.py --search 'AI'")
         print("Then add indices to test file.\n")
         print("Using entity[100] as fallback...\n")
-        test_entity = entities[100]
+        test_entity = entities[42]
     else:
         idx = GOOD_TEST_ENTITY_INDICES[0]
         test_entity = entities[idx]
