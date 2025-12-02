@@ -145,53 +145,50 @@ def test_parameters(entities, chunks):
     
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
-    # Find a good test entity
-    print("Selecting test entity...")
-    test_entity = None
+    # Hardcoded list of good test entities to search for
+    GOOD_TEST_ENTITIES = [
+        'AI',
+        'EU',
+        'GDPR'
+    ]
     
-    # Prioritize these types
-    preferred_types = ['Regulation', 'Concept', 'Technology', 'Organization', 
-                       'Legal Document', 'Framework', 'Standard', 'Policy']
+    # Find these entities in the dataset
+    print("Searching for good test entities...")
+    found_entities = []
     
-    # First pass: look for preferred types with multiple chunks
-    for entity in entities[:500]:
-        name = entity.get('name', '')
-        etype = entity.get('type', '')
-        chunk_ids = entity.get('chunk_ids', [])
-        
-        # Must have good properties
-        if (len(name) > 2 and 
-            len(name) < 100 and
-            etype in preferred_types and
-            len(chunk_ids) >= 5):  # At least 5 chunks for meaningful MMR
-            
-            # Skip if name has weird characters
-            if not any(c in name for c in ['=', '$', '>', '<', '#', '@']):
-                test_entity = entity
-                break
-    
-    # Second pass: any reasonable entity with multiple chunks
-    if not test_entity:
-        for entity in entities[:500]:
+    for target_name in GOOD_TEST_ENTITIES:
+        for entity in entities:
             name = entity.get('name', '')
-            etype = entity.get('type', '')
             chunk_ids = entity.get('chunk_ids', [])
             
-            if (len(name) > 3 and 
-                len(name) < 100 and
-                etype not in ['Statistical Measure', 'Number', 'Hashtag'] and
+            # Match (case-insensitive, must have chunks)
+            if (name.lower() == target_name.lower() and 
                 len(chunk_ids) >= 5):
-                
-                if not any(c in name for c in ['=', '$', '>', '<', '#', '@']):
-                    test_entity = entity
-                    break
+                found_entities.append(entity)
+                print(f"  ✓ Found: {name} ({entity.get('type', 'Unknown')}, {len(chunk_ids)} chunks)")
+                break
     
-    # Fallback
-    if not test_entity:
-        print("⚠️  Could not find ideal test entity, using entity[20]")
+    if not found_entities:
+        print("\n⚠️  No good test entities found in dataset!")
+        print("Using fallback entity[20]")
         test_entity = entities[20]
     else:
-        print(f"✓ Selected entity with {len(test_entity.get('chunk_ids', []))} chunks\n")
+        print(f"\n✓ Found {len(found_entities)} good test entities\n")
+        
+        # Show menu if multiple found
+        if len(found_entities) == 1:
+            test_entity = found_entities[0]
+        else:
+            print("Select test entity:")
+            for i, entity in enumerate(found_entities[:10], 1):  # Show max 10
+                name = entity.get('name', 'Unknown')
+                etype = entity.get('type', 'Unknown')
+                chunks = len(entity.get('chunk_ids', []))
+                print(f"  {i}. {name} ({etype}, {chunks} chunks)")
+            
+            # Auto-select first one (or let user choose later if needed)
+            print(f"\nUsing: {found_entities[0].get('name')}\n")
+            test_entity = found_entities[0]
     
     print(f"Test entity: {test_entity.get('name', 'Unknown')}")
     print(f"Type: {test_entity.get('type', 'Unknown')}")
