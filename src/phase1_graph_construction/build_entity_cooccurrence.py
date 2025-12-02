@@ -36,17 +36,7 @@ def load_normalized_entities(entities_file: str) -> List[Dict]:
     logger.info(f"Loading normalized entities from {entities_file}")
     
     with open(entities_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    # Handle different formats
-    if isinstance(data, list):
-        entities = data
-    elif isinstance(data, dict) and 'entities' in data:
-        entities = data['entities']
-    elif isinstance(data, dict):
-        entities = list(data.values())
-    else:
-        raise ValueError(f"Unexpected format in {entities_file}")
+        entities = json.load(f)
     
     logger.info(f"✓ Loaded {len(entities)} normalized entities")
     return entities
@@ -59,13 +49,11 @@ def load_chunks(chunks_file: str) -> List[Dict]:
     with open(chunks_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
-    # Handle different formats
+    # Handle dict or list format
     if isinstance(data, dict):
         chunks = list(data.values())
-    elif isinstance(data, list):
-        chunks = data
     else:
-        raise ValueError(f"Unexpected format in {chunks_file}")
+        chunks = data
     
     logger.info(f"✓ Loaded {len(chunks)} chunks")
     return chunks
@@ -102,14 +90,14 @@ def build_cooccurrence_matrix(
         entities: List of normalized entity dicts
     
     Returns:
-        Dict mapping chunk_id to list of entity_ids
+        Dict mapping chunk_id to list of entity names
     """
     logger.info(f"Building co-occurrence matrix for {len(chunks)} chunks × {len(entities)} entities")
     
     cooccurrence = {}
     
-    # Build entity lookup
-    entity_names = [(e['id'], e['name']) for e in entities]
+    # Build entity lookup (use name as identifier)
+    entity_names = [e['name'] for e in entities]
     
     for i, chunk in enumerate(chunks):
         if i % 1000 == 0 and i > 0:
@@ -120,16 +108,16 @@ def build_cooccurrence_matrix(
         text_lower = text.lower()
         
         # Detect entities in this chunk
-        detected_entity_ids = []
-        for entity_id, entity_name in entity_names:
+        detected_names = []
+        for entity_name in entity_names:
             if entity_appears_in_text(entity_name, text_lower):
-                detected_entity_ids.append(entity_id)
+                detected_names.append(entity_name)
         
-        if detected_entity_ids:
-            cooccurrence[chunk_id] = detected_entity_ids
+        if detected_names:
+            cooccurrence[chunk_id] = detected_names
     
     # Statistics
-    total_entries = sum(len(ids) for ids in cooccurrence.values())
+    total_entries = sum(len(names) for names in cooccurrence.values())
     chunks_with_entities = len(cooccurrence)
     avg_entities_per_chunk = total_entries / chunks_with_entities if chunks_with_entities > 0 else 0
     

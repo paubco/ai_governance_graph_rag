@@ -449,21 +449,15 @@ class RAKGRelationExtractor:
     
     def _load_normalized_entities(self, entities_file: str):
         """Load normalized entities and build lookup map"""
-        with open(entities_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        logger.info(f"Loading normalized entities from {entities_file}")
         
-        # Handle different formats
-        if isinstance(data, list):
-            entities = data
-        elif isinstance(data, dict) and 'entities' in data:
-            entities = data['entities']
-        elif isinstance(data, dict):
-            entities = list(data.values())
-        else:
-            raise ValueError(f"Unexpected format in {entities_file}")
+        with open(entities_file, 'r', encoding='utf-8') as f:
+            entities = json.load(f)
         
         self.normalized_entities = entities
-        self.entity_map = {e['id']: e for e in entities}
+        # Use name as key for entity lookup
+        self.entity_map = {e['name']: e for e in entities}
+        logger.info(f"  Loaded {len(entities)} entities")
     
     # ========================================================================
     # STEP 1: CANDIDATE GATHERING
@@ -669,7 +663,7 @@ class RAKGRelationExtractor:
         expressions of the same entities.
         
         Args:
-            entity: Entity dict with 'id', 'embedding'
+            entity: Entity dict with 'name', 'embedding'
             candidate_chunks: Pool of candidate chunks
         
         Returns:
@@ -695,9 +689,9 @@ class RAKGRelationExtractor:
         # Stage 2: Entity coverage maximization (40 → 20)
         logger.debug(f"  Stage 2: Entity coverage maximization ({len(semantic_diverse)} → {self.num_chunks})")
         
-        entity_id = entity['id']
+        entity_name = entity['name']
         selected = []
-        seen_entities = set([entity_id])  # Start with target entity
+        seen_entities = set([entity_name])  # Start with target entity
         
         # Score each chunk by number of new entities it introduces
         chunk_scores = []
@@ -706,7 +700,7 @@ class RAKGRelationExtractor:
             cooccurring = set(self.entity_cooccurrence.get(chunk_id, []))
             
             # Remove target entity
-            cooccurring.discard(entity_id)
+            cooccurring.discard(entity_name)
             
             # Count new entities
             new_entities = cooccurring - seen_entities
@@ -928,22 +922,22 @@ class RAKGRelationExtractor:
             # Step 2.5: Get detected entities from selected chunks
             detected_entities = []
             if self.entity_cooccurrence and self.entity_map:
-                entity_id = entity['id']
-                detected_entity_ids = set()
+                entity_name = entity['name']
+                detected_entity_names = set()
                 
                 for chunk in selected_chunks:
                     chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
                     cooccurring = self.entity_cooccurrence.get(chunk_id, [])
-                    detected_entity_ids.update(cooccurring)
+                    detected_entity_names.update(cooccurring)
                 
                 # Remove target entity
-                detected_entity_ids.discard(entity_id)
+                detected_entity_names.discard(entity_name)
                 
-                # Resolve entity names
+                # Resolve entity details
                 detected_entities = [
-                    self.entity_map[eid]
-                    for eid in detected_entity_ids
-                    if eid in self.entity_map
+                    self.entity_map[name]
+                    for name in detected_entity_names
+                    if name in self.entity_map
                 ]
                 
                 logger.info(f"    ✓ Detected {len(detected_entities)} co-occurring entities")
@@ -981,7 +975,7 @@ class RAKGRelationExtractor:
             
             # Add metadata
             for relation in relations:
-                relation['extracted_from_entity'] = entity.get('id', entity_name)
+                relation['extracted_from_entity'] = entity_name
             
             if len(relations) == 0:
                 logger.warning(f"  ⚠️ No relations extracted (try lowering threshold)")
