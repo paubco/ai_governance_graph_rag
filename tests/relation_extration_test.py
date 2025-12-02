@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Phase 1D Relation Extraction - Consolidated Test Script
 
@@ -169,13 +168,15 @@ def test_basic(entities: List[Dict],
     logger.info(f"Parameters: threshold={threshold}, lambda={mmr_lambda}, chunks={num_chunks}")
     logger.info(f"Prompt logging: {'ENABLED' if save_prompts else 'DISABLED'}")
     
-    # Initialize extractor
+    # Initialize extractor with entity co-occurrence
     extractor = RAKGRelationExtractor(
         model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
         api_key=api_key,
         semantic_threshold=threshold,
         mmr_lambda=mmr_lambda,
-        num_chunks=num_chunks
+        num_chunks=num_chunks,
+        entity_cooccurrence_file="data/interim/entities/entity_cooccurrence.json",
+        normalized_entities_file="data/interim/entities/normalized_entities.json"
     )
     
     # Get test entities
@@ -283,7 +284,9 @@ def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
             api_key=api_key,
             semantic_threshold=params['threshold'],
             mmr_lambda=params['mmr_lambda'],
-            num_chunks=params['num_chunks']
+            num_chunks=params['num_chunks'],
+            entity_cooccurrence_file="data/interim/entities/entity_cooccurrence.json",
+            normalized_entities_file="data/interim/entities/normalized_entities.json"
         )
         
         config_relations = 0

@@ -196,13 +196,14 @@ def format_chunks_for_prompt(chunks: list) -> str:
     return "\n".join(formatted)
 
 
-def build_relation_extraction_prompt(entity: dict, chunks: list) -> str:
+def build_relation_extraction_prompt(entity: dict, chunks: list, detected_entities: list = None) -> str:
     """
     Build relation extraction prompt for Phase 1D
     
     Args:
         entity: Entity dict with name, type, description
         chunks: List of chunk dicts
+        detected_entities: List of detected entity dicts (optional)
     
     Returns:
         str: Complete prompt ready for LLM
@@ -211,10 +212,20 @@ def build_relation_extraction_prompt(entity: dict, chunks: list) -> str:
     
     chunks_text = format_chunks_for_prompt(chunks)
     
+    # Format detected entities list
+    if detected_entities:
+        detected_list = "\n".join([
+            f"- {e['name']} [{e['type']}]"
+            for e in detected_entities
+        ])
+    else:
+        detected_list = "(Entity detection not available - extract any entities)"
+    
     return RELATION_EXTRACTION_PROMPT.format(
         entity_name=entity.get('name', 'Unknown'),
         entity_type=entity.get('type', 'Unknown'),
         entity_description=entity.get('description', 'No description'),
+        detected_entities_list=detected_list,
         chunks_text=chunks_text
     )
 
@@ -367,7 +378,9 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        entity_cooccurrence_file: str = None,
+        normalized_entities_file: str = None
     ):
         """
         Initialize RAKG Relation Extractor
@@ -379,10 +392,10 @@ class RAKGRelationExtractor:
             mmr_lambda: MMR balance (0.5=balanced, 1.0=relevance only)
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
-                                 Why 200? Large enough for MMR diversity,
-                                 small enough for reasonable computation
             temperature: LLM temperature (default: 0.0 for deterministic)
             max_tokens: Max LLM response tokens (default: 4000)
+            entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
+            normalized_entities_file: Path to normalized entities JSON (optional)
         """
         self.model_name = model_name
         
@@ -407,12 +420,50 @@ class RAKGRelationExtractor:
         # Initialize Together client
         self.client = Together(api_key=self.api_key)
         
+        # Load entity co-occurrence matrix (optional, for entity-aware diversity)
+        self.entity_cooccurrence = None
+        self.normalized_entities = None
+        self.entity_map = None
+        
+        if entity_cooccurrence_file:
+            self._load_entity_cooccurrence(entity_cooccurrence_file)
+        
+        if normalized_entities_file:
+            self._load_normalized_entities(normalized_entities_file)
+        
         logger.info(f"Initialized RAKGRelationExtractor")
         logger.info(f"  Model: {model_name}")
         logger.info(f"  Semantic threshold: {semantic_threshold}")
         logger.info(f"  MMR lambda: {mmr_lambda}")
         logger.info(f"  Chunks per entity: {num_chunks}")
         logger.info(f"  Candidate pool: {candidate_pool_size}")
+        if self.entity_cooccurrence:
+            logger.info(f"  Entity co-occurrence: Loaded ({len(self.entity_cooccurrence)} chunks)")
+        if self.normalized_entities:
+            logger.info(f"  Normalized entities: Loaded ({len(self.normalized_entities)} entities)")
+    
+    def _load_entity_cooccurrence(self, cooccurrence_file: str):
+        """Load entity co-occurrence matrix"""
+        with open(cooccurrence_file, 'r', encoding='utf-8') as f:
+            self.entity_cooccurrence = json.load(f)
+    
+    def _load_normalized_entities(self, entities_file: str):
+        """Load normalized entities and build lookup map"""
+        with open(entities_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Handle different formats
+        if isinstance(data, list):
+            entities = data
+        elif isinstance(data, dict) and 'entities' in data:
+            entities = data['entities']
+        elif isinstance(data, dict):
+            entities = list(data.values())
+        else:
+            raise ValueError(f"Unexpected format in {entities_file}")
+        
+        self.normalized_entities = entities
+        self.entity_map = {e['id']: e for e in entities}
     
     # ========================================================================
     # STEP 1: CANDIDATE GATHERING
@@ -594,6 +645,96 @@ class RAKGRelationExtractor:
         logger.debug(f"  MMR selection complete: {len(selected_chunks)} chunks")
         
         return selected_chunks
+    
+    def two_stage_mmr_select(
+        self,
+        entity: Dict,
+        candidate_chunks: List[Dict]
+    ) -> List[Dict]:
+        """
+        Two-stage chunk selection: semantic diversity + entity coverage
+        
+        Novel contribution: Entity-aware diversity on top of semantic MMR.
+        
+        Stage 1: Semantic MMR (200 candidates → 40 diverse chunks)
+          - Standard MMR using embedding similarity
+          - Selects semantically diverse and relevant chunks
+        
+        Stage 2: Entity Coverage Maximization (40 → 20 final chunks)
+          - Greedily select chunks that introduce new entities
+          - Maximizes entity diversity for richer relation extraction
+        
+        This improves over pure semantic MMR by ensuring selected chunks
+        cover a diverse set of entities, not just semantically diverse
+        expressions of the same entities.
+        
+        Args:
+            entity: Entity dict with 'id', 'embedding'
+            candidate_chunks: Pool of candidate chunks
+        
+        Returns:
+            List[Dict]: 20 chunks with both semantic and entity diversity
+        
+        Note:
+            Requires entity_cooccurrence to be loaded. Falls back to
+            standard MMR if co-occurrence not available.
+        """
+        # Stage 1: Semantic diversity (200 → 40)
+        entity_embedding = np.array(entity['embedding'])
+        semantic_diverse = self.mmr_select_chunks(
+            entity_embedding,
+            candidate_chunks,
+            k=min(40, len(candidate_chunks))
+        )
+        
+        # If no co-occurrence data, fall back to taking first 20
+        if not self.entity_cooccurrence:
+            logger.debug(f"  No co-occurrence data, using first {self.num_chunks} from MMR")
+            return semantic_diverse[:self.num_chunks]
+        
+        # Stage 2: Entity coverage maximization (40 → 20)
+        logger.debug(f"  Stage 2: Entity coverage maximization ({len(semantic_diverse)} → {self.num_chunks})")
+        
+        entity_id = entity['id']
+        selected = []
+        seen_entities = set([entity_id])  # Start with target entity
+        
+        # Score each chunk by number of new entities it introduces
+        chunk_scores = []
+        for chunk in semantic_diverse:
+            chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
+            cooccurring = set(self.entity_cooccurrence.get(chunk_id, []))
+            
+            # Remove target entity
+            cooccurring.discard(entity_id)
+            
+            # Count new entities
+            new_entities = cooccurring - seen_entities
+            score = len(new_entities)
+            
+            chunk_scores.append((chunk, cooccurring, score))
+        
+        # Greedily select chunks with highest new entity count
+        for _ in range(min(self.num_chunks, len(chunk_scores))):
+            if not chunk_scores:
+                break
+            
+            # Find chunk with most new entities
+            best_idx = max(range(len(chunk_scores)), key=lambda i: chunk_scores[i][2])
+            best_chunk, best_entities, _ = chunk_scores.pop(best_idx)
+            
+            selected.append(best_chunk)
+            seen_entities.update(best_entities)
+            
+            # Recalculate scores for remaining chunks
+            for i in range(len(chunk_scores)):
+                chunk, cooccurring, _ = chunk_scores[i]
+                new_entities = cooccurring - seen_entities
+                chunk_scores[i] = (chunk, cooccurring, len(new_entities))
+        
+        logger.debug(f"  Entity coverage: {len(seen_entities) - 1} unique entities (excluding target)")
+        
+        return selected
     
     # ========================================================================
     # STEP 3: LLM EXTRACTION
@@ -778,16 +919,38 @@ class RAKGRelationExtractor:
                 logger.warning(f"  ⚠️ No candidates found for {entity_name}")
                 return []
             
-            # Step 2: MMR selection
-            logger.info(f"  MMR selection...")
+            # Step 2: Two-stage MMR selection (semantic + entity diversity)
+            logger.info(f"  Two-stage MMR selection...")
             start_time = time.time()
-            entity_embedding = np.array(entity['embedding'])
-            selected_chunks = self.mmr_select_chunks(entity_embedding, candidates)
+            selected_chunks = self.two_stage_mmr_select(entity, candidates)
             logger.info(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
             
-            # Step 3: Build prompt
+            # Step 2.5: Get detected entities from selected chunks
+            detected_entities = []
+            if self.entity_cooccurrence and self.entity_map:
+                entity_id = entity['id']
+                detected_entity_ids = set()
+                
+                for chunk in selected_chunks:
+                    chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
+                    cooccurring = self.entity_cooccurrence.get(chunk_id, [])
+                    detected_entity_ids.update(cooccurring)
+                
+                # Remove target entity
+                detected_entity_ids.discard(entity_id)
+                
+                # Resolve entity names
+                detected_entities = [
+                    self.entity_map[eid]
+                    for eid in detected_entity_ids
+                    if eid in self.entity_map
+                ]
+                
+                logger.info(f"    ✓ Detected {len(detected_entities)} co-occurring entities")
+            
+            # Step 3: Build prompt with detected entities
             logger.info(f"  Building prompt...")
-            prompt = build_relation_extraction_prompt(entity, selected_chunks)
+            prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities)
             prompt_chars = len(prompt)
             logger.info(f"    ✓ Prompt built: {prompt_chars:,} chars")
             

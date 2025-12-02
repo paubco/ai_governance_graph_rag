@@ -65,50 +65,63 @@ JSON:"""
 
 RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in OpenIE (Open Information Extraction).
 
-Your task: Extract relationship triplets from regulatory and academic text without predefined schemas.
+Your task: Extract relationship triplets from regulatory and academic text.
 
 TARGET ENTITY:
 Name: {entity_name}
 Type: {entity_type}
 Description: {entity_description}
 
+DETECTED ENTITIES IN CONTEXT:
+{detected_entities_list}
+
 CONTEXT CHUNKS:
 {chunks_text}
 
 EXTRACTION TASK:
-Extract ALL relationships where "{entity_name}" is the subject OR object of the relation.
+Extract ALL relationships where "{entity_name}" is connected to the detected entities listed above.
+
+CRITICAL RULES:
+- Subject MUST be "{entity_name}" OR one of the detected entities
+- Object MUST be one of the detected entities OR "{entity_name}"
+- DO NOT extract relations with entities NOT in the detected list
+- DO NOT invent new entities - use ONLY the provided detected entities
+- NO duplicate relations (same subject-predicate-object combination)
+- If no valid relationships found, return empty list
 
 OPENIE PRINCIPLES:
 1. NO predefined relation types - discover relations from text
-2. Relation predicates are the linking phrases in text (e.g., "regulates", "applies to", "established by")
+2. Predicates are verb phrases connecting entities (e.g., "regulates", "applies_to", "established_by")
 3. Extract both directions if relevant: (A, predicate1, B) and (B, predicate2, A) are different
-4. Only extract relations explicitly stated or strongly implied in the chunks
-5. Subject and object should be entities, organizations, concepts, or regulations
+4. Only extract relations explicitly stated in the chunks
 
-EXAMPLES:
-- Text: "The GDPR regulates data processing in the EU"
-  → ("GDPR", "regulates", "data processing")
-  → ("GDPR", "applies_in", "EU")
-  
-- Text: "AI systems must comply with GDPR requirements"
-  → ("AI systems", "must_comply_with", "GDPR")
+GOOD EXAMPLES:
+Detected entities: ["GDPR", "EU", "data processing"]
+Text: "The GDPR regulates data processing in the EU"
+→ {{"subject": "GDPR", "predicate": "regulates", "object": "data processing", "chunk_ids": ["..."]}}
+→ {{"subject": "GDPR", "predicate": "applies_in", "object": "EU", "chunk_ids": ["..."]}}
+
+Detected entities: ["transparency", "AI systems"]  
+Text: "Transparency is required for AI systems"
+→ {{"subject": "transparency", "predicate": "is_required_for", "object": "AI systems", "chunk_ids": ["..."]}}
+
+BAD EXAMPLES (DO NOT DO THIS):
+❌ {{"subject": "GDPR", "predicate": "is", "object": "important"}} ← "important" not in detected entities
+❌ {{"subject": "AI", "predicate": "has", "object": "applications"}} ← "applications" not in detected entities
+❌ {{"subject": "policy", "predicate": "affects", "object": "citizens"}} ← neither entity in detected list
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
   "relations": [
     {{
-      "subject": "entity_name",
-      "predicate": "relationship_verb_phrase",
-      "object": "entity_name",
-      "chunk_ids": ["chunk_id_where_found"]
+      "subject": "entity_name_from_detected_list",
+      "predicate": "verb_phrase",
+      "object": "entity_name_from_detected_list",
+      "chunk_ids": ["chunk_id"]
     }}
   ]
 }}
 
-CRITICAL RULES:
-- Output ONLY valid JSON
-- No explanations, notes, markdown, or code blocks
-- Predicates should be clear verb phrases (2-4 words typical)
-- If no relationships found, return: {{"relations": []}}
+CRITICAL: Use ONLY entity names from the detected entities list above!
 
-Extract all relations now:"""
+Extract all relations now (JSON only):"""

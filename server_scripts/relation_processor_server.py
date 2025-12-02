@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Parallel Relation Extraction Server Script
 Uses threading for fast parallel API calls to Together.ai
@@ -75,7 +74,9 @@ class ParallelRelationProcessor:
         output_file: str = "data/interim/relations/relations.json",
         semantic_threshold: float = 0.85,
         mmr_lambda: float = 0.55,
-        num_chunks: int = 20
+        num_chunks: int = 20,
+        entity_cooccurrence_file: str = "data/interim/entities/entity_cooccurrence.json",
+        normalized_entities_file: str = "data/interim/entities/normalized_entities.json"
     ):
         """
         Initialize parallel processor.
@@ -88,13 +89,17 @@ class ParallelRelationProcessor:
             semantic_threshold: Semantic similarity threshold
             mmr_lambda: MMR diversity parameter
             num_chunks: Chunk count for MMR selection
+            entity_cooccurrence_file: Path to entity co-occurrence JSON
+            normalized_entities_file: Path to normalized entities JSON
         """
         self.extractor = RAKGRelationExtractor(
             model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
             api_key=api_key,
             semantic_threshold=semantic_threshold,
             mmr_lambda=mmr_lambda,
-            num_chunks=num_chunks
+            num_chunks=num_chunks,
+            entity_cooccurrence_file=entity_cooccurrence_file,
+            normalized_entities_file=normalized_entities_file
         )
         self.num_workers = num_workers
         self.checkpoint_interval = checkpoint_interval
