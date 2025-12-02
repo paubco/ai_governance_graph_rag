@@ -174,8 +174,7 @@ def test_parameters(entities, chunks):
     
     print(f"Testing {len(params_list)} parameter combinations...")
     print(f"Cost: ~$0.10, Time: 3-5 minutes\n")
-    input("Press Enter to start...")
-    print()
+    print("Starting tests...\n")
     
     results = []
     
