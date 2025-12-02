@@ -54,13 +54,105 @@ load_dotenv()
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('logs/pipeline.log')
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Create prompt logging directory
+PROMPT_LOG_DIR = Path('logs/phase1d_prompts')
+PROMPT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"Prompt logging directory: {PROMPT_LOG_DIR}")
+
+
+# ============================================================================
+# PROMPT VALIDATION & LOGGING UTILITIES
+# ============================================================================
+
+def estimate_token_count(text: str) -> int:
+    """
+    Rough token count estimate (4 chars ≈ 1 token)
+    
+    Args:
+        text: Input text
+        
+    Returns:
+        int: Estimated token count
+    """
+    return len(text) // 4
+
+
+def validate_prompt_size(
+    prompt: str, 
+    entity_name: str,
+    safe_limit: int = 8000,
+    warning_limit: int = 6000
+) -> Tuple[bool, int]:
+    """
+    Validate prompt size before LLM call
+    
+    Thresholds:
+    - < 6000 tokens: ✓ OK
+    - 6000-8000 tokens: ⚠️ WARNING (log but proceed)
+    - > 8000 tokens: 🚨 ERROR (should reduce chunks)
+    
+    Args:
+        prompt: Full prompt text
+        entity_name: Entity name (for logging)
+        safe_limit: Hard limit (default: 8000)
+        warning_limit: Warning threshold (default: 6000)
+        
+    Returns:
+        Tuple[bool, int]: (should_proceed, token_estimate)
+    """
+    token_estimate = estimate_token_count(prompt)
+    
+    if token_estimate < warning_limit:
+        logger.debug(f"  Prompt size OK: ~{token_estimate} tokens")
+        return True, token_estimate
+    elif token_estimate < safe_limit:
+        logger.warning(f"  ⚠️ Large prompt: ~{token_estimate} tokens for '{entity_name}'")
+        logger.warning(f"     (Consider reducing chunks if quality issues occur)")
+        return True, token_estimate
+    else:
+        logger.error(f"  🚨 Prompt exceeds safe limit: ~{token_estimate} tokens for '{entity_name}'")
+        logger.error(f"     Hard limit: {safe_limit} tokens")
+        logger.error(f"     This prompt is TOO LARGE and should be reduced")
+        return False, token_estimate
+
+
+def save_prompt_to_file(prompt: str, entity_name: str, token_count: int) -> None:
+    """
+    Save full prompt to log file for debugging
+    
+    Args:
+        prompt: Full prompt text
+        entity_name: Entity name (used in filename)
+        token_count: Estimated token count
+    """
+    # Sanitize filename
+    safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in entity_name)
+    safe_name = safe_name.replace(' ', '_')[:50]  # Limit length
+    
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = PROMPT_LOG_DIR / f"{safe_name}_{timestamp}.txt"
+    
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write(f"ENTITY: {entity_name}\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"ESTIMATED TOKENS: ~{token_count}\n")
+            f.write(f"CHARACTERS: {len(prompt)}\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(prompt)
+        
+        logger.debug(f"  Prompt saved to: {filename}")
+    except Exception as e:
+        logger.warning(f"  Failed to save prompt to file: {e}")
 
 
 # ============================================================================
@@ -540,12 +632,15 @@ class RAKGRelationExtractor:
         
         Note:
             - Uses temperature=0.0 for deterministic output
-            - Implements retry logic (max 3 attempts)
+            - Implements graceful error handling
+            - Logs response details for debugging
         """
         if stop_sequences is None:
             stop_sequences = ["```", "\n\nNote:", "Explanation:"]
         
         try:
+            # Call API
+            logger.debug(f"  Calling LLM API...")
             response = self.client.completions.create(
                 model=self.model_name,
                 prompt=prompt,
@@ -554,22 +649,53 @@ class RAKGRelationExtractor:
                 stop=stop_sequences
             )
             
-            response_text = response.choices[0].text.strip()
+            # Extract raw response
+            raw_text = response.choices[0].text.strip()
             
-            # Clean and parse JSON (using helper from this module)
-            cleaned = extract_relations_json(response_text)
+            # Log response details
+            logger.debug(f"  ✓ Response received: {len(raw_text)} chars")
+            logger.debug(f"  Response preview (first 200 chars):")
+            logger.debug(f"    {raw_text[:200]}")
+            
+            # Handle empty response
+            if not raw_text:
+                logger.error(f"  ✗ Empty response from LLM")
+                logger.error(f"    This usually means:")
+                logger.error(f"    1. Prompt too large (check token count)")
+                logger.error(f"    2. API timeout")
+                logger.error(f"    3. Model refused to respond")
+                return {"relations": []}  # Graceful fallback
+            
+            # Clean and parse JSON
+            cleaned = extract_relations_json(raw_text)
+            
+            if not cleaned or cleaned == "{}":
+                logger.warning(f"  ⚠️ Empty JSON after cleaning")
+                logger.debug(f"  Raw response was: {raw_text[:500]}")
+                return {"relations": []}
+            
+            # Parse JSON
             parsed = json.loads(cleaned)
             
+            # Validate structure
+            if 'relations' not in parsed:
+                logger.warning(f"  ⚠️ Response missing 'relations' key")
+                logger.debug(f"  Keys found: {list(parsed.keys())}")
+                return {"relations": []}
+            
+            logger.debug(f"  ✓ Parsed {len(parsed.get('relations', []))} relations")
             return parsed
             
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}")
-            logger.debug(f"Raw response: {response_text[:200]}")
-            raise
+            logger.error(f"  ✗ JSON parse error: {e}")
+            logger.debug(f"  Raw response (first 500 chars): {raw_text[:500] if 'raw_text' in locals() else 'N/A'}")
+            return {"relations": []}  # Graceful fallback
         
         except Exception as e:
-            logger.error(f"LLM API error: {e}")
-            raise
+            logger.error(f"  ✗ LLM API error: {e}")
+            import traceback
+            logger.debug(f"  Traceback: {traceback.format_exc()}")
+            return {"relations": []}  # Graceful fallback
     
     # ========================================================================
     # MAIN EXTRACTION METHOD
@@ -579,7 +705,8 @@ class RAKGRelationExtractor:
         self,
         entity: Dict,
         all_chunks: List[Dict],
-        prompt_template: str = None
+        prompt_template: str = None,
+        save_prompt: bool = True
     ) -> List[Dict]:
         """
         Extract all relations for a given entity (end-to-end pipeline)
@@ -588,13 +715,15 @@ class RAKGRelationExtractor:
         1. Gather candidate chunks (direct + semantic)
         2. MMR selection for diversity
         3. Build prompt with selected chunks
-        4. LLM extraction
-        5. Post-processing
+        4. Validate prompt size
+        5. LLM extraction
+        6. Post-processing
         
         Args:
             entity: Entity dict with name, type, description, embedding, chunk_ids
             all_chunks: List of all chunks with chunk_id, text, embedding
             prompt_template: Custom prompt (optional, uses default if None)
+            save_prompt: Save full prompt to log file (default: True)
         
         Returns:
             List[Dict]: Extracted relations with subject, predicate, object, chunk_ids
@@ -608,45 +737,74 @@ class RAKGRelationExtractor:
         Note:
             - Returns empty list if extraction fails
             - Logs errors but doesn't raise (graceful degradation)
+            - Validates prompt size before LLM call
         """
         entity_name = entity.get('name', 'Unknown')
-        logger.info(f"Extracting relations for entity: {entity_name}")
+        entity_type = entity.get('type', 'Unknown')
+        logger.info(f"\nEntity: {entity_name} [{entity_type}]")
         
         try:
             # Step 1: Gather candidates
+            logger.info(f"  Gathering candidates...")
             start_time = time.time()
             candidates = self.gather_candidate_chunks(entity, all_chunks)
-            logger.debug(f"  Candidate gathering: {time.time() - start_time:.2f}s")
+            logger.info(f"    ✓ Gathered {len(candidates)} candidates ({time.time() - start_time:.2f}s)")
             
             if not candidates:
-                logger.warning(f"  No candidates found for {entity_name}")
+                logger.warning(f"  ⚠️ No candidates found for {entity_name}")
                 return []
             
             # Step 2: MMR selection
+            logger.info(f"  MMR selection...")
             start_time = time.time()
             entity_embedding = np.array(entity['embedding'])
             selected_chunks = self.mmr_select_chunks(entity_embedding, candidates)
-            logger.debug(f"  MMR selection: {time.time() - start_time:.2f}s")
+            logger.info(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
             
-            # Step 3: Build prompt (using helper from this module)
+            # Step 3: Build prompt
+            logger.info(f"  Building prompt...")
             prompt = build_relation_extraction_prompt(entity, selected_chunks)
+            prompt_chars = len(prompt)
+            logger.info(f"    ✓ Prompt built: {prompt_chars:,} chars")
             
-            # Step 4: LLM extraction
+            # Step 4: Validate prompt size
+            logger.info(f"  Validating prompt size...")
+            should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
+            
+            if not should_proceed:
+                logger.error(f"  ✗ Prompt too large (~{token_estimate} tokens), skipping entity")
+                return []
+            
+            # Log prompt preview
+            logger.debug(f"  Prompt preview (first 500 chars):")
+            logger.debug(f"    {prompt[:500]}...")
+            
+            # Save full prompt to file
+            if save_prompt:
+                save_prompt_to_file(prompt, entity_name, token_estimate)
+            
+            # Step 5: LLM extraction
+            logger.info(f"  Calling LLM (~{token_estimate} tokens)...")
             start_time = time.time()
             response = self.extract_relations_llm(prompt)
-            logger.debug(f"  LLM extraction: {time.time() - start_time:.2f}s")
+            logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
             
-            # Step 5: Post-processing
+            # Step 6: Post-processing
             relations = response.get('relations', [])
             
             # Add metadata
             for relation in relations:
                 relation['extracted_from_entity'] = entity.get('id', entity_name)
             
-            logger.info(f"  ✓ Extracted {len(relations)} relations for {entity_name}")
+            if len(relations) == 0:
+                logger.warning(f"  ⚠️ No relations extracted (try lowering threshold)")
+            else:
+                logger.info(f"  ✓ Extracted {len(relations)} relations")
             
             return relations
             
         except Exception as e:
             logger.error(f"  ✗ Failed to extract relations for {entity_name}: {e}")
+            import traceback
+            logger.debug(f"  Traceback: {traceback.format_exc()}")
             return []

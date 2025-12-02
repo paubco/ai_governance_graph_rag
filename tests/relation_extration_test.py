@@ -1,45 +1,56 @@
+#!/usr/bin/env python3
 """
-Phase 1D - Relation Extraction Test (Merged Version)
-Combines robust entity selection with actual LLM extraction
+Phase 1D Relation Extraction - Consolidated Test Script
 
-Features:
-- Uses exact entity keys (no fragile indices!)
-- Integrates RAKGRelationExtractor
-- Systematic parameter testing (threshold + lambda grid)
-- Clear results comparison
+Merges best of:
+- Original test approach (PREFERRED_ENTITIES, build_entity_map)
+- Enhanced extractor with bug fixes (prompt validation, error handling)
+- Parameter tuning capabilities
 
 Usage:
-    # Basic test (2 entities, default params)
-    python tests/relation_extraction_test.py
+    # Basic test (8 entities)
+    python scripts/test_phase1d_consolidated.py
     
-    # Parameter tuning (1 entity, systematic grid search)
-    python tests/relation_extraction_test.py --tune-params
+    # Parameter tuning (2 entities, multiple configs)
+    python scripts/test_phase1d_consolidated.py --tune-params
+    
+    # Custom parameters
+    python scripts/test_phase1d_consolidated.py --threshold 0.80 --lambda 0.60 --chunks 15
 """
 
 import sys
 import json
-import logging
 import argparse
+import logging
 from pathlib import Path
-from typing import List, Dict, Tuple
+from datetime import datetime
+from typing import List, Dict
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
+from src.phase1_graph_construction.entity_disambiguator import build_entity_map
 from dotenv import load_dotenv
-load_dotenv()
+import os
+
+# Load environment
+load_dotenv(PROJECT_ROOT / '.env')
 
 # Setup logging
 logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('logs/phase1d_test_consolidated.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
-# PREFERRED TEST ENTITIES (From actual normalized_entities.json)
+# TEST ENTITIES (From actual normalized_entities.json)
 # ============================================================================
 
 PREFERRED_ENTITIES = [
@@ -47,113 +58,53 @@ PREFERRED_ENTITIES = [
     ("European Union", "Organization"),    # 1063 chunks
     ("Chat-GPT", "AI System"),             # 840 chunks
     ("EU AI Act", "Regulation"),           # 474 chunks
-    ("AI governance", "Concept"),          # 370 chunks
     ("transparency", "Concept"),           # 338 chunks
-    ("stakeholders", "Stakeholder Group"), # 314 chunks
     ("US", "Country"),                     # 304 chunks
+    ("human rights", "Legal Concept"),     # 300 chunks
+    ("accountability", "Concept"),         # 192 chunks
 ]
 
 
-# ============================================================================
-# DATA LOADING
-# ============================================================================
-
-def load_entities() -> List[Dict]:
-    """Load normalized entities with fallback paths"""
-    paths = [
-        PROJECT_ROOT / 'data/interim/entities/normalized_entities.json',
-        PROJECT_ROOT / 'data/processed/entities/normalized_entities.json',
-        PROJECT_ROOT / 'data/processed/normalized_entities.json',
-    ]
+def load_data(entities_file: str, chunks_file: str):
+    """Load entities and chunks"""
+    logger.info(f"Loading entities from {entities_file}")
+    with open(entities_file, 'r', encoding='utf-8') as f:
+        entities_data = json.load(f)
     
-    for path in paths:
-        if path.exists():
-            print(f"Loading entities from: {path}")
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            # Handle different formats
-            if isinstance(data, dict) and 'entities' in data:
-                entities = data['entities']
-            elif isinstance(data, list):
-                entities = data
-            else:
-                raise ValueError(f"Unknown entity format in {path}")
-            
-            print(f"✓ Loaded {len(entities)} entities\n")
-            return entities
+    entities = entities_data.get('entities', entities_data) if isinstance(entities_data, dict) else entities_data
+    logger.info(f"✓ Loaded {len(entities)} entities")
     
-    raise FileNotFoundError("normalized_entities.json not found")
-
-
-def load_chunks() -> List[Dict]:
-    """Load chunks with fallback paths"""
-    paths = [
-        PROJECT_ROOT / 'data/interim/chunks/chunks_embedded.json',
-        PROJECT_ROOT / 'data/processed/chunks_embedded.json',
-    ]
+    logger.info(f"Loading chunks from {chunks_file}")
+    with open(chunks_file, 'r', encoding='utf-8') as f:
+        chunks_data = json.load(f)
     
-    for path in paths:
-        if path.exists():
-            print(f"Loading chunks from: {path}")
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            # Handle different formats
-            if isinstance(data, dict) and 'chunks' in data:
-                chunks = data['chunks']
-            elif isinstance(data, list):
-                chunks = data
-            elif isinstance(data, dict):
-                chunks = list(data.values())
-            else:
-                raise ValueError(f"Unknown chunk format in {path}")
-            
-            print(f"✓ Loaded {len(chunks)} chunks\n")
-            return chunks
+    chunks = chunks_data.get('chunks', chunks_data) if isinstance(chunks_data, dict) else chunks_data
+    logger.info(f"✓ Loaded {len(chunks)} chunks")
     
-    raise FileNotFoundError("chunks_embedded.json not found")
+    return entities, chunks
 
 
-# ============================================================================
-# ROBUST ENTITY SELECTION
-# ============================================================================
-
-def build_entity_map(entities: List[Dict]) -> Dict[Tuple[str, str], Dict]:
-    """Build (name, type) -> entity lookup map"""
-    return {(e['name'], e['type']): e for e in entities}
-
-
-def get_test_entities(entities: List[Dict], 
-                      n: int = 2,
-                      min_chunks: int = 100) -> List[Dict]:
+def get_test_entities(entities: List[Dict], n: int = 8) -> List[Dict]:
     """
-    Get test entities with robust fallback
+    Get test entities using PREFERRED_ENTITIES with fallback
     
     Strategy:
-    1. Try PREFERRED_ENTITIES list (exact keys)
-    2. Fallback to top-N by chunk_count
-    
-    Returns:
-        List of n high-quality entities
+    1. Try preferred entities from list
+    2. Fallback to top by chunk count
     """
     entity_map = build_entity_map(entities)
     
-    # Try preferred entities
-    selected = []
+    test_entities = []
     for key in PREFERRED_ENTITIES:
         if key in entity_map:
             entity = entity_map[key]
-            if len(entity.get('chunk_ids', [])) >= min_chunks:
-                selected.append(entity)
-                if len(selected) >= n:
-                    break
+            test_entities.append(entity)
+            if len(test_entities) >= n:
+                break
     
-    # Fallback: top by chunk_count
-    if len(selected) < n:
-        print(f"⚠️ Only found {len(selected)}/{n} preferred entities")
-        print(f"   Using top entities by chunk count...\n")
-        
+    # Fallback to top entities
+    if len(test_entities) < n:
+        logger.warning(f"Only found {len(test_entities)} preferred entities, using fallback")
         sorted_entities = sorted(
             entities,
             key=lambda e: len(e.get('chunk_ids', [])),
@@ -161,322 +112,229 @@ def get_test_entities(entities: List[Dict],
         )
         
         for entity in sorted_entities:
-            if len(entity.get('chunk_ids', [])) >= min_chunks:
-                key = (entity['name'], entity['type'])
-                if key not in [(e['name'], e['type']) for e in selected]:
-                    selected.append(entity)
-                    if len(selected) >= n:
+            key = (entity['name'], entity['type'])
+            if key not in [(e['name'], e['type']) for e in test_entities]:
+                chunk_count = len(entity.get('chunk_ids', []))
+                if chunk_count >= 100:
+                    test_entities.append(entity)
+                    if len(test_entities) >= n:
                         break
     
-    if len(selected) < n:
-        print(f"❌ Could not find {n} entities with {min_chunks}+ chunks")
-        print(f"   Only found: {len(selected)}")
+    logger.info(f"\n✓ Selected {len(test_entities)} test entities:")
+    for i, entity in enumerate(test_entities, 1):
+        chunk_count = len(entity.get('chunk_ids', []))
+        logger.info(f"  {i}. {entity['name']} [{entity['type']}] - {chunk_count} chunks")
     
-    return selected
+    return test_entities
 
 
-# ============================================================================
-# BASIC TEST
-# ============================================================================
-
-def test_basic(entities: List[Dict], chunks: List[Dict]):
+def test_basic(entities: List[Dict], 
+               chunks: List[Dict],
+               threshold: float = 0.85,
+               mmr_lambda: float = 0.55,
+               num_chunks: int = 20,
+               save_prompts: bool = True):
     """
-    Basic test: Extract relations for 2 entities with default params
-    
-    Default params:
-    - semantic_threshold: 0.85
-    - mmr_lambda: 0.55
-    - num_chunks: 20
+    Basic test: Extract relations for test entities
     """
-    print("=" * 80)
-    print("PHASE 1D - BASIC TEST (2 Entities)")
-    print("=" * 80)
-    print()
-    
-    from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
-    
-    # Get test entities
-    print("Selecting test entities...")
-    test_entities = get_test_entities(entities, n=2, min_chunks=200)
-    
-    if len(test_entities) < 2:
-        print("❌ Could not find 2 good entities")
+    api_key = os.getenv('TOGETHER_API_KEY')
+    if not api_key:
+        logger.error("TOGETHER_API_KEY not set!")
         return
     
-    print(f"\n✓ Selected {len(test_entities)} entities:")
-    for i, e in enumerate(test_entities, 1):
-        print(f"  {i}. {e['name']} [{e['type']}] - {len(e.get('chunk_ids', []))} chunks")
-    print()
+    logger.info("\n" + "=" * 80)
+    logger.info("BASIC TEST: Relation Extraction with Enhanced Extractor")
+    logger.info("=" * 80)
+    logger.info(f"Parameters: threshold={threshold}, lambda={mmr_lambda}, chunks={num_chunks}")
+    logger.info(f"Prompt logging: {'ENABLED' if save_prompts else 'DISABLED'}")
     
-    # Initialize extractor with defaults
-    print("Initializing extractor...")
+    # Initialize extractor
     extractor = RAKGRelationExtractor(
-        model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
-        semantic_threshold=0.85,
-        mmr_lambda=0.55,
-        num_chunks=20
+        api_key=api_key,
+        similarity_threshold=threshold,
+        mmr_lambda=mmr_lambda,
+        num_chunks=num_chunks
     )
-    print("✓ Ready (threshold=0.85, lambda=0.55, chunks=20)\n")
     
-    # Extract relations
-    print(f"Extracting relations for {len(test_entities)} entities...\n")
+    # Get test entities
+    test_entities = get_test_entities(entities, n=8)
+    
+    all_relations = []
+    stats = {
+        'total': len(test_entities),
+        'success': 0,
+        'failed': 0,
+        'total_relations': 0
+    }
+    
+    logger.info("\n" + "-" * 80)
+    logger.info("Starting extraction...")
+    logger.info("-" * 80)
     
     for i, entity in enumerate(test_entities, 1):
-        print(f"Entity {i}: {entity['name']} [{entity['type']}]")
-        print(f"  Chunks available: {len(entity.get('chunk_ids', []))}")
+        logger.info(f"\nEntity {i}/{len(test_entities)}: {entity['name']} [{entity['type']}]")
+        logger.info(f"  Chunks available: {len(entity.get('chunk_ids', []))}")
         
         try:
-            relations = extractor.extract_relations_for_entity(entity, chunks)
+            # Extract with enhanced extractor (includes all bug fixes)
+            relations = extractor.extract_relations_for_entity(
+                entity,
+                chunks,
+                save_prompt=save_prompts
+            )
             
-            print(f"  ✓ Extracted {len(relations)} relations")
+            logger.info(f"  ✓ Extracted {len(relations)} relations")
+            all_relations.extend(relations)
+            stats['success'] += 1
+            stats['total_relations'] += len(relations)
             
-            if relations:
-                # Show sample relations
-                print(f"\n  Sample relations (first 5):")
-                for j, rel in enumerate(relations[:5], 1):
-                    subj = rel.get('subject', '?')
-                    pred = rel.get('predicate', '?')
-                    obj = rel.get('object', '?')
-                    print(f"    {j}. ({subj}) --[{pred}]--> ({obj})")
-                
-                # Show predicate diversity
-                unique_preds = set(r.get('predicate') for r in relations)
-                print(f"\n  Unique predicates: {len(unique_preds)}")
-                print(f"  Top predicates: {', '.join(list(unique_preds)[:5])}")
-            else:
-                print(f"  ℹ️ No relations found (try lowering threshold)")
-        
         except Exception as e:
-            print(f"  ✗ Failed: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        print()
+            logger.error(f"  ✗ Failed: {e}")
+            stats['failed'] += 1
+    
+    # Save results
+    output_file = Path('data/interim/relations/test_relations_consolidated.json')
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump({
+            'metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'test_type': 'basic',
+                'parameters': {
+                    'threshold': threshold,
+                    'mmr_lambda': mmr_lambda,
+                    'num_chunks': num_chunks
+                }
+            },
+            'stats': stats,
+            'relations': all_relations
+        }, f, indent=2, ensure_ascii=False)
+    
+    # Summary
+    logger.info("\n" + "=" * 80)
+    logger.info("✅ TEST COMPLETE")
+    logger.info("=" * 80)
+    logger.info(f"Success: {stats['success']}/{stats['total']}")
+    logger.info(f"Total relations: {stats['total_relations']}")
+    logger.info(f"Avg per entity: {stats['total_relations']/stats['success']:.1f}" if stats['success'] > 0 else "N/A")
+    logger.info(f"Output: {output_file}")
+    if save_prompts:
+        logger.info(f"Prompts: logs/phase1d_prompts/")
+    logger.info("=" * 80)
 
-
-# ============================================================================
-# PARAMETER TUNING TEST
-# ============================================================================
 
 def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
     """
-    Parameter tuning: Test threshold + lambda combinations on 1 entity
-    
-    Tests a 3x3 grid:
-    - Thresholds: 0.80, 0.85, 0.90
-    - Lambdas: 0.45, 0.55, 0.65
-    
-    Total: 9 combinations (~$0.15, ~5-10 minutes)
+    Parameter tuning: Test multiple configurations on 2 entities
     """
-    print("=" * 80)
-    print("PHASE 1D - PARAMETER TUNING (Grid Search)")
-    print("=" * 80)
-    print()
-    
-    from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
-    
-    # Get ONE high-quality entity
-    print("Selecting test entity...")
-    test_entities = get_test_entities(entities, n=1, min_chunks=300)
-    
-    if not test_entities:
-        print("❌ Could not find a good entity")
+    api_key = os.getenv('TOGETHER_API_KEY')
+    if not api_key:
+        logger.error("TOGETHER_API_KEY not set!")
         return
     
-    entity = test_entities[0]
-    print(f"\n✓ Test entity: {entity['name']} [{entity['type']}]")
-    print(f"  Chunks available: {len(entity.get('chunk_ids', []))}\n")
+    logger.info("\n" + "=" * 80)
+    logger.info("PARAMETER TUNING: Multiple Configurations")
+    logger.info("=" * 80)
     
-    # Parameter grid
-    thresholds = [0.80, 0.85, 0.90]
-    lambdas = [0.45, 0.55, 0.65]
+    # Get 2 test entities
+    test_entities = get_test_entities(entities, n=2)
     
-    print(f"Testing {len(thresholds)}x{len(lambdas)} = {len(thresholds)*len(lambdas)} combinations:")
-    print(f"  Thresholds: {thresholds}")
-    print(f"  Lambdas: {lambdas}")
-    print(f"  Cost: ~$0.15, Time: ~5-10 min\n")
+    # Parameter combinations
+    param_sets = [
+        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 20},
+        {'threshold': 0.80, 'mmr_lambda': 0.55, 'num_chunks': 20},
+        {'threshold': 0.85, 'mmr_lambda': 0.50, 'num_chunks': 20},
+        {'threshold': 0.85, 'mmr_lambda': 0.60, 'num_chunks': 20},
+        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 15},
+        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 25},
+    ]
     
-    input("Press Enter to start testing...")
-    print()
-    
-    # Run grid search
     results = []
     
-    for threshold in thresholds:
-        for lambda_val in lambdas:
-            config_label = f"t={threshold}, λ={lambda_val}"
-            print(f"Testing: {config_label}")
-            
+    for i, params in enumerate(param_sets, 1):
+        logger.info(f"\n--- Configuration {i}/6 ---")
+        logger.info(f"threshold={params['threshold']}, lambda={params['mmr_lambda']}, chunks={params['num_chunks']}")
+        
+        extractor = RAKGRelationExtractor(
+            api_key=api_key,
+            similarity_threshold=params['threshold'],
+            mmr_lambda=params['mmr_lambda'],
+            num_chunks=params['num_chunks']
+        )
+        
+        config_relations = 0
+        for entity in test_entities:
             try:
-                extractor = RAKGRelationExtractor(
-                    model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
-                    semantic_threshold=threshold,
-                    mmr_lambda=lambda_val,
-                    num_chunks=20
+                relations = extractor.extract_relations_for_entity(
+                    entity,
+                    chunks,
+                    save_prompt=False
                 )
-                
-                relations = extractor.extract_relations_for_entity(entity, chunks)
-                
-                unique_preds = set(r.get('predicate') for r in relations)
-                unique_objs = set(r.get('object') for r in relations)
-                
-                result = {
-                    'threshold': threshold,
-                    'lambda': lambda_val,
-                    'relations': len(relations),
-                    'unique_predicates': len(unique_preds),
-                    'unique_objects': len(unique_objs),
-                    'sample_relations': relations[:3]
-                }
-                results.append(result)
-                
-                print(f"  ✓ {len(relations)} relations, {len(unique_preds)} unique predicates")
-                
+                config_relations += len(relations)
+                logger.info(f"  {entity['name']}: {len(relations)} relations")
             except Exception as e:
-                print(f"  ✗ Failed: {e}")
-                results.append({
-                    'threshold': threshold,
-                    'lambda': lambda_val,
-                    'error': str(e)
-                })
-            
-            print()
+                logger.error(f"  {entity['name']}: Failed - {e}")
+        
+        results.append({
+            'config': params,
+            'relations': config_relations
+        })
+        logger.info(f"  Total: {config_relations} relations")
     
-    # Display results grid
-    print("\n" + "=" * 80)
-    print("RESULTS GRID")
-    print("=" * 80)
-    print()
+    # Summary
+    logger.info("\n" + "=" * 80)
+    logger.info("PARAMETER TUNING RESULTS")
+    logger.info("=" * 80)
+    for i, result in enumerate(results, 1):
+        logger.info(f"{i}. {result['config']} → {result['relations']} relations")
     
-    # Header
-    print(f"{'Threshold':<12}", end="")
-    for lam in lambdas:
-        print(f"λ={lam:<8}", end="")
-    print()
-    print("-" * 80)
-    
-    # Grid
-    for threshold in thresholds:
-        print(f"{threshold:<12}", end="")
-        for lambda_val in lambdas:
-            result = next((r for r in results 
-                          if r['threshold'] == threshold and r['lambda'] == lambda_val), None)
-            if result and 'error' not in result:
-                print(f"{result['relations']:<10}", end="")
-            else:
-                print(f"{'ERROR':<10}", end="")
-        print()
-    
-    print()
-    
-    # Analysis
-    valid_results = [r for r in results if 'error' not in r]
-    
-    if valid_results:
-        print("=" * 80)
-        print("ANALYSIS")
-        print("=" * 80)
-        print()
-        
-        # Best configurations
-        best_count = max(valid_results, key=lambda x: x['relations'])
-        best_diversity = max(valid_results, key=lambda x: x['unique_predicates'])
-        
-        print("Recommendations:")
-        print(f"  Most relations: threshold={best_count['threshold']}, lambda={best_count['lambda']}")
-        print(f"    → {best_count['relations']} relations, {best_count['unique_predicates']} predicates")
-        print()
-        print(f"  Most diverse: threshold={best_diversity['threshold']}, lambda={best_diversity['lambda']}")
-        print(f"    → {best_diversity['relations']} relations, {best_diversity['unique_predicates']} predicates")
-        print()
-        
-        # Insights
-        print("Observations:")
-        
-        # Threshold effect
-        avg_by_threshold = {}
-        for t in thresholds:
-            t_results = [r for r in valid_results if r['threshold'] == t]
-            if t_results:
-                avg_by_threshold[t] = sum(r['relations'] for r in t_results) / len(t_results)
-        
-        if avg_by_threshold:
-            print(f"  Threshold effect (avg relations):")
-            for t, avg in sorted(avg_by_threshold.items()):
-                print(f"    {t}: {avg:.1f} relations")
-        
-        # Lambda effect
-        avg_by_lambda = {}
-        for lam in lambdas:
-            lam_results = [r for r in valid_results if r['lambda'] == lam]
-            if lam_results:
-                avg_by_lambda[lam] = sum(r['relations'] for r in lam_results) / len(lam_results)
-        
-        if avg_by_lambda:
-            print(f"  Lambda effect (avg relations):")
-            for lam, avg in sorted(avg_by_lambda.items()):
-                diversity = "more diversity" if lam < 0.55 else ("balanced" if lam == 0.55 else "more relevance")
-                print(f"    {lam} ({diversity}): {avg:.1f} relations")
-        
-        print()
+    best = max(results, key=lambda x: x['relations'])
+    logger.info(f"\n✓ Best config: {best['config']} with {best['relations']} relations")
+    logger.info("=" * 80)
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Phase 1D Relation Extraction Test",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Basic test (2 entities, default params)
-    python tests/relation_extraction_test.py
-    
-    # Parameter tuning (1 entity, 3x3 grid)
-    python tests/relation_extraction_test.py --tune-params
-
-Parameter Ranges:
-    semantic_threshold: 0.80-0.90 (higher = more selective)
-    mmr_lambda: 0.45-0.65 (lower = more diversity, higher = more relevance)
-        """
+        description="Consolidated Phase 1D test script",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    parser.add_argument(
-        '--tune-params',
-        action='store_true',
-        help='Run parameter tuning grid search'
-    )
+    parser.add_argument('--entities', default='data/interim/entities/normalized_entities.json')
+    parser.add_argument('--chunks-file', dest='chunks', default='data/interim/chunks/chunks_embedded.json')
+    parser.add_argument('--tune-params', action='store_true', help='Run parameter tuning')
+    parser.add_argument('--threshold', type=float, default=0.85)
+    parser.add_argument('--lambda', dest='mmr_lambda', type=float, default=0.55)
+    parser.add_argument('--num-chunks', dest='num_chunks', type=int, default=20, help='Number of chunks for MMR selection')
+    parser.add_argument('--no-save-prompts', action='store_true', help='Disable prompt logging')
     
     args = parser.parse_args()
     
-    try:
-        # Load data
-        entities = load_entities()
-        chunks = load_chunks()
-        
-        # Run appropriate test
-        if args.tune_params:
-            test_parameter_tuning(entities, chunks)
-        else:
-            test_basic(entities, chunks)
-        
-        print("\n" + "=" * 80)
-        print("✅ TEST COMPLETE")
-        print("=" * 80)
-        print()
-        
-        return 0
+    # Validate files
+    if not Path(args.entities).exists():
+        logger.error(f"Entities file not found: {args.entities}")
+        return 1
+    if not Path(args.chunks).exists():
+        logger.error(f"Chunks file not found: {args.chunks}")
+        return 1
     
-    except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
-        return 1
-    except Exception as e:
-        print(f"\n✗ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+    # Load data
+    entities, chunks = load_data(args.entities, args.chunks)
+    
+    # Run test
+    if args.tune_params:
+        test_parameter_tuning(entities, chunks)
+    else:
+        test_basic(
+            entities,
+            chunks,
+            threshold=args.threshold,
+            mmr_lambda=args.mmr_lambda,
+            num_chunks=args.num_chunks,
+            save_prompts=not args.no_save_prompts
+        )
+    
+    return 0
 
 
 if __name__ == "__main__":

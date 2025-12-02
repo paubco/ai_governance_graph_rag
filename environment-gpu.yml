@@ -16,6 +16,7 @@ dependencies:
   
   # NumPy 1.x required for PyTorch compatibility
   - numpy=1.24.3
+
   
   # FAISS GPU (for production server)
   - conda-forge::faiss-gpu=1.7.4
