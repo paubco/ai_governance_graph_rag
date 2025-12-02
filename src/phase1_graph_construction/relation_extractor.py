@@ -287,7 +287,7 @@ class RAKGRelationExtractor:
         Initialize RAKG Relation Extractor
         
         Args:
-            model_name: Together.ai model (e.g., "Qwen/Qwen2.5-7B-Instruct")
+            model_name: Together.ai model (e.g., "Qwen/Qwen2.5-7B-Instruct-Turbo")
             api_key: Together.ai API key (if None, loads from .env TOGETHER_API_KEY)
             semantic_threshold: Cosine similarity threshold (default: 0.85)
             mmr_lambda: MMR balance (0.5=balanced, 1.0=relevance only)

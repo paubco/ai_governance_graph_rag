@@ -98,7 +98,7 @@ def test_basic(entities, chunks):
     # Initialize extractor
     print("Initializing extractor (default params)...")
     extractor = RAKGRelationExtractor(
-        model_name="Qwen/Qwen2.5-7B-Instruct",
+        model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",  # Serverless model
         semantic_threshold=0.85,
         mmr_lambda=0.55,
         num_chunks=20
@@ -184,10 +184,23 @@ def test_parameters(entities, chunks):
         
         try:
             extractor = RAKGRelationExtractor(
-                model_name="Qwen/Qwen2.5-7B-Instruct",
+                model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",  # Serverless model
                 semantic_threshold=params['semantic_threshold'],
                 mmr_lambda=params['mmr_lambda'],
                 num_chunks=20
+            )
+            
+            # Get selected chunks (before LLM call)
+            selected_chunks = extractor.gather_candidate_chunks(
+                test_entity, 
+                chunks,
+                semantic_threshold=params['semantic_threshold']
+            )
+            selected_chunks = extractor.mmr_select_chunks(
+                test_entity,
+                selected_chunks,
+                lambda_param=params['mmr_lambda'],
+                k=20
             )
             
             relations = extractor.extract_relations_for_entity(test_entity, chunks)
@@ -198,11 +211,18 @@ def test_parameters(entities, chunks):
                 'num_relations': len(relations),
                 'unique_predicates': len(set(r.get('predicate') for r in relations)),
                 'unique_objects': len(set(r.get('object') for r in relations)),
-                'relations': relations
+                'relations': relations,
+                'selected_chunks': selected_chunks[:5]  # First 5 chunks for display
             }
             results.append(result)
             
-            print(f"  ✓ {len(relations)} relations, {result['unique_predicates']} unique predicates\n")
+            print(f"  ✓ {len(relations)} relations, {result['unique_predicates']} unique predicates")
+            print(f"  Selected chunks: {len(selected_chunks)}")
+            print(f"\n  Sample chunks (first 3):")
+            for j, chunk in enumerate(selected_chunks[:3], 1):
+                chunk_text = chunk.get('text', '')[:150]
+                print(f"    {j}. [{chunk.get('chunk_id', 'unknown')}] {chunk_text}...")
+            print()
             
         except Exception as e:
             print(f"  ✗ Failed: {e}\n")
@@ -232,6 +252,28 @@ def test_parameters(entities, chunks):
         print(f"\nRecommendations:")
         print(f"  Most relations: threshold={best_count['threshold']}, lambda={best_count['lambda']} ({best_count['num_relations']} relations)")
         print(f"  Most diverse: threshold={best_diversity['threshold']}, lambda={best_diversity['lambda']} ({best_diversity['unique_predicates']} predicates)")
+        
+        # Detailed chunk comparison
+        print("\n" + "=" * 80)
+        print("CHUNK COMPARISON - Visual Inspection")
+        print("=" * 80)
+        print("\nCompare retrieved chunks across parameter combinations:")
+        print("(First 5 chunks shown for each)\n")
+        
+        for r in valid[:3]:  # Show top 3 configurations
+            if 'selected_chunks' in r:
+                print(f"\n{'='*80}")
+                print(f"Configuration: threshold={r['threshold']}, lambda={r['lambda']}")
+                print(f"Relations: {r['num_relations']}, Unique predicates: {r['unique_predicates']}")
+                print(f"{'='*80}\n")
+                
+                for i, chunk in enumerate(r['selected_chunks'], 1):
+                    chunk_id = chunk.get('chunk_id', 'unknown')
+                    chunk_text = chunk.get('text', '')
+                    
+                    print(f"Chunk {i}: [{chunk_id}]")
+                    print(f"{chunk_text}")
+                    print(f"{'-'*80}\n")
 
 
 def main():

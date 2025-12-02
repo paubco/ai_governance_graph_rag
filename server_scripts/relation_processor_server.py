@@ -56,7 +56,7 @@ class RelationProcessor:
         
         # Initialize extractor (API key from .env)
         self.extractor = RAKGRelationExtractor(
-            model_name=os.getenv('RELATION_MODEL', 'Qwen/Qwen2.5-7B-Instruct'),
+            model_name=os.getenv('RELATION_MODEL', 'Qwen/Qwen2.5-7B-Instruct-Turbo'),
             semantic_threshold=float(os.getenv('SEMANTIC_THRESHOLD', '0.85')),
             mmr_lambda=float(os.getenv('MMR_LAMBDA', '0.55')),
             num_chunks=int(os.getenv('NUM_CHUNKS', '20'))
