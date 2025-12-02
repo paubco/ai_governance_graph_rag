@@ -145,50 +145,26 @@ def test_parameters(entities, chunks):
     
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
-    # Hardcoded list of good test entities to search for
-    GOOD_TEST_ENTITIES = [
-        'AI',
-        'EU',
-        'GDPR'
+    # Hardcoded entity indices for testing
+    # Use: python browse_entities.py --search "AI" to find indices
+    GOOD_TEST_ENTITY_INDICES = [
+        # Add your entity indices here, e.g.:
+        # 42,    # artificial intelligence
+        # 156,   # GDPR
+        # 789,   # EU
     ]
     
-    # Find these entities in the dataset
-    print("Searching for good test entities...")
-    found_entities = []
-    
-    for target_name in GOOD_TEST_ENTITIES:
-        for entity in entities:
-            name = entity.get('name', '')
-            chunk_ids = entity.get('chunk_ids', [])
-            
-            # Match (case-insensitive, must have chunks)
-            if (name.lower() == target_name.lower() and 
-                len(chunk_ids) >= 5):
-                found_entities.append(entity)
-                print(f"  ✓ Found: {name} ({entity.get('type', 'Unknown')}, {len(chunk_ids)} chunks)")
-                break
-    
-    if not found_entities:
-        print("\n⚠️  No good test entities found in dataset!")
-        print("Using fallback entity[20]")
-        test_entity = entities[20]
+    # Select test entity
+    if not GOOD_TEST_ENTITY_INDICES:
+        print("⚠️  GOOD_TEST_ENTITY_INDICES is empty!")
+        print("Run: python browse_entities.py --search 'AI'")
+        print("Then add indices to test file.\n")
+        print("Using entity[100] as fallback...\n")
+        test_entity = entities[100]
     else:
-        print(f"\n✓ Found {len(found_entities)} good test entities\n")
-        
-        # Show menu if multiple found
-        if len(found_entities) == 1:
-            test_entity = found_entities[0]
-        else:
-            print("Select test entity:")
-            for i, entity in enumerate(found_entities[:10], 1):  # Show max 10
-                name = entity.get('name', 'Unknown')
-                etype = entity.get('type', 'Unknown')
-                chunks = len(entity.get('chunk_ids', []))
-                print(f"  {i}. {name} ({etype}, {chunks} chunks)")
-            
-            # Auto-select first one (or let user choose later if needed)
-            print(f"\nUsing: {found_entities[0].get('name')}\n")
-            test_entity = found_entities[0]
+        idx = GOOD_TEST_ENTITY_INDICES[0]
+        test_entity = entities[idx]
+        print(f"Using entity index {idx}\n")
     
     print(f"Test entity: {test_entity.get('name', 'Unknown')}")
     print(f"Type: {test_entity.get('type', 'Unknown')}")
