@@ -189,18 +189,9 @@ def test_parameters(entities, chunks):
                 num_chunks=20
             )
             
-            # Get selected chunks (before LLM call)
-            selected_chunks = extractor.gather_candidate_chunks(
-                test_entity, 
-                chunks,
-                semantic_threshold=params['semantic_threshold']
-            )
-            selected_chunks = extractor.mmr_select_chunks(
-                test_entity,
-                selected_chunks,
-                lambda_param=params['mmr_lambda'],
-                k=20
-            )
+            # Get selected chunks (extractor uses instance variables)
+            selected_chunks = extractor.gather_candidate_chunks(test_entity, chunks)
+            selected_chunks = extractor.mmr_select_chunks(test_entity, selected_chunks)
             
             relations = extractor.extract_relations_for_entity(test_entity, chunks)
             
