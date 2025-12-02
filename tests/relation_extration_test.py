@@ -146,21 +146,57 @@ def test_parameters(entities, chunks):
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
     # Find a good test entity
+    print("Selecting test entity...")
     test_entity = None
-    for entity in entities[5:50]:
+    
+    # Prioritize these types
+    preferred_types = ['Regulation', 'Concept', 'Technology', 'Organization', 
+                       'Legal Document', 'Framework', 'Standard', 'Policy']
+    
+    # First pass: look for preferred types with multiple chunks
+    for entity in entities[:500]:
         name = entity.get('name', '')
         etype = entity.get('type', '')
-        if len(name) > 4 and etype not in ['Statistical Measure', 'Number']:
-            if not any(c in name for c in ['=', '$', '>', '<']):
+        chunk_ids = entity.get('chunk_ids', [])
+        
+        # Must have good properties
+        if (len(name) > 2 and 
+            len(name) < 100 and
+            etype in preferred_types and
+            len(chunk_ids) >= 5):  # At least 5 chunks for meaningful MMR
+            
+            # Skip if name has weird characters
+            if not any(c in name for c in ['=', '$', '>', '<', '#', '@']):
                 test_entity = entity
                 break
     
+    # Second pass: any reasonable entity with multiple chunks
     if not test_entity:
-        test_entity = entities[10]
+        for entity in entities[:500]:
+            name = entity.get('name', '')
+            etype = entity.get('type', '')
+            chunk_ids = entity.get('chunk_ids', [])
+            
+            if (len(name) > 3 and 
+                len(name) < 100 and
+                etype not in ['Statistical Measure', 'Number', 'Hashtag'] and
+                len(chunk_ids) >= 5):
+                
+                if not any(c in name for c in ['=', '$', '>', '<', '#', '@']):
+                    test_entity = entity
+                    break
+    
+    # Fallback
+    if not test_entity:
+        print("⚠️  Could not find ideal test entity, using entity[20]")
+        test_entity = entities[20]
+    else:
+        print(f"✓ Selected entity with {len(test_entity.get('chunk_ids', []))} chunks\n")
     
     print(f"Test entity: {test_entity.get('name', 'Unknown')}")
     print(f"Type: {test_entity.get('type', 'Unknown')}")
-    print(f"Description: {test_entity.get('description', 'N/A')[:100]}...\n")
+    print(f"Description: {test_entity.get('description', 'N/A')[:100]}...")
+    print(f"Chunks available: {len(test_entity.get('chunk_ids', []))}\n")
     
     # Parameter combinations
     params_list = [
