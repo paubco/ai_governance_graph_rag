@@ -1,9 +1,12 @@
 """
-Pre-Entity Quality Filter (Stage 0)
+Pre-Entity Quality Filter (Stage 0) - Updated with Academic Type Normalization
 Location: scripts/filter_pre_entities.py
 Runs BEFORE Phase 1C disambiguation pipeline
 
-Purpose: Remove metadata entities and low-quality extractions
+NEW: Collapses 121 academic entity types to ~15 canonical types
+NEW: Expanded banned types with all identifier types
+
+Purpose: Remove metadata entities, normalize academic types, filter low-quality extractions
 Approach: Conservative - only remove obvious junk
 
 Usage:
@@ -22,9 +25,24 @@ import json
 import argparse
 import logging
 import unicodedata
+import sys
 from pathlib import Path
 from typing import List, Dict, Tuple
 from collections import Counter
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+# Import entity type classification
+try:
+    from src.utils.entity_type_classification import SKIP_TYPES
+except ImportError:
+    # Fallback if running from different directory
+    SKIP_TYPES = {
+        'DOI', 'Digital Object Identifier', 'Digital Object Identifier (DOI)',
+        'ORCID', 'ISBN', 'ISSN', 'Chunk ID'
+    }
 
 # Setup logging
 logging.basicConfig(
@@ -36,10 +54,11 @@ logger = logging.getLogger(__name__)
 
 class PreEntityFilter:
     """
-    Conservative pre-entity quality filter
+    Conservative pre-entity quality filter with academic type normalization
     
     Filters:
-    1. TYPE-BASED: Remove metadata types (years, pages, DOIs, etc.)
+    0. ACADEMIC TYPE NORMALIZATION: Collapse 121 academic types to ~15 canonical types
+    1. TYPE-BASED: Remove metadata types (years, pages, identifiers, etc.)
     2. CHARACTER CLEANING: Fix unicode/control characters
     3. LENGTH VALIDATION: Remove unreasonably short/long entities
     4. CONTENT VALIDATION: Remove empty or non-textual entities
@@ -53,59 +72,248 @@ class PreEntityFilter:
         Initialize filter with conservative defaults
         
         Args:
-            min_chunks: Minimum chunk mentions (default: 1 for Phase 1B, 
-                       deduplication in Stage 1 will merge multi-mention entities)
+            min_chunks: Minimum chunk mentions (default: 1 for Phase 1B)
         """
         self.min_chunks = min_chunks
         
+        # ACADEMIC TYPE CANONICALIZATION MAP
+        # Reduces 121 academic types → 15 canonical types
+        self.academic_type_map = {
+            # CITATIONS (all variants → "Citation")
+            'Academic Citation': 'Citation',
+            'Reference': 'Citation',
+            'Academic Reference': 'Citation',
+            'Citation': 'Citation',
+            
+            # AUTHORS (all variants → "Author")
+            'Author': 'Author',
+            'Authors': 'Author',
+            'Author(s)': 'Author',
+            'Author Group': 'Author',
+            'Author List': 'Author',
+            'Academic Authors': 'Author',
+            'Author and Year': 'Citation',  # This is actually a citation
+            'Author (Year)': 'Citation',
+            'Author (2012)': 'Citation',
+            'Author (2022)': 'Citation',
+            'Authors (2019)': 'Citation',
+            
+            # EDITORS (all variants → "Editor")
+            'Editor': 'Editor',
+            'Editors': 'Editor',
+            'Editor(s)': 'Editor',
+            'Academic Editor': 'Editor',
+            'Academic Editors': 'Editor',
+            'Editorial Team': 'Editor',
+            'Editor Citation': 'Editor',
+            'Editors (2012)': 'Editor',
+            
+            # JOURNALS (all variants → "Journal")
+            'Journal': 'Journal',
+            'Journal Article': 'Journal',
+            'Journal Article Reference': 'Journal',
+            'Journal Name': 'Journal',
+            'Journal Citation': 'Journal',
+            'Journal Section': 'Journal',
+            'Academic Journal': 'Journal',
+            'Academic Journal Article': 'Journal',
+            'Journal or Publication': 'Journal',
+            'Journal and Publication Date': 'Journal',
+            'Journal and Year': 'Journal',
+            
+            # PUBLICATIONS (general)
+            'Publication': 'Publication',
+            'Publication Source': 'Publication',
+            'Publication Title': 'Publication',
+            'Publication Type': 'Publication',
+            'Publication Volume': 'Publication',
+            'Publication Issue': 'Publication',
+            'Publication Edition': 'Publication',
+            'Publication Series': 'Publication',
+            'Publication Status': 'Publication',
+            'Publication Model': 'Publication',
+            'Publication Month': 'Publication',
+            'Publication Information': 'Publication',
+            'Publication Metadata': 'Publication',
+            'Publication Reference': 'Publication',
+            'Publication Venue': 'Publication',
+            'Academic Publication': 'Publication',
+            
+            # BOOKS (all variants → "Book")
+            'Book': 'Book',
+            'Book Title': 'Book',
+            'Book Series': 'Book',
+            'Book Chapter': 'Book',
+            'Book Chapter Title': 'Book',
+            'Book Subtitle': 'Book',
+            'Book Volume': 'Book',
+            'Book Edition': 'Book',
+            'Book Section': 'Book',
+            
+            # PAPERS (all variants → "Paper")
+            'Paper': 'Paper',
+            'Paper Title': 'Paper',
+            'Research Paper': 'Paper',
+            'Research Paper Title': 'Paper',
+            'Academic Paper': 'Paper',
+            'Academic Paper Title': 'Paper',
+            'Working Paper': 'Paper',
+            'White Paper': 'Paper',
+            'Discussion Paper': 'Paper',
+            'Position Paper': 'Paper',
+            'Review Paper': 'Paper',
+            'Policy Paper': 'Paper',
+            
+            # ARTICLES (all variants → "Article")
+            'Article Title': 'Article',
+            'Article Subtitle': 'Article',
+            'Academic Article': 'Article',
+            'Journal Article': 'Article',
+            'News Article': 'Article',
+            
+            # REPORTS (all variants → "Report")
+            'Report Title': 'Report',
+            'Research Report': 'Report',
+            'Technical Report': 'Report',
+            'Technical Report Title': 'Report',
+            
+            # CONFERENCES (all variants → "Conference")
+            'Conference': 'Conference',
+            'Conference Proceedings': 'Conference',
+            'Conference Title': 'Conference',
+            'Conference Full Name': 'Conference',
+            'Conference Abbreviation': 'Conference',
+            'Conference Acronym': 'Conference',
+            'Conference or Event': 'Conference',
+            'Conference or Journal': 'Conference',
+            'Conference/Book Title': 'Conference',
+            'Conference/Workshop': 'Conference',
+            'Academic Conference': 'Conference',
+            
+            # THESIS/DISSERTATION
+            'Thesis': 'Thesis',
+            'Thesis Title': 'Thesis',
+            'Dissertation': 'Thesis',
+            'Manuscript': 'Thesis',
+            
+            # PREPRINTS
+            'Preprint': 'Preprint',
+            'Preprint Identifier': 'Preprint',
+            
+            # DOCUMENT TITLES (generic)
+            'Document Title': 'Document',
+            'Study Title': 'Document',
+            'Research Title': 'Document',
+            'Project Title': 'Document',
+            
+            # ACADEMIC INSTITUTIONS/DEPARTMENTS (keep as-is for now)
+            'Academic Department': 'Academic Department',
+            'Academic Institution': 'Academic Institution',
+            'Academic Field': 'Academic Field',
+            'Academic Discipline': 'Academic Discipline',
+            
+            # LITERATURE (general)
+            'Literature': 'Literature',
+            'Literature Type': 'Literature',
+            'Literary Work': 'Literature',
+            'Academic Literature': 'Literature',
+            
+            # PUBLISHER
+            'Publisher': 'Publisher',
+        }
+        
         # TYPE-BASED FILTERING: Metadata types to ban
+        # NEW: Includes all SKIP_TYPES identifiers
         self.banned_types = {
+            # IDENTIFIERS (from SKIP_TYPES + expansions)
+            'DOI', 'Digital Object Identifier', 'Digital Object Identifier (DOI)',
+            'ORCID', 'ISBN', 'ISSN', 'Chunk ID',
+            'arXiv Identifier', 'PubMed ID', 'PubMed Identifier',
+            'Grant Number', 'Grant ID', 'Grant Agreement', 'Grant Identifier',
+            'Protocol Code', 'Approval ID', 'Study Identifier',
+            'Document ID', 'Identifier', 'Article ID', 'Article Identifier',
+            'Article Number', 'Publication Identifier',
+            'Database Identifier', 'Repository Name',
+            
             # Time metadata
             'Year', 'Date', 'Publication Year', 'Publication Date', 
-            'Time Period', 'Time Frame',
+            'Time Period', 'Time Frame', 'Month', 'Decade',
+            'Date Range', 'Time Range', 'Timeline', 'Time Span',
+            'Publication Month', 'Access Date', 'Received Date', 
+            'Accepted Date', 'Revised Date', 'Published Date',
             
-            # Document structure metadata (KEEP DOI for enrichment!)
+            # Document structure metadata
             'Page Range', 'Page Number', 'Pages', 'Article Pages',
             'Volume', 'Volume Number', 'Volume and Issue', 
             'Journal Volume and Issue', 'Journal Volume',
-            'Issue', 'Journal Issue',
-            'Section', 'Document Section', 'Regulatory Document Section', 'Section Title',
-            'Article Number', 'Article ID', 'Article Identifier',
-            'Chapter Title',
+            'Journal Volume and Pages', 'Journal Volume and Number',
+            'Article Volume and Issue', 'Volume Identifier',
+            'Volume and Pages', 'Volume or Edition',
+            'Issue', 'Journal Issue', 'Issue Number', 'Publication Issue',
+            'Section', 'Document Section', 'Regulatory Document Section', 
+            'Section Title', 'Section Heading', 'Subsection', 'Section Reference',
+            'Chapter', 'Chapter Title', 'Book Chapter Title',
+            'Appendix', 'Footnote', 'Note',
+            'Page', 'Page Reference', 'Page Indicator',
             
             # Visual/formatting metadata
-            'Figure', 'Figure Reference', 'Figure Caption', 'Visual Reference', 'Visual Element',
-            'Table', 'Footnote',
+            'Figure', 'Figure Reference', 'Figure Caption', 'Figure Title',
+            'Visual Reference', 'Visual Element', 'Visual Aid',
+            'Table', 'Table Reference', 'Table Title', 'Table Section',
+            'Diagram', 'Graph', 'Chart', 'Image',
             'Mathematical Notation', 'Mathematical Expression',
+            'Mathematical Formula', 'Mathematical Equation',
+            'Equation', 'Equation Reference', 'Formula',
             
-            # Reference metadata
+            # Reference metadata (keep citation/author types, ban metadata)
             'Article Reference', 'Journal Reference', 'Document Reference', 
-            'Publication Details', 'Publication Identifier', 'Article Details',
-            'Document Identifier', 'Identifier',
+            'Publication Details', 'Article Details',
+            'Document Identifier',
+            'Journal and Publication Date', 'Journal and Year',
+            'Publication Information', 'Publication Metadata',
+            'Journal Citation', 'Journal Section',
             
             # Contact/web metadata
-            'Email', 'URL', 'Website', 'Contact Information', 'Address',
+            'Email', 'Email Address', 'Contact Email',
+            'URL', 'Website', 'Web Resource', 'Web Page',
+            'Contact Information', 'Address', 'Location Address',
             
-            # Social media junk (Phase 1C update)
-            'Twitter Handle', 'Social Media Handle', 'Hashtag', 'Campaign',
+            # Social media junk
+            'Twitter Handle', 'Social Media Handle', 'Social Media Account',
+            'Hashtag', 'Campaign', 'Social Media Platform',
             
-            # Math/technical junk (Phase 1C update)
+            # Math/technical junk
             'Variable', 'Parameter', 'Technical Parameter',
             'Mathematical Concept', 'Mathematical Constraint',
             'Matrix', 'Mathematical Matrix', 'Algorithm Component',
             'Model Parameter', 'Threshold', 'Numerical Value',
-            'Data Size', 'Edition',
+            'Data Size', 'Sample Size', 'Dataset Size',
+            'Hyperparameter', 'Hyper-Parameter',
+            'Coefficient', 'P-value', 'Statistical Significance',
+            'Statistical Parameter', 'Parameter Value', 'Parameter Setting',
+            
+            # Formatting/structure
+            'Edition', 'Book Edition', 'Publication Edition',
+            'Version', 'Software Version', 'Document Version',
+            'Format', 'File Format', 'Data Format',
+            'Subtitle', 'Book Subtitle', 'Article Subtitle',
+            'Copyright', 'License', 'License URL',
+            'Publisher Information', 'Publisher and Year',
+            'Publisher and Location', 'Publisher Statement',
+            'Imprint',
             
             # Other junk
-            'Unknown',  # Entities with "Unknown" type
-            'Journal Abbreviation',
-            'Document Element',
+            'Unknown', 'Unknown Entity', 'Unclear',
+            'Journal Abbreviation', 'Conference Abbreviation',
+            'Abbreviation', 'Acronym',
+            'Document Element', 'Document Component', 'Document Structure',
+            'Metadata', 'Document Metadata', 'Publication Metadata',
         }
         
         # PROTECTED TYPES: Keep even if single-appearance (for Scopus enrichment)
         self.protected_single_appearance = {
             # Citations (will enrich with Scopus)
-            'Academic Citation', 'Citation', 'Reference',
+            'Citation', 'Academic Citation', 'Reference',
             
             # Authors (will match to Scopus authors - 570 names)
             'Author', 'Authors', 'Author(s)', 'Editor',
@@ -114,8 +322,7 @@ class PreEntityFilter:
             'Journal', 'Publication',
             
             # Publications (might be regulations/reports)
-            'Book', 'Book Title', 'Conference',
-            'Article Title', 'Paper Title', 'Document Title',
+            'Book', 'Conference', 'Article', 'Paper', 'Document',
             
             # Regulatory documents (unique documents are legitimate)
             'Regulation', 'Regulatory Document', 'Legal Document',
@@ -125,6 +332,7 @@ class PreEntityFilter:
         # Statistics tracking
         self.stats = {
             'input_entities': 0,
+            'academic_types_normalized': 0,  # NEW
             'banned_type': 0,
             'name_too_short': 0,
             'name_too_long': 0,
@@ -133,14 +341,43 @@ class PreEntityFilter:
             'empty_name': 0,
             'no_letters': 0,
             'single_mention': 0,
-            'single_appear_short': 0,  # New: single + short combo
-            'social_media_pattern': 0,  # New: @ or #
-            'latex_notation': 0,        # New: backslash
-            'math_notation_dollars': 0, # New: $...$
-            'high_special_char_density': 0,  # New: >40% special chars
+            'single_appear_short': 0,
+            'social_media_pattern': 0,
+            'latex_notation': 0,
+            'math_notation_dollars': 0,
+            'high_special_char_density': 0,
             'output_entities': 0,
             'character_fixes': 0,
         }
+    
+    def normalize_academic_type(self, entity_type: str) -> str:
+        """
+        Normalize academic entity types to canonical forms
+        
+        Collapses 121 academic types → ~15 canonical types:
+        - Citation (all citation/reference variants)
+        - Author (all author variants)
+        - Editor (all editor variants)
+        - Journal (all journal variants)
+        - Publication (generic publications)
+        - Book (all book variants)
+        - Paper (all paper variants)
+        - Article (all article variants)
+        - Report (all report variants)
+        - Conference (all conference variants)
+        - Thesis (thesis/dissertation/manuscript)
+        - Preprint (preprints)
+        - Document (generic document titles)
+        - Literature (general literature)
+        - Publisher (publishers)
+        
+        Args:
+            entity_type: Original entity type
+            
+        Returns:
+            Canonical type (or original if not in map)
+        """
+        return self.academic_type_map.get(entity_type, entity_type)
     
     def clean_string(self, text: str) -> Tuple[str, bool]:
         """
@@ -220,27 +457,24 @@ class PreEntityFilter:
         if name.startswith('$') and name.endswith('$'):
             return False, 'math_notation_dollars'
         
-        # High special character density (>40% for strings >=3 chars)
-        # EXCEPTION: DOIs have high special chars but are valid identifiers
-        if len(name) >= 3:
-            # Check if it's a DOI pattern: starts with "10." and has slashes
-            is_doi_pattern = name.startswith('10.') and '/' in name
-            is_doi_type = entity_type in {'DOI', 'Digital Object Identifier'}
+        # High special character density (>40%)
+        # Exception: DOI (already filtered in banned_types, but double-check)
+        if entity_type not in ['DOI', 'Digital Object Identifier']:
+            letters = sum(1 for c in name if c.isalpha())
+            special = sum(1 for c in name if not c.isalnum() and not c.isspace())
             
-            if not (is_doi_pattern or is_doi_type):
-                special_count = sum(c in '!@#$%^&*()_+-=[]{}|;:",.<>?/\\~`' for c in name)
-                if special_count / len(name) > 0.4:
-                    return False, 'high_special_char_density'
+            if len(name) > 0 and special / len(name) > 0.4:
+                return False, 'high_special_char_density'
         
         return True, 'OK'
     
     def check_length_validity(self, entity: Dict) -> Tuple[bool, str]:
         """
-        Check if entity fields have reasonable lengths (conservative)
+        Check entity name and description length validity
         
-        Conservative thresholds:
-        - Name: 2-200 chars (allows acronyms, prevents full sentences)
-        - Description: 10-2000 chars (informative but not paragraphs)
+        Conservative defaults:
+        - Name: 2-200 chars (allows acronyms, prevents sentences)
+        - Description: 10-1000 chars (must be informative)
         
         Returns:
             (keep: bool, reason: str)
@@ -248,156 +482,118 @@ class PreEntityFilter:
         name = entity.get('name', '')
         description = entity.get('description', '')
         
-        # Name too short (< 2 chars) - likely extraction error
+        # Name length (2-200 chars)
         if len(name) < 2:
             return False, 'name_too_short'
-        
-        # Name too long (> 200 chars) - probably full sentence
         if len(name) > 200:
             return False, 'name_too_long'
         
-        # Description too short (< 10 chars) - not informative
-        if len(description) < 30:
+        # Description length (10-1000 chars)
+        if len(description) < 10:
             return False, 'description_too_short'
-        
-        # Description too long (> 2000 chars) - probably paragraph
-        if len(description) > 500:
+        if len(description) > 1000:
             return False, 'description_too_long'
         
         return True, 'OK'
     
     def check_content_validity(self, entity: Dict) -> Tuple[bool, str]:
         """
-        Check if entity has meaningful textual content
+        Check entity name content validity
         
-        Conservative checks:
-        - Not empty
-        - Contains at least one letter (allows "GPT-4", "3D", etc.)
+        Filters:
+        - Empty name (after cleaning)
+        - No alphabetic characters in name (e.g., "###", "123")
         
         Returns:
             (keep: bool, reason: str)
         """
         name = entity.get('name', '').strip()
         
-        # Empty or null
+        # Empty name
         if not name:
             return False, 'empty_name'
         
-        # Only punctuation/numbers - must have at least one letter
-        if not any(c.isalpha() for c in name):
+        # No letters (e.g., "###", "123", punctuation-only)
+        has_letter = any(c.isalpha() for c in name)
+        if not has_letter:
             return False, 'no_letters'
         
         return True, 'OK'
     
     def check_chunk_quality(self, entity: Dict) -> Tuple[bool, str]:
         """
-        Check entity has sufficient mentions (optional, configurable)
+        Check chunk mention quality
         
-        Combined checks:
-        1. Single-appearance + short (<=2 chars) = automatic elimination
-        2. Single-appearance for non-protected types
+        Phase 1B has single chunk_id per entity, so min_chunks=1 keeps all.
+        Use min_chunks=2+ after Phase 1C deduplication for stricter filtering.
         
-        Protected types (for Scopus enrichment):
-        - Academic Citation, Citation, Reference
-        - Author, Authors, Author(s), Editor
-        - Journal, Publication
-        - Book, Conference, Regulatory documents
+        Special case: single-appearance + very short name (<4 chars) = likely junk
+        Exception: Protected types (citations, authors, journals) kept even if single
         
-        NOTE: Phase 1B outputs 'chunk_id' (singular), but after deduplication
-        entities will have 'chunk_ids' (plural). Handle both formats.
-        
-        Args:
-            entity: Entity dict
-            
         Returns:
             (keep: bool, reason: str)
         """
-        # Try plural first (after deduplication)
         chunk_ids = entity.get('chunk_ids', [])
-        
-        # Phase 1B uses singular 'chunk_id' (before deduplication)
-        if not chunk_ids and 'chunk_id' in entity:
-            chunk_ids = [entity['chunk_id']]
-        
-        # Handle string format
-        if isinstance(chunk_ids, str):
-            chunk_ids = [chunk_ids]
-        
-        # Special case: single-appearance + short (<=2 chars) = automatic out
         name = entity.get('name', '')
-        if len(chunk_ids) == 1 and len(name) <= 2:
+        entity_type = entity.get('type', '')
+        
+        num_chunks = len(chunk_ids)
+        
+        # Protected types: keep even if single appearance
+        if entity_type in self.protected_single_appearance:
+            return True, 'OK'
+        
+        # Single appearance + short name = likely junk
+        if num_chunks == 1 and len(name) < 4:
             return False, 'single_appear_short'
         
-        # Check minimum mentions
-        if len(chunk_ids) < self.min_chunks:
-            # Protected types get exception (for Scopus enrichment)
-            entity_type = entity.get('type', '')
-            if entity_type not in self.protected_single_appearance:
-                return False, 'single_mention'
+        # Min chunks threshold
+        if num_chunks < self.min_chunks:
+            return False, 'single_mention'
         
         return True, 'OK'
     
-    def flatten_entities(self, nested_data: Dict) -> List[Dict]:
+    def _flatten_entities(self, nested_data: Dict) -> List[Dict]:
         """
-        Flatten nested entity structure from Phase 1B output
+        Flatten nested structure: {chunk_id: {entities: [...]}} -> flat list
         
-        Input structure:
-        {
-            "metadata": {...},
-            "entities": [
-                {
-                    "chunk_id": "...",
-                    "chunk_text": "...",
-                    "entities": [
-                        {"name": "...", "type": "...", "description": "...", "chunk_id": "..."}
-                    ]
-                }
-            ]
-        }
-        
-        Output: Flat list of entity dicts
+        Adds chunk_id to each entity for later reconstruction
         """
         flat = []
         
-        entities_array = nested_data.get('entities', [])
-        
-        for chunk_obj in entities_array:
-            chunk_entities = chunk_obj.get('entities', [])
-            for entity in chunk_entities:
-                # Ensure chunk_id is present
-                if 'chunk_id' not in entity and 'chunk_id' in chunk_obj:
-                    entity['chunk_id'] = chunk_obj['chunk_id']
+        for chunk_obj in nested_data.get('entities', []):
+            chunk_id = chunk_obj.get('chunk_id')
+            
+            for entity in chunk_obj.get('entities', []):
+                entity['chunk_id'] = chunk_id
                 flat.append(entity)
         
         return flat
     
     def filter_entities(self, nested_data: Dict) -> Dict:
         """
-        Main filtering pipeline
+        Main filtering pipeline with academic type normalization
         
-        Steps:
-        1. Flatten nested structure
-        2. Clean strings (unicode, control chars)
-        3. Apply filters (type, length, content, chunks)
-        4. Collect statistics
-        5. Return in same nested format
+        Pipeline:
+        0. Normalize academic types (collapse variants)
+        1. Clean strings (unicode, whitespace)
+        2. Type-based filtering (banned types)
+        3. Pattern-based filtering (social media, math notation)
+        4. Length validation (name, description)
+        5. Content validation (empty, no letters)
+        6. Chunk quality (single mention, short name)
         
         Args:
-            nested_data: Input dict with nested entity structure
+            nested_data: Nested structure from Phase 1B
             
         Returns:
-            Filtered data in same nested structure
+            Filtered nested structure
         """
-        logger.info("=" * 80)
-        logger.info("PRE-ENTITY QUALITY FILTER (STAGE 0)")
-        logger.info("=" * 80)
-        logger.info("")
-        
         # Flatten
-        flat_entities = self.flatten_entities(nested_data)
+        flat_entities = self._flatten_entities(nested_data)
         self.stats['input_entities'] = len(flat_entities)
         
-        logger.info(f"Input: {len(flat_entities)} entities")
+        logger.info(f"Input entities: {len(flat_entities):,}")
         logger.info(f"Minimum chunks: {self.min_chunks} (Phase 1B has single chunk_id per entity)")
         logger.info("")
         logger.info("Filtering...")
@@ -406,7 +602,16 @@ class PreEntityFilter:
         clean_entities = []
         
         for entity in flat_entities:
-            # Clean strings FIRST
+            # STEP 0: Normalize academic types
+            original_type = entity.get('type', '')
+            normalized_type = self.normalize_academic_type(original_type)
+            
+            if normalized_type != original_type:
+                entity['type'] = normalized_type
+                entity['original_type'] = original_type  # Preserve for debugging
+                self.stats['academic_types_normalized'] += 1
+            
+            # STEP 1: Clean strings
             name_clean, name_modified = self.clean_string(entity.get('name', ''))
             desc_clean, desc_modified = self.clean_string(entity.get('description', ''))
             
@@ -416,31 +621,31 @@ class PreEntityFilter:
             if name_modified or desc_modified:
                 self.stats['character_fixes'] += 1
             
-            # Type filter
+            # STEP 2: Type filter
             keep, reason = self.check_type_filter(entity)
             if not keep:
                 self.stats[reason] += 1
                 continue
             
-            # Pattern-based filters (social media, math notation, etc.)
+            # STEP 3: Pattern-based filters
             keep, reason = self.check_pattern_bans(entity)
             if not keep:
                 self.stats[reason] += 1
                 continue
             
-            # Length checks
+            # STEP 4: Length checks
             keep, reason = self.check_length_validity(entity)
             if not keep:
                 self.stats[reason] += 1
                 continue
             
-            # Content checks
+            # STEP 5: Content checks
             keep, reason = self.check_content_validity(entity)
             if not keep:
                 self.stats[reason] += 1
                 continue
             
-            # Chunk quality (uses self.min_chunks)
+            # STEP 6: Chunk quality
             keep, reason = self.check_chunk_quality(entity)
             if not keep:
                 self.stats[reason] += 1
@@ -510,6 +715,10 @@ class PreEntityFilter:
         logger.info(f"Removed:           {self.stats['input_entities'] - self.stats['output_entities']:>8,} "
                    f"({100 * (self.stats['input_entities'] - self.stats['output_entities']) / self.stats['input_entities']:.1f}%)")
         logger.info("")
+        logger.info("Academic type normalization:")
+        logger.info(f"  Types normalized:  {self.stats['academic_types_normalized']:>8,} "
+                   f"(121 types → ~15 canonical)")
+        logger.info("")
         logger.info("Removal reasons:")
         logger.info(f"  Banned type:          {self.stats['banned_type']:>8,}")
         logger.info(f"  Social media (@, #):  {self.stats['social_media_pattern']:>8,}")
@@ -532,7 +741,7 @@ class PreEntityFilter:
 def main():
     """Command-line interface"""
     parser = argparse.ArgumentParser(
-        description="Pre-Entity Quality Filter (Conservative)",
+        description="Pre-Entity Quality Filter with Academic Type Normalization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -546,17 +755,18 @@ Examples:
         --input data/interim/entities/pre_entities.json \\
         --output data/interim/entities/pre_entities_clean.json \\
         --min-chunks 3
-    
-    # Keep all entities (default)
-    python scripts/filter_pre_entities.py \\
-        --input data/interim/entities/pre_entities.json \\
-        --output data/interim/entities/pre_entities_clean.json
 
 Conservative defaults:
     - Min name length: 2 chars (allows acronyms)
     - Max name length: 200 chars (prevents sentences)
     - Min description: 10 chars (must be informative)
     - Min chunks: 1 mention (Phase 1B has single chunk_id per entity)
+    
+NEW: Academic type normalization
+    - Collapses 121 academic types → 15 canonical types
+    - Example: "Book Title", "Book Chapter Title" → "Book"
+    - Example: "Author", "Authors", "Author(s)" → "Author"
+    - Preserves original_type field for debugging
         """
     )
     
@@ -576,7 +786,7 @@ Conservative defaults:
         '--min-chunks',
         type=int,
         default=1,
-        help='Minimum chunk mentions (default: 1, use 2+ for stricter filtering after deduplication)'
+        help='Minimum chunk mentions (default: 1)'
     )
     
     args = parser.parse_args()
