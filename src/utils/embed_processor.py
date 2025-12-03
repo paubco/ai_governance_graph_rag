@@ -5,6 +5,11 @@ Works for both chunks and entities
 
 Author: Pau Barba i Colomer
 Usage: Phase 1A-2 (chunks), Phase 1C-1 (entities)
+
+UPDATES (Dec 3, 2025):
+- Rolling checkpoint cleanup: Keeps only 2 most recent checkpoints (saves disk space)
+- Numpy array serialization: Converts numpy arrays to lists for JSON compatibility
+- Fixed memory issue: Prevents 50GB+ checkpoint accumulation
 """
 
 import json
@@ -32,7 +37,7 @@ class EmbedProcessor:
     1. Load items from JSON (chunks or entities)
     2. Batch embed with progress tracking
     3. Append embeddings to item dicts
-    4. Save checkpoints every N items
+    4. Save checkpoints every N items (with rolling cleanup)
     5. Save final enriched items
     """
     
@@ -79,30 +84,60 @@ class EmbedProcessor:
         """
         logger.info(f"Saving {len(items)} enriched items to: {filepath}")
         
+        # Convert numpy arrays to lists for JSON serialization
+        items_serializable = {}
+        for key, item in items.items():
+            item_copy = item.copy()
+            if 'embedding' in item_copy and isinstance(item_copy['embedding'], np.ndarray):
+                item_copy['embedding'] = item_copy['embedding'].tolist()
+            items_serializable[key] = item_copy
+        
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
+            json.dump(items_serializable, f, ensure_ascii=False, indent=2)
         
         logger.info("Save complete")
     
     def save_checkpoint(self, items: Dict, checkpoint_dir: Path, 
-                       item_count: int):
+                       item_count: int, max_checkpoints: int = 2):
         """
-        Save intermediate checkpoint.
+        Save intermediate checkpoint with rolling cleanup.
+        Keeps only the N most recent checkpoints to save disk space.
+        
+        With 69k entities × 1024-dim embeddings:
+        - Each checkpoint: ~150MB
+        - 2 checkpoints: 300MB max (vs 10GB+ without cleanup)
         
         Args:
             items: Current item dictionary
             checkpoint_dir: Directory for checkpoints
             item_count: Number of items processed
+            max_checkpoints: Maximum number of checkpoints to keep (default: 2)
         """
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_file = checkpoint_dir / f"checkpoint_{item_count}_{timestamp}.json"
         
+        # Convert numpy arrays to lists for JSON serialization
+        items_serializable = {}
+        for key, item in items.items():
+            item_copy = item.copy()
+            if 'embedding' in item_copy and isinstance(item_copy['embedding'], np.ndarray):
+                item_copy['embedding'] = item_copy['embedding'].tolist()
+            items_serializable[key] = item_copy
+        
+        # Save new checkpoint
+        with open(checkpoint_file, 'w', encoding='utf-8') as f:
+            json.dump(items_serializable, f, ensure_ascii=False, indent=2)
+        
         logger.info(f"Saving checkpoint: {item_count} items processed")
         
-        with open(checkpoint_file, 'w', encoding='utf-8') as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
+        # Rolling cleanup: Keep only N most recent checkpoints
+        checkpoints = sorted(checkpoint_dir.glob("checkpoint_*.json"))
+        if len(checkpoints) > max_checkpoints:
+            for old_checkpoint in checkpoints[:-max_checkpoints]:
+                old_checkpoint.unlink()
+                logger.debug(f"Deleted old checkpoint: {old_checkpoint.name}")
     
     def process_items(self, items: Dict, text_key: str = 'text',
                      batch_size: int = 32,
@@ -144,8 +179,8 @@ class EmbedProcessor:
         for item_id, embedding in tqdm(zip(item_ids, embeddings), 
                                        total=len(item_ids),
                                        desc="Enriching items"):
-            # Convert numpy array to list for JSON serialization
-            items[item_id]['embedding'] = embedding.tolist()
+            # Store as numpy array in memory (converted to list only during save)
+            items[item_id]['embedding'] = embedding
             
             processed_count += 1
             
@@ -172,7 +207,14 @@ class EmbedProcessor:
         for item_id, item_data in items.items():
             if 'embedding' in item_data:
                 with_embeddings += 1
-                if len(item_data['embedding']) == self.embedder.get_embedding_dim():
+                embedding = item_data['embedding']
+                # Handle both numpy arrays and lists
+                if isinstance(embedding, np.ndarray):
+                    dim = len(embedding)
+                else:
+                    dim = len(embedding)
+                
+                if dim == self.embedder.get_embedding_dim():
                     correct_dim += 1
         
         stats = {
