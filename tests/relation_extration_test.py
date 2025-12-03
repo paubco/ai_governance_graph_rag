@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 # Which entities to test? (name, type)
 TEST_ENTITIES = [
     ("AI System", "Technology"),
-    ("European Union", "Organization"), 
+    ("Al Braiki, B., Harous, S., Zaki, N., & Alnajjar, F. (2020)", "Academic Citation"), 
     ("Chat-GPT", "AI System"),
+    ("A social cognitive view of self-regulated academic learning","Article Title")
 ]
 
 # Parameters
