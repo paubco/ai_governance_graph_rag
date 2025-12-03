@@ -77,24 +77,39 @@ CONTEXT CHUNKS:
 {chunks_text}
 
 TASK:
-Extract ALL relationships where "{entity_name}" is connected to the detected entities above.
+Extract relationships where "{entity_name}" is connected to detected entities.
 
-RULES:
-- Subject MUST be "{entity_name}" OR one of the detected entities
-- Object MUST be one of the detected entities OR "{entity_name}"
-- Use ONLY entities from the detected list above
-- NO duplicate relations (same subject-predicate-object)
-- NO predefined relation types - discover predicates from text (e.g., "regulates", "applies_to")
-- Extract only relations explicitly stated in chunks
-- If no valid relationships found, return empty list
+CRITICAL RULES:
+1. ONLY extract relations EXPLICITLY STATED in the text
+   - The predicate MUST be a verb or verb phrase that appears in the chunk
+   - DO NOT infer relations from entities merely appearing together
+   
+2. Entity constraints:
+   - Subject MUST be "{entity_name}" OR one of the detected entities
+   - Object MUST be one of the detected entities OR "{entity_name}"
+   
+3. Quality controls:
+   - NO duplicate relations (same subject-predicate-object)
+   - NO predefined relation types - use actual verbs from text
+   - If no explicit relationships found, return empty list
 
-OUTPUT FORMAT (JSON only, no other text):
+EXAMPLES:
+✓ CORRECT (explicit):
+  Text: "GDPR regulates data processing"
+  Extract: {{"subject": "GDPR", "predicate": "regulates", "object": "data processing"}}
+
+✗ WRONG (inferred):
+  Text: "GDPR and transparency are important"
+  DO NOT extract: {{"subject": "GDPR", "predicate": "relates_to", "object": "transparency"}}
+  (No verb connecting them!)
+
+OUTPUT FORMAT (JSON only):
 {{
   "relations": [
     {{
-      "subject": "entity_name_from_detected_list",
-      "predicate": "verb_phrase",
-      "object": "entity_name_from_detected_list",
+      "subject": "entity_name",
+      "predicate": "verb_from_text",
+      "object": "entity_name",
       "chunk_ids": ["chunk_id"]
     }}
   ]
@@ -121,23 +136,26 @@ CONTEXT CHUNKS:
 {chunks_text}
 
 TASK:
-Extract what concepts "{entity_name}" discusses based on the context.
+Extract concepts that "{entity_name}" explicitly discusses in the text.
 
-RULES:
-- Subject is ALWAYS "{entity_name}" (the academic entity)
-- Predicate is ALWAYS "discusses"
-- Object MUST be one of the detected concepts from the list above
-- DO NOT extract relations where "{entity_name}" is the object
-- Use ONLY concepts from the detected list
-- If no concepts found, return empty list
+CRITICAL RULES:
+1. ONLY extract if the text explicitly shows "{entity_name}" discussing/analyzing the concept
+2. Subject is ALWAYS "{entity_name}"
+3. Predicate is ALWAYS "discusses"
+4. Object MUST be from the detected concepts list
+5. DO NOT infer relations from mere co-occurrence
 
-OUTPUT FORMAT (JSON only, no other text):
+EXAMPLE:
+✓ CORRECT: Text says "Smith et al. (2020) discusses algorithmic bias"
+✗ WRONG: Text mentions both "Smith et al." and "bias" but no explicit discussion
+
+OUTPUT FORMAT (JSON only):
 {{
   "relations": [
     {{
       "subject": "{entity_name}",
       "predicate": "discusses",
-      "object": "concept_name_from_detected_list",
+      "object": "concept_name",
       "chunk_ids": ["chunk_id"]
     }}
   ]

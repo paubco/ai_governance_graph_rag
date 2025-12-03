@@ -160,8 +160,8 @@ def save_prompt_to_file(prompt: str, entity_name: str, token_count: int) -> None
 # ============================================================================
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85  # For semantic neighbors retrieval
-DEFAULT_MMR_LAMBDA = 0.55          # Balance: 0.5=balanced, 1.0=pure relevance
-DEFAULT_NUM_CHUNKS = 8             # Chunks per stage (8 + optional 8 second round = max 16 total)
+DEFAULT_MMR_LAMBDA = 0.65          # Balance: 0.5=balanced, 1.0=pure relevance (increased for focus)
+DEFAULT_NUM_CHUNKS = 6             # Chunks per stage (6 + optional 6 second round = max 12 total)
 DEFAULT_CANDIDATE_POOL = 200       # Pre-filter size before MMR
                                    # Why 200? Gives MMR a large enough pool for diversity
                                    # while keeping computation manageable
@@ -378,7 +378,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 10000,
+        max_tokens: int = 16000,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None
     ):
@@ -393,7 +393,7 @@ class RAKGRelationExtractor:
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 10000, accommodates 80-120 relations per batch)
+            max_tokens: Max LLM response tokens (default: 16000, accommodates 100-150 relations per batch)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
         """
@@ -1254,11 +1254,11 @@ class RAKGRelationExtractor:
             second_round_chunks = []
             if strategy == 'semantic':
                 should_do_second, distance = self._should_do_second_round(
-                    entity, selected_chunks, threshold=0.15
+                    entity, selected_chunks, threshold=0.25
                 )
                 
                 if should_do_second:
-                    logger.info(f"  Second round triggered (distance: {distance:.3f} > 0.15)")
+                    logger.info(f"  Second round triggered (distance: {distance:.3f} > 0.25)")
                     
                     # Get remaining candidates
                     selected_ids = set(c.get('chunk_id', c.get('id', '')) for c in selected_chunks)
@@ -1274,7 +1274,7 @@ class RAKGRelationExtractor:
                         
                         logger.info(f"    ✓ Second round: {len(second_round_chunks)} chunks")
                 else:
-                    logger.debug(f"    No second round (distance: {distance:.3f} <= 0.15)")
+                    logger.debug(f"    No second round (distance: {distance:.3f} <= 0.25)")
             
             # Step 3: Extract relations based on strategy
             all_relations = []
