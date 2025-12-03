@@ -166,7 +166,7 @@ OUTPUT FORMAT (JSON only, no other text):
             ],
             max_tokens=500,
             temperature=0.0,
-            stop=["```", "\n\nNote:", "Explanation:"]
+            stop=["\n\nNote:", "Explanation:"]  # Removed "```" to allow markdown blocks
         )
         
         print(f"✓ API call succeeded")
