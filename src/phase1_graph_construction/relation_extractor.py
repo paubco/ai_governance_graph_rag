@@ -88,22 +88,22 @@ def estimate_token_count(text: str) -> int:
 def validate_prompt_size(
     prompt: str, 
     entity_name: str,
-    safe_limit: int = 8000,
-    warning_limit: int = 6000
+    safe_limit: int = 20000,
+    warning_limit: int = 12000
 ) -> Tuple[bool, int]:
     """
     Validate prompt size before LLM call
     
     Thresholds:
-    - < 6000 tokens: ✓ OK
-    - 6000-8000 tokens: ⚠️ WARNING (log but proceed)
-    - > 8000 tokens: 🚨 ERROR (should reduce chunks)
+    - < 12000 tokens: ✓ OK
+    - 12000-20000 tokens: ⚠️ WARNING (log but proceed)
+    - > 20000 tokens: 🚨 ERROR (should reduce chunks)
     
     Args:
         prompt: Full prompt text
         entity_name: Entity name (for logging)
-        safe_limit: Hard limit (default: 8000)
-        warning_limit: Warning threshold (default: 6000)
+        safe_limit: Hard limit (default: 20000)
+        warning_limit: Warning threshold (default: 12000)
         
     Returns:
         Tuple[bool, int]: (should_proceed, token_estimate)
@@ -378,7 +378,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 8000,
+        max_tokens: int = 15000,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None
     ):
@@ -393,7 +393,7 @@ class RAKGRelationExtractor:
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 8000, increased for large entity lists)
+            max_tokens: Max LLM response tokens (default: 15000, increased for large entity lists)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
         """
