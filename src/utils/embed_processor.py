@@ -9,7 +9,8 @@ Usage: Phase 1A-2 (chunks), Phase 1C-1 (entities)
 UPDATES (Dec 3, 2025):
 - Rolling checkpoint cleanup: Keeps only 2 most recent checkpoints (saves disk space)
 - Numpy array serialization: Converts numpy arrays to lists for JSON compatibility
-- Fixed memory issue: Prevents 50GB+ checkpoint accumulation
+- Removed O(n²) checkpoint loop: No checkpoints during append phase (was causing slowdown)
+- Embedding takes 3 min, append takes <1 min without checkpoints
 """
 
 import json
@@ -36,9 +37,8 @@ class EmbedProcessor:
     Flow:
     1. Load items from JSON (chunks or entities)
     2. Batch embed with progress tracking
-    3. Append embeddings to item dicts
-    4. Save checkpoints every N items (with rolling cleanup)
-    5. Save final enriched items
+    3. Append embeddings to item dicts (fast, no checkpoints needed)
+    4. Save final enriched items
     """
     
     def __init__(self, embedder: BGEEmbedder, checkpoint_freq: int = 1000):
@@ -47,7 +47,7 @@ class EmbedProcessor:
         
         Args:
             embedder: BGEEmbedder instance
-            checkpoint_freq: Save progress every N items
+            checkpoint_freq: Save progress every N items (for future use)
         """
         self.embedder = embedder
         self.checkpoint_freq = checkpoint_freq
@@ -103,9 +103,8 @@ class EmbedProcessor:
         Save intermediate checkpoint with rolling cleanup.
         Keeps only the N most recent checkpoints to save disk space.
         
-        With 69k entities × 1024-dim embeddings:
-        - Each checkpoint: ~150MB
-        - 2 checkpoints: 300MB max (vs 10GB+ without cleanup)
+        NOTE: Currently unused during append phase to avoid O(n²) behavior.
+        Could be used for chunked embedding in future optimization.
         
         Args:
             items: Current item dictionary
@@ -130,7 +129,7 @@ class EmbedProcessor:
         with open(checkpoint_file, 'w', encoding='utf-8') as f:
             json.dump(items_serializable, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"Saving checkpoint: {item_count} items processed")
+        logger.info(f"Checkpoint saved: {item_count} items processed")
         
         # Rolling cleanup: Keep only N most recent checkpoints
         checkpoints = sorted(checkpoint_dir.glob("checkpoint_*.json"))
@@ -143,7 +142,7 @@ class EmbedProcessor:
                      batch_size: int = 32,
                      checkpoint_dir: Path = None) -> Dict:
         """
-        Embed all items with batch processing and checkpoints.
+        Embed all items with batch processing.
         
         Args:
             items: Dictionary of item_id -> item_data
@@ -151,23 +150,19 @@ class EmbedProcessor:
                 - For chunks: 'text' (full chunk content)
                 - For entities: 'formatted_text' (should be "name [type]")
             batch_size: Embedding batch size
-            checkpoint_dir: Directory for saving checkpoints (optional)
+            checkpoint_dir: Directory for checkpoints (currently unused)
             
         Returns:
             Items dictionary with 'embedding' field added
         """
         logger.info(f"Starting embedding with batch_size={batch_size}")
-        logger.info(f"Checkpoint frequency: every {self.checkpoint_freq} items")
         
         # Convert dict to list for batch processing
         item_ids = list(items.keys())
         item_texts = [items[item_id][text_key] for item_id in item_ids]
         
-        # Track progress
-        processed_count = 0
-        
-        # Process in batches
-        logger.info("Embedding items...")
+        # Embed all items at once (BGEEmbedder handles batching internally)
+        logger.info(f"Embedding {len(item_texts)} items...")
         embeddings = self.embedder.embed_batch(
             item_texts, 
             batch_size=batch_size,
@@ -175,20 +170,15 @@ class EmbedProcessor:
         )
         
         # Add embeddings to item dictionaries
+        # This is fast (just dict updates), no checkpoints needed
         logger.info("Adding embeddings to items...")
         for item_id, embedding in tqdm(zip(item_ids, embeddings), 
                                        total=len(item_ids),
                                        desc="Enriching items"):
-            # Store as numpy array in memory (converted to list only during save)
+            # Store as numpy array in memory
             items[item_id]['embedding'] = embedding
-            
-            processed_count += 1
-            
-            # Save checkpoint if needed
-            if checkpoint_dir and processed_count % self.checkpoint_freq == 0:
-                self.save_checkpoint(items, checkpoint_dir, processed_count)
         
-        logger.info(f"✓ Embedded {processed_count} items")
+        logger.info(f"✓ Embedded {len(items)} items successfully")
         return items
     
     def verify_embeddings(self, items: Dict) -> Dict:
