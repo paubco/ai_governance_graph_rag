@@ -79,7 +79,7 @@ logger.info(f"\nTesting {len(test_entities)} entities\n")
 # ============================================================================
 
 extractor = RAKGRelationExtractor(
-    model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
+    model_name="mistralai/Mistral-7B-Instruct-v0.3",
     api_key=os.getenv('TOGETHER_API_KEY'),
     semantic_threshold=0.85,
     mmr_lambda=MMR_LAMBDA,

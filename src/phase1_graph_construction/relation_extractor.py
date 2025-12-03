@@ -15,7 +15,7 @@ Usage:
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
     extractor = RAKGRelationExtractor(
-        model_name="Qwen/Qwen2.5-7B-Instruct",
+        model_name="mistralai/Mistral-7B-Instruct-v0.3",
         api_key="your_key"
     )
     
@@ -47,6 +47,7 @@ from pathlib import Path
 import numpy as np
 from together import Together
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 # Load environment variables
 load_dotenv()
@@ -70,6 +71,23 @@ logger.info(f"Prompt logging directory: {PROMPT_LOG_DIR}")
 RESPONSE_LOG_DIR = Path('logs/phase1d_responses')
 RESPONSE_LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Response logging directory: {RESPONSE_LOG_DIR}")
+
+
+# ============================================================================
+# JSON SCHEMA FOR MISTRAL STRUCTURED OUTPUTS
+# ============================================================================
+
+class Relation(BaseModel):
+    """Single relation triplet"""
+    subject: str = Field(description="The subject entity name")
+    predicate: str = Field(description="The relationship verb or verb phrase from text")
+    object: str = Field(description="The object entity name")
+    chunk_ids: List[str] = Field(description="List of chunk IDs where this relation was found")
+
+
+class RelationOutput(BaseModel):
+    """Output format for relation extraction"""
+    relations: List[Relation] = Field(description="List of extracted relations", default_factory=list)
 
 
 # ============================================================================
@@ -504,7 +522,7 @@ class RAKGRelationExtractor:
         Initialize RAKG Relation Extractor
         
         Args:
-            model_name: Together.ai model (e.g., "Qwen/Qwen2.5-7B-Instruct-Turbo")
+            model_name: Together.ai model (e.g., "mistralai/Mistral-7B-Instruct-v0.3")
             api_key: Together.ai API key (if None, loads from .env TOGETHER_API_KEY)
             semantic_threshold: Cosine similarity threshold (default: 0.85)
             mmr_lambda: MMR balance (0.5=balanced, 1.0=relevance only)
@@ -1102,7 +1120,11 @@ class RAKGRelationExtractor:
                 ],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                stop=stop_sequences
+                stop=stop_sequences,
+                response_format={
+                    "type": "json_schema",
+                    "schema": RelationOutput.model_json_schema()
+                }
             )
             
             # DEBUG: Log full response structure
