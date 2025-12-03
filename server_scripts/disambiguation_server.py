@@ -770,10 +770,19 @@ STAGE CONTROL:
         return data
     
     def save_json(self, data: List[Dict], filepath: str):
-        """Save JSON file"""
+        """Save JSON file with numpy array handling"""
         logger.info(f"Saving to {filepath}...")
+        
+        # Convert numpy arrays to lists for JSON serialization
+        data_serializable = []
+        for item in data:
+            item_copy = item.copy()
+            if 'embedding' in item_copy and isinstance(item_copy['embedding'], np.ndarray):
+                item_copy['embedding'] = item_copy['embedding'].tolist()
+            data_serializable.append(item_copy)
+        
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(data_serializable, f, indent=2, ensure_ascii=False)
         logger.info(f"Saved {len(data)} items")
     
     def run_stage1(self, input_file: str) -> List[Dict]:
