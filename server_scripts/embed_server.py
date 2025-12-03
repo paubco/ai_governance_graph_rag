@@ -40,6 +40,29 @@ def check_gpu():
         logger.warning("CUDA not available, falling back to CPU")
         return 'cpu'
 
+def manage_checkpoints(output_path, max_checkpoints=2):
+    """
+    Keep only the N most recent checkpoint files to prevent disk bloat
+    
+    Checkpoint naming: output_checkpoint_XXXXX.json
+    Only keep max_checkpoints most recent files
+    """
+    checkpoint_pattern = f"{output_path.stem}_checkpoint_*.json"
+    checkpoint_dir = output_path.parent
+    
+    # Find all checkpoint files
+    checkpoints = sorted(checkpoint_dir.glob(checkpoint_pattern))
+    
+    # Remove oldest checkpoints if we have too many
+    if len(checkpoints) > max_checkpoints:
+        to_remove = checkpoints[:-max_checkpoints]
+        for old_checkpoint in to_remove:
+            try:
+                old_checkpoint.unlink()
+                logger.info(f"  🗑️  Removed old checkpoint: {old_checkpoint.name}")
+            except Exception as e:
+                logger.warning(f"  ⚠️  Could not remove {old_checkpoint.name}: {e}")
+
 def detect_input_type(data):
     """
     Detect if input is chunks or entities and return appropriate structure
@@ -142,7 +165,7 @@ def main():
         sys.exit(1)
     
     logger.info("=" * 70)
-    logger.info("UNIVERSAL BGE-M3 EMBEDDING SERVER")
+    logger.info("UNIVERSAL BGE-M3 EMBEDDING SERVER (v2 - Smart Checkpoints)")
     logger.info("=" * 70)
     logger.info(f"Input:  {input_path}")
     logger.info(f"Output: {output_path}")
@@ -212,11 +235,13 @@ def main():
     # Configuration
     batch_size = 8
     save_interval = 1000
+    max_checkpoints = 2  # KEEP ONLY 2 MOST RECENT CHECKPOINTS
     
     logger.info("-" * 70)
     logger.info(f"Configuration:")
     logger.info(f"  Batch size: {batch_size}")
     logger.info(f"  Save interval: {save_interval} items")
+    logger.info(f"  Max checkpoints: {max_checkpoints} (rotating, prevents disk bloat)")
     logger.info(f"  Precision: fp16 (half)")
     logger.info(f"  Text field: '{text_key}'")
     logger.info("=" * 70)
@@ -266,13 +291,21 @@ def main():
                 torch.cuda.empty_cache()
             gc.collect()
             
-            # Save checkpoint periodically
+            # Save checkpoint periodically with rotating backups
             if embedded_count % save_interval == 0:
                 logger.info(f"\n💾 Checkpoint: Saving progress ({embedded_count:,}/{len(item_ids):,})...")
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, 'w', encoding='utf-8') as f:
+                
+                # Create checkpoint file with progress number
+                checkpoint_path = output_path.parent / f"{output_path.stem}_checkpoint_{embedded_count:06d}.json"
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(checkpoint_path, 'w', encoding='utf-8') as f:
                     json.dump(all_items, f, ensure_ascii=False)
-                logger.info(f"✓ Checkpoint saved")
+                
+                logger.info(f"✓ Checkpoint saved: {checkpoint_path.name}")
+                
+                # Manage checkpoints - remove old ones
+                manage_checkpoints(output_path, max_checkpoints)
                 
                 # Extra memory cleanup at checkpoint
                 if device == 'cuda':
@@ -301,7 +334,7 @@ def main():
         logger.info(f"Embedded {embedded_count:,} items before error")
         logger.info("Saving partial results...")
     
-    # Final save
+    # Final save to main output file
     logger.info("")
     logger.info("=" * 70)
     logger.info(f"Saving final results to: {output_path}")
@@ -311,6 +344,22 @@ def main():
         json.dump(all_items, f, ensure_ascii=False)
     
     logger.info("✓ Final save complete")
+    
+    # Clean up ALL checkpoint files after successful completion
+    logger.info("")
+    logger.info("Cleaning up checkpoint files...")
+    checkpoint_pattern = f"{output_path.stem}_checkpoint_*.json"
+    checkpoints = list(output_path.parent.glob(checkpoint_pattern))
+    
+    for checkpoint in checkpoints:
+        try:
+            checkpoint.unlink()
+            logger.info(f"  🗑️  Removed checkpoint: {checkpoint.name}")
+        except Exception as e:
+            logger.warning(f"  ⚠️  Could not remove {checkpoint.name}: {e}")
+    
+    if checkpoints:
+        logger.info(f"✓ Cleaned up {len(checkpoints)} checkpoint files")
     
     # Verification
     logger.info("")
