@@ -313,23 +313,35 @@ class PreEntityFilter:
             'Metadata', 'Document Metadata', 'Publication Metadata',
         }
         
-        # PROTECTED TYPES: Keep even if single-appearance (for Scopus enrichment)
+        # PROTECTED TYPES: Keep even if single-appearance + short name
+        # Rationale: These types often have legitimate 2-3 letter names (acronyms)
         self.protected_single_appearance = {
-            # Citations (will enrich with Scopus)
+            # Academic entities (will enrich with Scopus)
             'Citation', 'Academic Citation', 'Reference',
-            
-            # Authors (will match to Scopus authors - 570 names)
             'Author', 'Authors', 'Author(s)', 'Editor',
-            
-            # Journals (will match to Scopus journals - 119 names)
             'Journal', 'Publication',
-            
-            # Publications (might be regulations/reports)
             'Book', 'Conference', 'Article', 'Paper', 'Document',
             
             # Regulatory documents (unique documents are legitimate)
             'Regulation', 'Regulatory Document', 'Legal Document',
-            'Report', 'Policy',
+            'Report', 'Policy', 'Directive', 'Law', 'Standard',
+            
+            # Organizations (often have acronyms: EU, UN, WHO, etc.)
+            'Organization', 'Institution', 'Company',
+            'Government Agency', 'Regulatory Body', 'Government Body',
+            'International Organization',
+            
+            # Geographic entities (often have acronyms: EU, US, UK, etc.)
+            'Country', 'Region', 'Location', 'City',
+            
+            # Legal/regulatory concepts (e.g., IP, AI, ML)
+            'Legal Concept', 'Regulatory Concept', 'Legal Term',
+            
+            # Technologies (e.g., AI, ML, IT, IoT)
+            'Technology', 'AI System', 'Framework', 'Methodology',
+            
+            # Core concepts (e.g., AI, ML)
+            'Concept', 'Technical Term', 'Technical Concept',
         }
         
         # Statistics tracking
