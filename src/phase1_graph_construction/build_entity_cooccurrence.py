@@ -28,6 +28,11 @@ import time
 from pathlib import Path
 from typing import List, Dict
 from collections import defaultdict
+import sys
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.utils.entity_type_classification import (
     is_semantic, is_concept, is_skip, is_academic,
