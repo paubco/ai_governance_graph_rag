@@ -150,9 +150,9 @@ def get_test_entities(entities: List[Dict], n: int = 8) -> List[Dict]:
 
 def test_basic(entities: List[Dict], 
                chunks: List[Dict],
-               threshold: float = 0.85,
-               mmr_lambda: float = 0.55,
-               num_chunks: int = 10,
+               threshold: float = 0.90,
+               mmr_lambda: float = 0.70,
+               num_chunks: int = 6,
                save_prompts: bool = True):
     """
     Basic test: Extract relations for test entities
