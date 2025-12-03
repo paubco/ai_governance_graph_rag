@@ -67,6 +67,10 @@ PROMPT_LOG_DIR = Path('logs/phase1d_prompts')
 PROMPT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Prompt logging directory: {PROMPT_LOG_DIR}")
 
+RESPONSE_LOG_DIR = Path('logs/phase1d_responses')
+RESPONSE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"Response logging directory: {RESPONSE_LOG_DIR}")
+
 
 # ============================================================================
 # PROMPT VALIDATION & LOGGING UTILITIES
@@ -153,6 +157,120 @@ def save_prompt_to_file(prompt: str, entity_name: str, token_count: int) -> None
         logger.debug(f"  Prompt saved to: {filename}")
     except Exception as e:
         logger.warning(f"  Failed to save prompt to file: {e}")
+
+
+def save_response_to_file(
+    response_text: str,
+    entity_name: str,
+    batch_num: int,
+    num_entities: int
+) -> None:
+    """
+    Save full LLM response to log file for debugging
+    
+    Args:
+        response_text: Full response text from LLM
+        entity_name: Entity name (used in filename)
+        batch_num: Batch number (1 or 2)
+        num_entities: Number of entities in prompt
+    """
+    # Sanitize filename
+    safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in entity_name)
+    safe_name = safe_name.replace(' ', '_')[:50]  # Limit length
+    
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = RESPONSE_LOG_DIR / f"{safe_name}_batch{batch_num}_{timestamp}.txt"
+    
+    try:
+        # Quick analysis
+        truncated = not response_text.rstrip().endswith('}')
+        relation_count = response_text.count('"subject":')
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write(f"ENTITY: {entity_name}\n")
+            f.write(f"BATCH: {batch_num}\n")
+            f.write(f"TIMESTAMP: {timestamp}\n")
+            f.write(f"ENTITIES IN PROMPT: {num_entities}\n")
+            f.write(f"RESPONSE CHARS: {len(response_text)}\n")
+            f.write(f"RESPONSE TOKENS: ~{len(response_text) // 4}\n")
+            f.write(f"TRUNCATED: {'YES' if truncated else 'NO'}\n")
+            f.write(f"APPARENT RELATIONS: ~{relation_count}\n")
+            f.write("=" * 80 + "\n\n")
+            
+            # Write full response
+            f.write("FULL RESPONSE:\n")
+            f.write("-" * 80 + "\n")
+            f.write(response_text)
+            f.write("\n" + "-" * 80 + "\n\n")
+            
+            # Try to extract and show sample relations
+            try:
+                import re
+                # Find first few relations
+                relations_section = response_text[response_text.find('"relations"'):]
+                relation_matches = re.finditer(
+                    r'\{\s*"subject":\s*"([^"]+)",\s*"predicate":\s*"([^"]+)",\s*"object":\s*"([^"]+)"',
+                    relations_section[:5000]  # First 5K chars
+                )
+                
+                f.write("SAMPLE RELATIONS (first 10):\n")
+                f.write("-" * 80 + "\n")
+                count = 0
+                for match in relation_matches:
+                    count += 1
+                    if count > 10:
+                        break
+                    subj, pred, obj = match.groups()
+                    f.write(f"{count}. ({subj}, {pred}, {obj})\n")
+                
+                if count == 0:
+                    f.write("(No relations found in first 5K chars)\n")
+                    
+            except Exception as e:
+                f.write(f"(Could not extract samples: {e})\n")
+        
+        logger.info(f"    📄 Response saved: {filename.name}")
+        
+    except Exception as e:
+        logger.warning(f"    Failed to save response to file: {e}")
+
+
+def analyze_response_verbosity(response_text: str) -> dict:
+    """
+    Quick analysis of response to understand verbosity
+    
+    Returns dict with metrics about the response
+    """
+    try:
+        import re
+        analysis = {
+            'char_count': len(response_text),
+            'relation_count': response_text.count('"subject":'),
+            'truncated': not response_text.rstrip().endswith('}'),
+            'unique_predicates': set(),
+            'unique_subjects': set(),
+        }
+        
+        # Extract predicates
+        pred_matches = re.findall(r'"predicate":\s*"([^"]+)"', response_text)
+        analysis['unique_predicates'] = set(pred_matches)
+        
+        # Extract subjects
+        subj_matches = re.findall(r'"subject":\s*"([^"]+)"', response_text)
+        analysis['unique_subjects'] = set(subj_matches)
+        
+        return analysis
+        
+    except Exception as e:
+        logger.warning(f"Failed to analyze response: {e}")
+        return {
+            'char_count': len(response_text),
+            'relation_count': 0,
+            'truncated': True,
+            'unique_predicates': set(),
+            'unique_subjects': set(),
+        }
 
 
 # ============================================================================
@@ -935,7 +1053,10 @@ class RAKGRelationExtractor:
     def extract_relations_llm(
         self,
         prompt: str,
-        stop_sequences: List[str] = None
+        stop_sequences: List[str] = None,
+        entity_name: str = "Unknown",
+        batch_num: int = 1,
+        num_entities: int = 0
     ) -> Dict:
         """
         Call LLM to extract relations from prompt
@@ -1022,6 +1143,23 @@ class RAKGRelationExtractor:
                 logger.error(f"  ✗ Failed to extract content from response: {e}")
                 logger.error(f"    Response structure: {response}")
                 return {"relations": []}
+            
+            # === DEBUG: Save full response and analyze ===
+            save_response_to_file(
+                response_text=raw_text,
+                entity_name=entity_name,
+                batch_num=batch_num,
+                num_entities=num_entities
+            )
+            
+            # Quick analysis
+            analysis = analyze_response_verbosity(raw_text)
+            logger.info(f"    📊 Analysis: {analysis['relation_count']} apparent relations, "
+                       f"{len(analysis['unique_predicates'])} unique predicates")
+            if analysis['unique_predicates']:
+                sample_preds = list(analysis['unique_predicates'])[:10]
+                logger.info(f"    📝 Sample predicates: {sample_preds}")
+            # === End debug section ===
             
             # Log response details
             logger.debug(f"  ✓ Response received: {len(raw_text)} chars")
@@ -1299,7 +1437,12 @@ class RAKGRelationExtractor:
                     
                     logger.info(f"  Calling LLM batch 1 (~{token_estimate} tokens)...")
                     start_time = time.time()
-                    response = self.extract_relations_llm(prompt)
+                    response = self.extract_relations_llm(
+                        prompt,
+                        entity_name=entity_name,
+                        batch_num=1,
+                        num_entities=len(detected_entities_batch1)
+                    )
                     logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
                     
                     batch1_relations = response.get('relations', [])
@@ -1320,7 +1463,12 @@ class RAKGRelationExtractor:
                     if should_proceed2:
                         logger.info(f"  Calling LLM batch 2 (~{token_estimate2} tokens)...")
                         start_time = time.time()
-                        response2 = self.extract_relations_llm(prompt2)
+                        response2 = self.extract_relations_llm(
+                            prompt2,
+                            entity_name=entity_name,
+                            batch_num=2,
+                            num_entities=len(detected_entities_batch2)
+                        )
                         logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
                         
                         batch2_relations = response2.get('relations', [])
