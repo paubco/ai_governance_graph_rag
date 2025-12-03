@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 # Which entities to test? (name, type)
 TEST_ENTITIES = [
     ("AI System", "Technology"),
-    ("European Union", "Organization"), 
-    ("Chat-GPT", "AI System"),
+    ("A Bottacin-Busolin", "Author"), 
+    ("3DAthnicb CBOeChACOpeaYBaHNN", "Regulatory Body"),
+    ("Artificial Intelligence and Corporate Responsibility Under International Human Rights Law","Citation")
 ]
 
 # Parameters
@@ -79,8 +80,8 @@ logger.info(f"\nTesting {len(test_entities)} entities\n")
 # ============================================================================
 
 extractor = RAKGRelationExtractor(
-    model_name="deepseek-chat",
-    api_key=os.getenv('DEEPSEEK_API_KEY'),
+    model_name="mistralai/Mistral-7B-Instruct-v0.3",
+    api_key=os.getenv('TOGETHER_API_KEY'),
     semantic_threshold=0.85,
     mmr_lambda=MMR_LAMBDA,
     num_chunks=NUM_CHUNKS,
