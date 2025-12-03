@@ -74,7 +74,7 @@ class ParallelRelationProcessor:
         output_file: str = "data/interim/relations/relations.json",
         semantic_threshold: float = 0.85,
         mmr_lambda: float = 0.55,
-        num_chunks: int = 20,
+        num_chunks: int = 10,
         entity_cooccurrence_file: str = "data/interim/entities/entity_cooccurrence.json",
         normalized_entities_file: str = "data/interim/entities/normalized_entities.json"
     ):
@@ -504,8 +504,8 @@ Examples:
     parser.add_argument(
         '--num-chunks',
         type=int,
-        default=20,
-        help='Chunk count for MMR selection (default: 20)'
+        default=10,
+        help='Chunk count per stage for MMR selection (10 + optional 10 second round = max 20 total)'
     )
     
     args = parser.parse_args()

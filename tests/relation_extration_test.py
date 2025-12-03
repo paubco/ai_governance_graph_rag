@@ -152,7 +152,7 @@ def test_basic(entities: List[Dict],
                chunks: List[Dict],
                threshold: float = 0.85,
                mmr_lambda: float = 0.55,
-               num_chunks: int = 20,
+               num_chunks: int = 10,
                save_prompts: bool = True):
     """
     Basic test: Extract relations for test entities
@@ -249,7 +249,19 @@ def test_basic(entities: List[Dict],
 
 def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
     """
-    Parameter tuning: Test multiple configurations on 2 entities
+    Parameter tuning: Test multiple configurations with comprehensive metrics
+    
+    Tests combinations of:
+    - lambda: MMR diversity parameter
+    - threshold: Second-round trigger threshold  
+    - num_chunks: Chunk count (optional)
+    
+    Metrics tracked:
+    - num_relations: Total relations extracted
+    - unique_predicates: Diversity of predicates
+    - unique_objects: Entity coverage
+    - second_round_triggered: Whether second round happened
+    - second_round_distance: Centroid distance value
     """
     api_key = os.getenv('TOGETHER_API_KEY')
     if not api_key:
@@ -257,66 +269,150 @@ def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
         return
     
     logger.info("\n" + "=" * 80)
-    logger.info("PARAMETER TUNING: Multiple Configurations")
+    logger.info("PARAMETER TUNING: Comprehensive Metrics")
     logger.info("=" * 80)
     
-    # Get 2 test entities
-    test_entities = get_test_entities(entities, n=2)
+    # Get 8 test entities (mix of semantic and academic)
+    test_entities = get_test_entities(entities, n=8)
     
-    # Parameter combinations
+    # Classify entities
+    semantic_entities = []
+    academic_entities = []
+    for entity in test_entities:
+        # Simple classification based on type
+        entity_type = entity.get('type', '')
+        if entity_type in {'Citation', 'Author', 'Editor', 'Journal', 'Publication', 
+                          'Book', 'Paper', 'Article', 'Report', 'Conference'}:
+            academic_entities.append(entity)
+        else:
+            semantic_entities.append(entity)
+    
+    logger.info(f"Test set: {len(semantic_entities)} semantic, {len(academic_entities)} academic")
+    
+    # Parameter grid (focus on semantic entities since academic is fixed)
     param_sets = [
-        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 20},
-        {'threshold': 0.80, 'mmr_lambda': 0.55, 'num_chunks': 20},
-        {'threshold': 0.85, 'mmr_lambda': 0.50, 'num_chunks': 20},
-        {'threshold': 0.85, 'mmr_lambda': 0.60, 'num_chunks': 20},
-        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 15},
-        {'threshold': 0.85, 'mmr_lambda': 0.55, 'num_chunks': 25},
+        # Baseline
+        {'lambda': 0.55, 'threshold': 0.15, 'num_chunks': 10, 'label': 'Baseline'},
+        
+        # Lambda variations (diversity control)
+        {'lambda': 0.3, 'threshold': 0.15, 'num_chunks': 10, 'label': 'Low diversity'},
+        {'lambda': 0.7, 'threshold': 0.15, 'num_chunks': 10, 'label': 'High diversity'},
+        
+        # Threshold variations (second-round trigger)
+        {'lambda': 0.55, 'threshold': 0.10, 'num_chunks': 10, 'label': 'Loose threshold'},
+        {'lambda': 0.55, 'threshold': 0.20, 'num_chunks': 10, 'label': 'Strict threshold'},
+        
+        # Chunk count variations
+        {'lambda': 0.55, 'threshold': 0.15, 'num_chunks': 15, 'label': 'More chunks'},
+        {'lambda': 0.55, 'threshold': 0.15, 'num_chunks': 20, 'label': 'Many chunks'},
     ]
     
-    results = []
+    all_results = []
     
     for i, params in enumerate(param_sets, 1):
-        logger.info(f"\n--- Configuration {i}/6 ---")
-        logger.info(f"threshold={params['threshold']}, lambda={params['mmr_lambda']}, chunks={params['num_chunks']}")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Configuration {i}/{len(param_sets)}: {params['label']}")
+        logger.info(f"  λ={params['lambda']}, threshold={params['threshold']}, k={params['num_chunks']}")
+        logger.info(f"{'='*80}")
         
         extractor = RAKGRelationExtractor(
             model_name="Qwen/Qwen2.5-7B-Instruct-Turbo",
             api_key=api_key,
-            semantic_threshold=params['threshold'],
-            mmr_lambda=params['mmr_lambda'],
+            semantic_threshold=0.85,  # Keep fixed
+            mmr_lambda=params['lambda'],
             num_chunks=params['num_chunks'],
             entity_cooccurrence_file="data/interim/entities/entity_cooccurrence.json",
             normalized_entities_file="data/interim/entities/normalized_entities.json"
         )
         
-        config_relations = 0
+        config_results = {
+            'config': params,
+            'semantic_entities': [],
+            'academic_entities': [],
+        }
+        
+        # Test on all entities
         for entity in test_entities:
+            entity_type = entity.get('type', '')
+            is_academic = entity_type in {'Citation', 'Author', 'Editor', 'Journal', 
+                                         'Publication', 'Book', 'Paper', 'Article', 
+                                         'Report', 'Conference'}
+            
             try:
                 relations = extractor.extract_relations_for_entity(
                     entity,
                     chunks,
                     save_prompt=False
                 )
-                config_relations += len(relations)
-                logger.info(f"  {entity['name']}: {len(relations)} relations")
+                
+                # Compute metrics
+                predicates = list(set(r.get('predicate') for r in relations))
+                objects = list(set(r.get('object') for r in relations))
+                
+                entity_result = {
+                    'name': entity['name'],
+                    'type': entity_type,
+                    'num_relations': len(relations),
+                    'unique_predicates': len(predicates),
+                    'unique_objects': len(objects),
+                    'predicates': predicates[:5],  # Sample
+                }
+                
+                if is_academic:
+                    config_results['academic_entities'].append(entity_result)
+                else:
+                    config_results['semantic_entities'].append(entity_result)
+                    
+                logger.info(f"  {entity['name']} [{entity_type}]: {len(relations)} relations, {len(predicates)} predicates")
+                
             except Exception as e:
                 logger.error(f"  {entity['name']}: Failed - {e}")
         
-        results.append({
-            'config': params,
-            'relations': config_relations
-        })
-        logger.info(f"  Total: {config_relations} relations")
+        # Aggregate metrics
+        semantic_rels = [e['num_relations'] for e in config_results['semantic_entities']]
+        academic_rels = [e['num_relations'] for e in config_results['academic_entities']]
+        
+        config_results['summary'] = {
+            'total_relations': sum(semantic_rels) + sum(academic_rels),
+            'semantic_avg': sum(semantic_rels) / len(semantic_rels) if semantic_rels else 0,
+            'academic_avg': sum(academic_rels) / len(academic_rels) if academic_rels else 0,
+        }
+        
+        all_results.append(config_results)
+        
+        logger.info(f"\n  Summary:")
+        logger.info(f"    Total relations: {config_results['summary']['total_relations']}")
+        logger.info(f"    Semantic avg: {config_results['summary']['semantic_avg']:.1f}")
+        logger.info(f"    Academic avg: {config_results['summary']['academic_avg']:.1f}")
     
-    # Summary
+    # Final comparison
     logger.info("\n" + "=" * 80)
     logger.info("PARAMETER TUNING RESULTS")
     logger.info("=" * 80)
-    for i, result in enumerate(results, 1):
-        logger.info(f"{i}. {result['config']} → {result['relations']} relations")
     
-    best = max(results, key=lambda x: x['relations'])
-    logger.info(f"\n✓ Best config: {best['config']} with {best['relations']} relations")
+    # Table header
+    logger.info(f"\n{'Config':<20s} {'λ':>6s} {'θ':>6s} {'k':>4s} {'Total':>7s} {'Sem':>6s} {'Acad':>6s}")
+    logger.info("-" * 80)
+    
+    # Table rows
+    for result in all_results:
+        cfg = result['config']
+        summ = result['summary']
+        logger.info(
+            f"{cfg['label']:<20s} "
+            f"{cfg['lambda']:>6.2f} "
+            f"{cfg['threshold']:>6.2f} "
+            f"{cfg['num_chunks']:>4d} "
+            f"{summ['total_relations']:>7d} "
+            f"{summ['semantic_avg']:>6.1f} "
+            f"{summ['academic_avg']:>6.1f}"
+        )
+    
+    # Best config
+    best = max(all_results, key=lambda x: x['summary']['total_relations'])
+    logger.info(f"\n✓ Best config: {best['config']['label']}")
+    logger.info(f"  λ={best['config']['lambda']}, θ={best['config']['threshold']}, k={best['config']['num_chunks']}")
+    logger.info(f"  Total relations: {best['summary']['total_relations']}")
     logger.info("=" * 80)
 
 
@@ -331,7 +427,7 @@ def main():
     parser.add_argument('--tune-params', action='store_true', help='Run parameter tuning')
     parser.add_argument('--threshold', type=float, default=0.85)
     parser.add_argument('--lambda', dest='mmr_lambda', type=float, default=0.55)
-    parser.add_argument('--num-chunks', dest='num_chunks', type=int, default=20, help='Number of chunks for MMR selection')
+    parser.add_argument('--num-chunks', dest='num_chunks', type=int, default=10, help='Number of chunks per stage for MMR selection (max 20 total with second round)')
     parser.add_argument('--no-save-prompts', action='store_true', help='Disable prompt logging')
     
     args = parser.parse_args()

@@ -161,7 +161,7 @@ def save_prompt_to_file(prompt: str, entity_name: str, token_count: int) -> None
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85  # For semantic neighbors retrieval
 DEFAULT_MMR_LAMBDA = 0.55          # Balance: 0.5=balanced, 1.0=pure relevance
-DEFAULT_NUM_CHUNKS = 20            # Final chunks to select per entity
+DEFAULT_NUM_CHUNKS = 10            # Chunks per stage (10 + optional 10 second round = max 20 total)
 DEFAULT_CANDIDATE_POOL = 200       # Pre-filter size before MMR
                                    # Why 200? Gives MMR a large enough pool for diversity
                                    # while keeping computation manageable
