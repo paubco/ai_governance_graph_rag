@@ -1,26 +1,38 @@
 """
-Phase 1D-0: Entity Co-occurrence Matrix Construction
+Phase 1D-0: Entity Co-occurrence Matrix Construction (Typed Matrices)
 
 Pre-computes which normalized entities appear in each chunk.
+Creates 3 matrices with different type filters:
+  - semantic: Excludes academic entities (for Track 1 OPENIE)
+  - concept: Only concept-type entities (for Track 2 objects)
+  - full: All entities (backup/debugging)
+
 This enables O(1) entity lookup during relation extraction and
 supports entity-aware diversity in chunk selection.
 
 Input:
-  - normalized_entities.json (~30-50k entities)
+  - normalized_entities.json (~18-21k entities)
   - chunks_embedded.json (25,131 chunks)
 
 Output:
-  - entity_cooccurrence.json (~5-10MB)
-    Format: {chunk_id: [entity_ids]}
+  - cooccurrence_semantic.json (~8-10MB)
+  - cooccurrence_concept.json (~3-5MB)
+  - cooccurrence_full.json (~10-12MB)
 
 Runtime: ~30-60 minutes (one-time cost)
 """
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import List, Dict
 from collections import defaultdict
+
+from src.utils.entity_type_classification import (
+    is_semantic, is_concept, is_skip, is_academic,
+    get_extraction_strategy, print_classification_stats
+)
 
 # Setup logging
 logging.basicConfig(
@@ -58,14 +70,21 @@ def load_chunks(chunks_file: str) -> List[Dict]:
     return chunks
 
 
-def build_cooccurrence_matrix(
+def build_typed_cooccurrence_matrices(
     chunks: List[Dict],
     entities: List[Dict],
-    checkpoint_file: str = "data/interim/entities/cooccurrence_checkpoint.json",
+    checkpoint_file: str = "data/interim/entities/cooccurrence_checkpoint_typed.json",
     checkpoint_interval: int = 5000
-) -> Dict[str, List[str]]:
+) -> Dict[str, Dict[str, List[str]]]:
     """
-    Build entity co-occurrence matrix using existing chunk_ids
+    Build 3 typed co-occurrence matrices using existing chunk_ids
+    
+    Strategy: Define what's NOT semantic, everything else defaults to semantic
+    
+    Matrices:
+      - semantic: All entities except academic/skip types (for Track 1 OPENIE)
+      - concept: Only concept-type entities (for Track 2 objects)
+      - full: All entities except skip types (backup/debugging)
     
     Uses chunk_ids already stored in entities (from Phase 1B extraction)
     instead of scanning all chunks. This is ~10,000x faster.
@@ -77,40 +96,71 @@ def build_cooccurrence_matrix(
         checkpoint_interval: Save every N entities
     
     Returns:
-        Dict mapping chunk_id to list of entity names
+        Dict with 'semantic', 'concept', 'full' matrices
+        Each matrix maps chunk_id to list of entity names
     """
-    import time
-    from collections import defaultdict
-    
-    logger.info(f"Building co-occurrence matrix from {len(entities)} entities")
+    logger.info(f"Building typed co-occurrence matrices from {len(entities)} entities")
     logger.info(f"  Using existing chunk_ids (no scanning needed)")
     
     # Load checkpoint if exists
     start_idx = 0
-    cooccurrence = defaultdict(set)
+    semantic_cooccur = defaultdict(set)
+    concept_cooccur = defaultdict(set)
+    full_cooccur = defaultdict(set)
     
     if Path(checkpoint_file).exists():
         logger.info(f"Loading checkpoint from {checkpoint_file}")
         with open(checkpoint_file, 'r', encoding='utf-8') as f:
             checkpoint_data = json.load(f)
+            
             # Convert lists back to sets
-            cooccurrence_lists = checkpoint_data.get('cooccurrence', {})
-            cooccurrence = defaultdict(set, {k: set(v) for k, v in cooccurrence_lists.items()})
+            semantic_lists = checkpoint_data.get('semantic', {})
+            concept_lists = checkpoint_data.get('concept', {})
+            full_lists = checkpoint_data.get('full', {})
+            
+            semantic_cooccur = defaultdict(set, {k: set(v) for k, v in semantic_lists.items()})
+            concept_cooccur = defaultdict(set, {k: set(v) for k, v in concept_lists.items()})
+            full_cooccur = defaultdict(set, {k: set(v) for k, v in full_lists.items()})
+            
             start_idx = checkpoint_data.get('last_index', 0) + 1
         logger.info(f"  Resuming from entity {start_idx}/{len(entities)}")
     
-    # Build co-occurrence from entity chunk_ids
+    # Build co-occurrence matrices from entity chunk_ids
     start_time = time.time()
     last_checkpoint_time = start_time
+    
+    # Track statistics
+    semantic_count = 0
+    concept_count = 0
+    full_count = 0
+    skip_count = 0
     
     for i in range(start_idx, len(entities)):
         entity = entities[i]
         entity_name = entity['name']
+        entity_type = entity['type']
         chunk_ids = entity.get('chunk_ids', [])
         
-        # Add this entity to all its chunks
+        # Check if should skip
+        if is_skip(entity_type, entity_name):
+            skip_count += 1
+            continue
+        
+        # Add entity to appropriate matrices
         for chunk_id in chunk_ids:
-            cooccurrence[chunk_id].add(entity_name)
+            # Full matrix (everything except skips)
+            full_cooccur[chunk_id].add(entity_name)
+            full_count += 1
+            
+            # Semantic matrix (exclude academic + skip types)
+            if is_semantic(entity_type, entity_name):
+                semantic_cooccur[chunk_id].add(entity_name)
+                semantic_count += 1
+            
+            # Concept matrix (only concept types)
+            if is_concept(entity_type):
+                concept_cooccur[chunk_id].add(entity_name)
+                concept_count += 1
         
         # Progress logging every 1000 entities
         if (i + 1) % 1000 == 0:
@@ -130,10 +180,10 @@ def build_cooccurrence_matrix(
             logger.info(f"  Saving checkpoint at {i+1}/{len(entities)} ({checkpoint_elapsed:.1f}s since last)")
             
             # Convert sets to lists for JSON
-            cooccurrence_lists = {k: list(v) for k, v in cooccurrence.items()}
-            
             checkpoint_data = {
-                'cooccurrence': cooccurrence_lists,
+                'semantic': {k: list(v) for k, v in semantic_cooccur.items()},
+                'concept': {k: list(v) for k, v in concept_cooccur.items()},
+                'full': {k: list(v) for k, v in full_cooccur.items()},
                 'last_index': i,
                 'timestamp': time.time()
             }
@@ -144,7 +194,9 @@ def build_cooccurrence_matrix(
             last_checkpoint_time = time.time()
     
     # Convert sets to lists for final output
-    cooccurrence_final = {k: list(v) for k, v in cooccurrence.items()}
+    semantic_final = {k: list(v) for k, v in semantic_cooccur.items()}
+    concept_final = {k: list(v) for k, v in concept_cooccur.items()}
+    full_final = {k: list(v) for k, v in full_cooccur.items()}
     
     # Remove checkpoint file on completion
     if Path(checkpoint_file).exists():
@@ -152,53 +204,94 @@ def build_cooccurrence_matrix(
         Path(checkpoint_file).unlink()
     
     # Statistics
-    total_entries = sum(len(names) for names in cooccurrence_final.values())
-    chunks_with_entities = len(cooccurrence_final)
-    avg_entities_per_chunk = total_entries / chunks_with_entities if chunks_with_entities > 0 else 0
-    
     total_time = time.time() - start_time
-    logger.info(f"✓ Co-occurrence matrix built in {total_time/60:.1f} minutes:")
-    logger.info(f"  Chunks with entities: {chunks_with_entities}/{len(chunks)}")
-    logger.info(f"  Total entity mentions: {total_entries}")
-    logger.info(f"  Avg entities/chunk: {avg_entities_per_chunk:.1f}")
     
-    return cooccurrence_final
+    logger.info(f"✓ Typed co-occurrence matrices built in {total_time/60:.1f} minutes:")
+    logger.info(f"")
+    logger.info(f"  SEMANTIC MATRIX:")
+    logger.info(f"    Chunks with entities: {len(semantic_final):,}/{len(chunks):,}")
+    logger.info(f"    Total entity mentions: {semantic_count:,}")
+    logger.info(f"    Avg entities/chunk: {semantic_count/len(semantic_final) if semantic_final else 0:.1f}")
+    logger.info(f"")
+    logger.info(f"  CONCEPT MATRIX:")
+    logger.info(f"    Chunks with entities: {len(concept_final):,}/{len(chunks):,}")
+    logger.info(f"    Total entity mentions: {concept_count:,}")
+    logger.info(f"    Avg entities/chunk: {concept_count/len(concept_final) if concept_final else 0:.1f}")
+    logger.info(f"")
+    logger.info(f"  FULL MATRIX:")
+    logger.info(f"    Chunks with entities: {len(full_final):,}/{len(chunks):,}")
+    logger.info(f"    Total entity mentions: {full_count:,}")
+    logger.info(f"    Avg entities/chunk: {full_count/len(full_final) if full_final else 0:.1f}")
+    logger.info(f"")
+    logger.info(f"  Skipped entities: {skip_count:,}")
+    
+    return {
+        'semantic': semantic_final,
+        'concept': concept_final,
+        'full': full_final
+    }
 
 
 def main():
-    """Build entity co-occurrence matrix"""
+    """Build typed entity co-occurrence matrices"""
     
     # File paths
     entities_file = "data/interim/entities/normalized_entities.json"
     chunks_file = "data/interim/chunks/chunks_embedded.json"
-    output_file = "data/interim/entities/entity_cooccurrence.json"
+    
+    output_files = {
+        'semantic': "data/interim/entities/cooccurrence_semantic.json",
+        'concept': "data/interim/entities/cooccurrence_concept.json",
+        'full': "data/interim/entities/cooccurrence_full.json"
+    }
     
     # Create output directory
-    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    for output_file in output_files.values():
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     
     logger.info("=" * 80)
-    logger.info("PHASE 1D-0: ENTITY CO-OCCURRENCE MATRIX CONSTRUCTION")
+    logger.info("PHASE 1D-0: TYPED ENTITY CO-OCCURRENCE MATRIX CONSTRUCTION")
     logger.info("=" * 80)
     
     # Load data
     entities = load_normalized_entities(entities_file)
     chunks = load_chunks(chunks_file)
     
-    # Build co-occurrence matrix
-    cooccurrence = build_cooccurrence_matrix(chunks, entities)
+    # Print classification statistics
+    logger.info("")
+    print_classification_stats(entities)
+    logger.info("")
     
-    # Save output
-    logger.info(f"Saving co-occurrence matrix to {output_file}")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(cooccurrence, f, indent=2, ensure_ascii=False)
+    # Build typed co-occurrence matrices
+    matrices = build_typed_cooccurrence_matrices(chunks, entities)
     
-    # File size
-    file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
-    logger.info(f"✓ Saved co-occurrence matrix ({file_size_mb:.1f} MB)")
+    # Save outputs
+    logger.info("")
+    logger.info("Saving typed co-occurrence matrices...")
     
+    for matrix_type, matrix_data in matrices.items():
+        output_file = output_files[matrix_type]
+        
+        logger.info(f"  Saving {matrix_type} matrix to {output_file}")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(matrix_data, f, indent=2, ensure_ascii=False)
+        
+        # File size
+        file_size_mb = Path(output_file).stat().st_size / (1024 * 1024)
+        logger.info(f"    ✓ Saved ({file_size_mb:.1f} MB)")
+    
+    logger.info("")
     logger.info("=" * 80)
     logger.info("PHASE 1D-0 COMPLETE")
     logger.info("=" * 80)
+    logger.info("")
+    logger.info("Next steps:")
+    logger.info("  1. Verify file sizes match expectations:")
+    logger.info("     - cooccurrence_semantic.json: ~8-10 MB")
+    logger.info("     - cooccurrence_concept.json:  ~3-5 MB")
+    logger.info("     - cooccurrence_full.json:     ~10-12 MB")
+    logger.info("  2. Test on sample entities before full Phase 1D")
+    logger.info("  3. Proceed to Phase 1D main loop (relation extraction)")
 
 
 if __name__ == "__main__":
