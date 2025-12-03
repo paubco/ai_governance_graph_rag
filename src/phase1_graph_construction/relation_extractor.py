@@ -378,7 +378,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 4000,
+        max_tokens: int = 8000,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None
     ):
@@ -393,7 +393,7 @@ class RAKGRelationExtractor:
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 4000)
+            max_tokens: Max LLM response tokens (default: 8000, increased for large entity lists)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
         """

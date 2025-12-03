@@ -175,7 +175,7 @@ def test_basic(entities: List[Dict],
         semantic_threshold=threshold,
         mmr_lambda=mmr_lambda,
         num_chunks=num_chunks,
-        entity_cooccurrence_file="data/interim/entities/entity_cooccurrence.json",
+        entity_cooccurrence_file="data/interim/entities/cooccurrence_semantic.json",
         normalized_entities_file="data/interim/entities/normalized_entities.json"
     )
     
@@ -321,7 +321,7 @@ def test_parameter_tuning(entities: List[Dict], chunks: List[Dict]):
             semantic_threshold=0.85,  # Keep fixed
             mmr_lambda=params['lambda'],
             num_chunks=params['num_chunks'],
-            entity_cooccurrence_file="data/interim/entities/entity_cooccurrence.json",
+            entity_cooccurrence_file="data/interim/entities/cooccurrence_semantic.json",
             normalized_entities_file="data/interim/entities/normalized_entities.json"
         )
         

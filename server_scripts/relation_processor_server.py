@@ -75,7 +75,7 @@ class ParallelRelationProcessor:
         semantic_threshold: float = 0.85,
         mmr_lambda: float = 0.55,
         num_chunks: int = 10,
-        entity_cooccurrence_file: str = "data/interim/entities/entity_cooccurrence.json",
+        entity_cooccurrence_file: str = "data/interim/entities/cooccurrence_semantic.json",
         normalized_entities_file: str = "data/interim/entities/normalized_entities.json"
     ):
         """
