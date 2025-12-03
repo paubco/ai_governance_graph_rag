@@ -1,8 +1,44 @@
 """
 Entity Disambiguation Server - GPU Version
 
-GPU-optimized pipeline with multithreading for production use.
-All 4 stages: dedup â†’ embed â†’ FAISS â†’ thresholds â†’ LLM
+GPU-optimized pipeline for Phase 1C entity disambiguation.
+Runs all 4 stages: dedup -> embed -> FAISS -> thresholds -> LLM
+
+CURRENT WORKFLOW (December 2025):
+    1. Phase 1B outputs: pre_entities.json (~143k raw entities)
+    2. Phase 1C-0 filters: pre_entities_clean.json (~21k clean entities) 
+    3. THIS SCRIPT processes: pre_entities_clean.json -> normalized_entities.json
+    
+    Default: Start from Stage 1 (dedup raw entities)
+    Recommended: Use pre_entities_clean.json as input for better quality
+
+STAGES:
+    Stage 1:   Exact deduplication (name normalization)
+    Stage 1.5: BGE-M3 embedding (1024-dim, GPU-accelerated)
+    Stage 2:   FAISS HNSW blocking (GPU, parallel search)
+    Stage 3:   Tiered threshold filtering (auto-merge high confidence)
+    Stage 4:   SameJudge LLM verification (multithreaded API calls)
+
+WORKER CONFIGURATION:
+    --faiss-workers: Parallel threads for FAISS search (recommended: 4-8)
+        - Higher = faster search but more memory
+        - 4 workers good for RTX 3060 (12GB VRAM)
+        
+    --samejudge-workers: Parallel threads for LLM calls (recommended: 8-12)
+        - Higher = faster verification but more API concurrency
+        - 8 workers = ~480 pairs/min with Together.ai
+        - Limited by API rate limits, not compute
+
+STAGE CONTROL:
+    --start-from-stage: Where to begin processing
+        1 = Start from raw entities (run all 4 stages)
+        2 = Start from embedded entities (skip dedup+embed, run FAISS+LLM)
+        
+    --stop-at-stage: Where to stop (for debugging/inspection)
+        1 = Stop after dedup (check entity counts)
+        2 = Stop after embedding (verify embeddings)
+        3 = Stop after thresholds (inspect auto-merges)
+        4 = Complete pipeline (default)
 
 For CPU/development version, use src/phase1_graph_construction/disambiguation_processor.py
 """
@@ -631,18 +667,34 @@ class SameJudgeGPU:
 
 class DisambiguationServerProcessor:
     """
-    GPU-optimized orchestrator for full 4-stage pipeline
+GPU-optimized orchestrator for full 4-stage pipeline
+
+CURRENT WORKFLOW:
+    Input: pre_entities_clean.json (after Phase 1C-0 filtering)
+    Output: normalized_entities.json (canonical entities ready for Phase 1D)
     
-    Assumes:
-        - Entities already deduplicated+embedded (Stage 1 complete)
-        - Running on server with GPU
-        - Needs fast processing for large datasets
-    
-    Stages:
-        Stage 2: FAISS GPU blocking (4 workers)
-        Stage 3: Tiered thresholds
-        Stage 4: SameJudge GPU (8 workers)
-    """
+    Processing: ~21k clean entities -> ~18-20k normalized entities
+    Time: 4-6 hours (with GPU + 8 LLM workers)
+    Cost: ~$6-8 for SameJudge API calls
+
+RECOMMENDED CONFIGURATION (RTX 3060, 12GB VRAM):
+    - faiss_workers: 4 (parallel FAISS search)
+    - samejudge_workers: 8 (parallel LLM calls)
+    - gpu_id: 0 (first GPU)
+
+STAGES:
+    Stage 1:   Exact dedup (name normalization)
+    Stage 1.5: BGE-M3 embedding (GPU-accelerated)
+    Stage 2:   FAISS GPU blocking (4 workers)
+    Stage 3:   Tiered thresholds (auto-merge)
+    Stage 4:   SameJudge GPU (8 workers, Together.ai)
+
+STAGE CONTROL:
+    Use --start-from-stage and --stop-at-stage for partial runs:
+    - Start from 1: Process raw entities (all stages)
+    - Start from 2: Skip dedup+embed (if already done)
+    - Stop at 1/2/3: Inspect intermediate results
+"""
     
     def __init__(self, 
                  data_dir: str = "data/interim/entities",
@@ -927,23 +979,51 @@ class DisambiguationServerProcessor:
                      start_from_stage: int = 1,
                      stop_at_stage: int = None) -> Dict:
         """
-        Execute comprehensive GPU-optimized pipeline
+Execute comprehensive GPU-optimized pipeline
+
+TYPICAL USAGE:
+    # Full pipeline (recommended)
+    processor.run_pipeline(
+        input_file='data/interim/entities/pre_entities_clean.json',
+        output_file='data/interim/entities/normalized_entities.json',
+        start_from_stage=1,  # Run all stages
+        stop_at_stage=None   # Complete pipeline
+    )
+    
+    # Resume from embedded entities (if Stage 1-1.5 already done)
+    processor.run_pipeline(
+        input_file='data/interim/entities/stage1_deduplicated_embedded.json',
+        start_from_stage=2,  # Skip dedup+embed
+        stop_at_stage=None
+    )
+    
+    # Debug: Stop after FAISS to inspect candidates
+    processor.run_pipeline(
+        input_file='data/interim/entities/pre_entities_clean.json',
+        start_from_stage=1,
+        stop_at_stage=2  # Inspect FAISS candidates before LLM
+    )
+
+Args:
+    input_file: Path to input entities
+        - For start_from_stage=1: pre_entities_clean.json (recommended)
+        - For start_from_stage=2: stage1_deduplicated_embedded.json
+    
+    output_file: Path to save final output (default: normalized_entities.json)
+    
+    start_from_stage: Where to begin processing
+        1 = Start from raw entities (run: dedup + embed + FAISS + LLM)
+        2 = Start from embedded entities (run: FAISS + LLM only)
+    
+    stop_at_stage: Where to stop (None = complete pipeline)
+        1 = Stop after exact dedup (inspect entity count reduction)
+        2 = Stop after embedding (verify embeddings exist)
+        3 = Stop after thresholds (inspect auto-merge decisions)
+        4 = Complete pipeline (default if None)
         
-        Args:
-            input_file: Path to input entities
-            output_file: Path to save final output
-            start_from_stage: 
-                1 = Start from raw entities (dedup + embed + FAISS + LLM)
-                2 = Start from embedded entities (FAISS + LLM)
-            stop_at_stage:
-                1 = Stop after dedup
-                2 = Stop after embedding/FAISS
-                3 = Stop after thresholds
-                4 = Complete pipeline (default)
-                
-        Returns:
-            Pipeline statistics
-        """
+Returns:
+    Pipeline statistics dict with per-stage metrics
+"""
         logger.info("="*60)
         logger.info("GPU-OPTIMIZED DISAMBIGUATION PIPELINE")
         logger.info("="*60)
@@ -1029,18 +1109,42 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Run on server with GPU (all 4 stages)
+
+    # RECOMMENDED: Full pipeline from filtered entities (Phase 1C-0 output)
     export TOGETHER_API_KEY="your-key"
     nohup python server_scripts/disambiguation_server.py \\
-        --input data/interim/entities/stage1_deduplicated_embedded.json \\
+        --input data/interim/entities/pre_entities_clean.json \\
         --output data/interim/entities/normalized_entities.json \\
+        --start-from-stage 1 \\
         --faiss-workers 4 \\
         --samejudge-workers 8 \\
         --gpu-id 0 \\
         > logs/disambiguation.log 2>&1 &
     
-    # Monitor
+    # Resume from embedded entities (if Stage 1-1.5 already done)
+    python server_scripts/disambiguation_server.py \\
+        --input data/interim/entities/stage1_deduplicated_embedded.json \\
+        --start-from-stage 2 \\
+        --faiss-workers 4 \\
+        --samejudge-workers 8
+    
+    # Debug: Run only FAISS blocking (stop before expensive LLM)
+    python server_scripts/disambiguation_server.py \\
+        --input data/interim/entities/pre_entities_clean.json \\
+        --start-from-stage 1 \\
+        --stop-at-stage 2 \\
+        --faiss-workers 4
+    
+    # Monitor progress
     tail -f logs/disambiguation.log
+    
+    # Check GPU usage
+    watch -n 1 nvidia-smi
+
+WORKER TUNING:
+    RTX 3060 (12GB):  --faiss-workers 4  --samejudge-workers 8
+    RTX 3090 (24GB):  --faiss-workers 8  --samejudge-workers 12
+    RTX 4090 (24GB):  --faiss-workers 8  --samejudge-workers 16
 
 Note: For CPU version, use src/phase1_graph_construction/disambiguation_processor.py
         """
