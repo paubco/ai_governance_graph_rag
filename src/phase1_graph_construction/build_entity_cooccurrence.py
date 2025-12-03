@@ -78,31 +78,49 @@ def entity_appears_in_text(entity_name: str, text_lower: str) -> bool:
 
 def build_cooccurrence_matrix(
     chunks: List[Dict],
-    entities: List[Dict]
+    entities: List[Dict],
+    checkpoint_file: str = "data/interim/entities/cooccurrence_checkpoint.json",
+    checkpoint_interval: int = 1000
 ) -> Dict[str, List[str]]:
     """
-    Build entity co-occurrence matrix
+    Build entity co-occurrence matrix with checkpointing
     
     For each chunk, detect which entities appear in the text.
     
     Args:
         chunks: List of chunk dicts with 'text' field
         entities: List of normalized entity dicts
+        checkpoint_file: Path to save progress checkpoints
+        checkpoint_interval: Save every N chunks
     
     Returns:
         Dict mapping chunk_id to list of entity names
     """
+    import time
+    
     logger.info(f"Building co-occurrence matrix for {len(chunks)} chunks × {len(entities)} entities")
     
+    # Load checkpoint if exists
     cooccurrence = {}
+    start_idx = 0
+    
+    if Path(checkpoint_file).exists():
+        logger.info(f"Loading checkpoint from {checkpoint_file}")
+        with open(checkpoint_file, 'r', encoding='utf-8') as f:
+            checkpoint_data = json.load(f)
+            cooccurrence = checkpoint_data.get('cooccurrence', {})
+            start_idx = checkpoint_data.get('last_index', 0) + 1
+        logger.info(f"  Resuming from chunk {start_idx}/{len(chunks)}")
     
     # Build entity lookup (use name as identifier)
     entity_names = [e['name'] for e in entities]
     
-    for i, chunk in enumerate(chunks):
-        if i % 1000 == 0 and i > 0:
-            logger.info(f"  Processed {i}/{len(chunks)} chunks...")
-        
+    # Track progress
+    start_time = time.time()
+    last_checkpoint_time = start_time
+    
+    for i in range(start_idx, len(chunks)):
+        chunk = chunks[i]
         chunk_id = chunk.get('chunk_id', chunk.get('id', f'chunk_{i}'))
         text = chunk.get('text', '')
         text_lower = text.lower()
@@ -115,13 +133,47 @@ def build_cooccurrence_matrix(
         
         if detected_names:
             cooccurrence[chunk_id] = detected_names
+        
+        # Progress logging every 100 chunks
+        if (i + 1) % 100 == 0:
+            elapsed = time.time() - start_time
+            chunks_done = i + 1 - start_idx
+            rate = chunks_done / elapsed if elapsed > 0 else 0
+            remaining = len(chunks) - (i + 1)
+            eta_seconds = remaining / rate if rate > 0 else 0
+            eta_minutes = eta_seconds / 60
+            
+            logger.info(f"  Progress: {i+1}/{len(chunks)} chunks ({chunks_done/len(chunks)*100:.1f}%) | "
+                       f"Rate: {rate:.1f} chunks/s | ETA: {eta_minutes:.1f} min")
+        
+        # Checkpoint every N chunks
+        if (i + 1) % checkpoint_interval == 0:
+            checkpoint_elapsed = time.time() - last_checkpoint_time
+            logger.info(f"  Saving checkpoint at {i+1}/{len(chunks)} ({checkpoint_elapsed:.1f}s since last)")
+            
+            checkpoint_data = {
+                'cooccurrence': cooccurrence,
+                'last_index': i,
+                'timestamp': time.time()
+            }
+            
+            with open(checkpoint_file, 'w', encoding='utf-8') as f:
+                json.dump(checkpoint_data, f, indent=2, ensure_ascii=False)
+            
+            last_checkpoint_time = time.time()
+    
+    # Remove checkpoint file on completion
+    if Path(checkpoint_file).exists():
+        logger.info(f"Removing checkpoint file (processing complete)")
+        Path(checkpoint_file).unlink()
     
     # Statistics
     total_entries = sum(len(names) for names in cooccurrence.values())
     chunks_with_entities = len(cooccurrence)
     avg_entities_per_chunk = total_entries / chunks_with_entities if chunks_with_entities > 0 else 0
     
-    logger.info(f"✓ Co-occurrence matrix built:")
+    total_time = time.time() - start_time
+    logger.info(f"✓ Co-occurrence matrix built in {total_time/60:.1f} minutes:")
     logger.info(f"  Chunks with entities: {chunks_with_entities}/{len(chunks)}")
     logger.info(f"  Total entity mentions: {total_entries}")
     logger.info(f"  Avg entities/chunk: {avg_entities_per_chunk:.1f}")
