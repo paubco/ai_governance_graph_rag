@@ -378,7 +378,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 6000,
+        max_tokens: int = 10000,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None
     ):
@@ -393,7 +393,7 @@ class RAKGRelationExtractor:
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 6000, optimized for compact JSON output)
+            max_tokens: Max LLM response tokens (default: 10000, accommodates 80-120 relations per batch)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
         """
@@ -541,6 +541,84 @@ class RAKGRelationExtractor:
         else:
             # Fallback or skip
             return self.entity_cooccurrence if self.entity_cooccurrence else {}
+    
+    def _should_do_second_round(
+        self,
+        entity: Dict,
+        first_batch_chunks: List[Dict],
+        threshold: float = 0.15
+    ) -> Tuple[bool, float]:
+        """
+        Decide if entity needs a second extraction round.
+        
+        Uses centroid distance: If first batch chunks are semantically
+        similar (low distance), one round is enough. If diverse (high
+        distance), second round captures additional contexts.
+        
+        Args:
+            entity: Entity dict with embedding
+            first_batch_chunks: Chunks from first MMR selection
+            threshold: Distance threshold (default: 0.15)
+        
+        Returns:
+            (should_do_second_round, centroid_distance)
+        """
+        if len(first_batch_chunks) < 2:
+            return False, 0.0
+        
+        # Get embeddings
+        entity_embedding = np.array(entity['embedding'])
+        chunk_embeddings = np.array([c['embedding'] for c in first_batch_chunks])
+        
+        # Compute centroid of first batch
+        centroid = np.mean(chunk_embeddings, axis=0)
+        
+        # Distance from entity to centroid
+        distance = 1 - cosine_similarity(entity_embedding, centroid)
+        
+        return distance > threshold, distance
+    
+    def _get_detected_entities_from_chunks(
+        self,
+        chunks: List[Dict],
+        entity_name: str,
+        appropriate_matrix: Dict[str, List[str]]
+    ) -> List[Dict]:
+        """
+        Get detected entities from a specific set of chunks.
+        
+        This ensures each batch gets its own entity list, not accumulated.
+        
+        Args:
+            chunks: List of chunk dicts
+            entity_name: Target entity name (to exclude)
+            appropriate_matrix: Co-occurrence matrix (semantic/concept/full)
+        
+        Returns:
+            List of detected entity dicts with name, type, etc.
+        """
+        if not appropriate_matrix or not self.entity_map:
+            return []
+        
+        detected_entity_names = set()
+        
+        # Gather entities from these specific chunks
+        for chunk in chunks:
+            chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
+            cooccurring = appropriate_matrix.get(chunk_id, [])
+            detected_entity_names.update(cooccurring)
+        
+        # Remove target entity
+        detected_entity_names.discard(entity_name)
+        
+        # Resolve entity details
+        detected_entities = [
+            self.entity_map[name]
+            for name in detected_entity_names
+            if name in self.entity_map
+        ]
+        
+        return detected_entities
     
     def _should_do_second_round(
         self, 
@@ -1198,42 +1276,21 @@ class RAKGRelationExtractor:
                 else:
                     logger.debug(f"    No second round (distance: {distance:.3f} <= 0.15)")
             
-            # Step 3: Get detected entities from selected chunks
-            # Use appropriate matrix for detected entities
-            detected_entities = []
-            if appropriate_matrix and self.entity_map:
-                detected_entity_names = set()
-                
-                # Gather from both batches
-                all_selected = selected_chunks + second_round_chunks
-                
-                for chunk in all_selected:
-                    chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
-                    cooccurring = appropriate_matrix.get(chunk_id, [])
-                    detected_entity_names.update(cooccurring)
-                
-                # Remove target entity
-                detected_entity_names.discard(entity_name)
-                
-                # Resolve entity details
-                detected_entities = [
-                    self.entity_map[name]
-                    for name in detected_entity_names
-                    if name in self.entity_map
-                ]
-                
-                logger.info(f"    ✓ Detected {len(detected_entities)} co-occurring entities")
-            
-            # Step 4: Extract relations based on strategy
+            # Step 3: Extract relations based on strategy
             all_relations = []
             
             if strategy == 'semantic':
                 # Track 1: Full OPENIE extraction
                 logger.info(f"  Track 1: Semantic OPENIE extraction...")
                 
-                # First batch
+                # First batch - get entities from first batch chunks only
+                detected_entities_batch1 = self._get_detected_entities_from_chunks(
+                    selected_chunks, entity_name, appropriate_matrix
+                )
+                logger.info(f"    Batch 1: Detected {len(detected_entities_batch1)} co-occurring entities")
+                
                 logger.info(f"  Building prompt (batch 1: {len(selected_chunks)} chunks)...")
-                prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities)
+                prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities_batch1)
                 should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
                 
                 if should_proceed:
@@ -1249,10 +1306,15 @@ class RAKGRelationExtractor:
                     all_relations.extend(batch1_relations)
                     logger.info(f"    Batch 1: {len(batch1_relations)} relations")
                 
-                # Second batch (if triggered)
+                # Second batch (if triggered) - get entities from second batch chunks only
                 if second_round_chunks:
+                    detected_entities_batch2 = self._get_detected_entities_from_chunks(
+                        second_round_chunks, entity_name, appropriate_matrix
+                    )
+                    logger.info(f"    Batch 2: Detected {len(detected_entities_batch2)} co-occurring entities")
+                    
                     logger.info(f"  Building prompt (batch 2: {len(second_round_chunks)} chunks)...")
-                    prompt2 = build_relation_extraction_prompt(entity, second_round_chunks, detected_entities)
+                    prompt2 = build_relation_extraction_prompt(entity, second_round_chunks, detected_entities_batch2)
                     should_proceed2, token_estimate2 = validate_prompt_size(prompt2, entity_name)
                     
                     if should_proceed2:
@@ -1269,9 +1331,14 @@ class RAKGRelationExtractor:
                 # Track 2: Subject-constrained extraction (concepts only)
                 logger.info(f"  Track 2: Academic extraction (subject-constrained)...")
                 
+                # Get detected entities from selected chunks
+                detected_entities = self._get_detected_entities_from_chunks(
+                    selected_chunks, entity_name, appropriate_matrix
+                )
+                
                 # Filter detected entities to concepts only
                 detected_concepts = [e for e in detected_entities if 'concept' in e.get('type', '').lower()]
-                logger.info(f"    Detected concepts: {len(detected_concepts)}")
+                logger.info(f"    Detected {len(detected_entities)} entities, {len(detected_concepts)} concepts")
                 
                 # Single batch only for academic entities
                 all_selected = selected_chunks
