@@ -885,7 +885,9 @@ class RAKGRelationExtractor:
             - Logs response details for debugging
         """
         if stop_sequences is None:
-            stop_sequences = ["```", "\n\nNote:", "Explanation:"]
+            # Note: Removed "```" to allow markdown JSON blocks
+            # extract_relations_json() handles cleaning markdown after response
+            stop_sequences = ["\n\nNote:", "Explanation:"]
         
         try:
             # Call API - Use CHAT endpoint for instruct models
