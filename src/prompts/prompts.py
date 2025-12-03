@@ -65,8 +65,6 @@ JSON:"""
 
 RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in OpenIE (Open Information Extraction).
 
-Your task: Extract relationship triplets from regulatory and academic text.
-
 TARGET ENTITY:
 Name: {entity_name}
 Type: {entity_type}
@@ -78,37 +76,17 @@ DETECTED ENTITIES IN CONTEXT:
 CONTEXT CHUNKS:
 {chunks_text}
 
-EXTRACTION TASK:
-Extract ALL relationships where "{entity_name}" is connected to the detected entities listed above.
+TASK:
+Extract ALL relationships where "{entity_name}" is connected to the detected entities above.
 
-CRITICAL RULES:
+RULES:
 - Subject MUST be "{entity_name}" OR one of the detected entities
 - Object MUST be one of the detected entities OR "{entity_name}"
-- DO NOT extract relations with entities NOT in the detected list
-- DO NOT invent new entities - use ONLY the provided detected entities
-- NO duplicate relations (same subject-predicate-object combination)
+- Use ONLY entities from the detected list above
+- NO duplicate relations (same subject-predicate-object)
+- NO predefined relation types - discover predicates from text (e.g., "regulates", "applies_to")
+- Extract only relations explicitly stated in chunks
 - If no valid relationships found, return empty list
-
-OPENIE PRINCIPLES:
-1. NO predefined relation types - discover relations from text
-2. Predicates are verb phrases connecting entities (e.g., "regulates", "applies_to", "established_by")
-3. Extract both directions if relevant: (A, predicate1, B) and (B, predicate2, A) are different
-4. Only extract relations explicitly stated in the chunks
-
-GOOD EXAMPLES:
-Detected entities: ["GDPR", "EU", "data processing"]
-Text: "The GDPR regulates data processing in the EU"
-→ {{"subject": "GDPR", "predicate": "regulates", "object": "data processing", "chunk_ids": ["..."]}}
-→ {{"subject": "GDPR", "predicate": "applies_in", "object": "EU", "chunk_ids": ["..."]}}
-
-Detected entities: ["transparency", "AI systems"]  
-Text: "Transparency is required for AI systems"
-→ {{"subject": "transparency", "predicate": "is_required_for", "object": "AI systems", "chunk_ids": ["..."]}}
-
-BAD EXAMPLES (DO NOT DO THIS):
-❌ {{"subject": "GDPR", "predicate": "is", "object": "important"}} ← "important" not in detected entities
-❌ {{"subject": "AI", "predicate": "has", "object": "applications"}} ← "applications" not in detected entities
-❌ {{"subject": "policy", "predicate": "affects", "object": "citizens"}} ← neither entity in detected list
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
@@ -122,6 +100,47 @@ OUTPUT FORMAT (JSON only, no other text):
   ]
 }}
 
-CRITICAL: Use ONLY entity names from the detected entities list above!
+JSON:"""
 
-Extract all relations now (JSON only):"""
+
+# ============================================================================
+# PHASE 1D: ACADEMIC ENTITY EXTRACTION (Subject-Constrained)
+# ============================================================================
+
+ACADEMIC_ENTITY_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in academic literature mapping.
+
+TARGET ACADEMIC ENTITY:
+Name: {entity_name}
+Type: {entity_type}
+Description: {entity_description}
+
+DETECTED CONCEPTS IN CONTEXT:
+{detected_entities_list}
+
+CONTEXT CHUNKS:
+{chunks_text}
+
+TASK:
+Extract what concepts "{entity_name}" discusses based on the context.
+
+RULES:
+- Subject is ALWAYS "{entity_name}" (the academic entity)
+- Predicate is ALWAYS "discusses"
+- Object MUST be one of the detected concepts from the list above
+- DO NOT extract relations where "{entity_name}" is the object
+- Use ONLY concepts from the detected list
+- If no concepts found, return empty list
+
+OUTPUT FORMAT (JSON only, no other text):
+{{
+  "relations": [
+    {{
+      "subject": "{entity_name}",
+      "predicate": "discusses",
+      "object": "concept_name_from_detected_list",
+      "chunk_ids": ["chunk_id"]
+    }}
+  ]
+}}
+
+JSON:"""

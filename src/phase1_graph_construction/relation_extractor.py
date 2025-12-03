@@ -420,8 +420,13 @@ class RAKGRelationExtractor:
         # Initialize Together client
         self.client = Together(api_key=self.api_key)
         
-        # Load entity co-occurrence matrix (optional, for entity-aware diversity)
-        self.entity_cooccurrence = None
+        # Load entity co-occurrence matrices
+        # NEW: Support for typed matrices (semantic, concept, full)
+        self.entity_cooccurrence = None  # Legacy single matrix
+        self.cooccurrence_semantic = None  # Track 1: Semantic entities
+        self.cooccurrence_concept = None   # Track 2: Concept objects
+        self.cooccurrence_full = None      # Backup/debug
+        
         self.normalized_entities = None
         self.entity_map = None
         
@@ -443,9 +448,52 @@ class RAKGRelationExtractor:
             logger.info(f"  Normalized entities: Loaded ({len(self.normalized_entities)} entities)")
     
     def _load_entity_cooccurrence(self, cooccurrence_file: str):
-        """Load entity co-occurrence matrix"""
-        with open(cooccurrence_file, 'r', encoding='utf-8') as f:
-            self.entity_cooccurrence = json.load(f)
+        """
+        Load entity co-occurrence matrix/matrices
+        
+        Supports two formats:
+        1. Legacy: Single file (entity_cooccurrence.json)
+        2. Typed: Base path, auto-loads 3 files:
+           - cooccurrence_semantic.json (Track 1)
+           - cooccurrence_concept.json (Track 2 objects)
+           - cooccurrence_full.json (Backup)
+        """
+        # Check if typed matrices exist
+        base_path = Path(cooccurrence_file).parent
+        semantic_file = base_path / "cooccurrence_semantic.json"
+        concept_file = base_path / "cooccurrence_concept.json"
+        full_file = base_path / "cooccurrence_full.json"
+        
+        if semantic_file.exists() and concept_file.exists():
+            # Load typed matrices
+            logger.info("Loading typed co-occurrence matrices...")
+            
+            with open(semantic_file, 'r', encoding='utf-8') as f:
+                self.cooccurrence_semantic = json.load(f)
+            logger.info(f"  Semantic matrix: {len(self.cooccurrence_semantic)} chunks")
+            
+            with open(concept_file, 'r', encoding='utf-8') as f:
+                self.cooccurrence_concept = json.load(f)
+            logger.info(f"  Concept matrix: {len(self.cooccurrence_concept)} chunks")
+            
+            if full_file.exists():
+                with open(full_file, 'r', encoding='utf-8') as f:
+                    self.cooccurrence_full = json.load(f)
+                logger.info(f"  Full matrix: {len(self.cooccurrence_full)} chunks")
+            
+            # Set legacy matrix to semantic for backward compatibility
+            self.entity_cooccurrence = self.cooccurrence_semantic
+        else:
+            # Load legacy single matrix
+            logger.info("Loading single co-occurrence matrix (legacy mode)...")
+            with open(cooccurrence_file, 'r', encoding='utf-8') as f:
+                self.entity_cooccurrence = json.load(f)
+            logger.info(f"  Loaded {len(self.entity_cooccurrence)} chunks")
+            
+            # Use same matrix for all types
+            self.cooccurrence_semantic = self.entity_cooccurrence
+            self.cooccurrence_concept = self.entity_cooccurrence
+            self.cooccurrence_full = self.entity_cooccurrence
     
     def _load_normalized_entities(self, entities_file: str):
         """Load normalized entities and build lookup map"""
@@ -458,6 +506,81 @@ class RAKGRelationExtractor:
         # Use name as key for entity lookup
         self.entity_map = {e['name']: e for e in entities}
         logger.info(f"  Loaded {len(entities)} entities")
+    
+    def _classify_entity(self, entity: Dict) -> str:
+        """
+        Classify entity extraction strategy
+        
+        Uses entity_type_classification module (15 canonical types)
+        
+        Returns:
+            'semantic': Full OPENIE extraction (Track 1)
+            'academic': Subject-constrained extraction (Track 2)
+            'skip': Skip extraction entirely
+        """
+        from src.utils.entity_type_classification import get_extraction_strategy
+        
+        entity_type = entity.get('type', '')
+        entity_name = entity.get('name', '')
+        
+        return get_extraction_strategy(entity_type, entity_name)
+    
+    def _get_appropriate_matrix(self, entity_strategy: str) -> Dict:
+        """
+        Select appropriate co-occurrence matrix for entity type
+        
+        Args:
+            entity_strategy: 'semantic' | 'academic' | 'skip'
+        
+        Returns:
+            Dict: Co-occurrence matrix {chunk_id: [entity_names]}
+        """
+        if entity_strategy == 'academic':
+            # Academic entities: use concept matrix (only concepts as objects)
+            return self.cooccurrence_concept if self.cooccurrence_concept else self.entity_cooccurrence
+        elif entity_strategy == 'semantic':
+            # Semantic entities: use semantic matrix (all non-academic entities)
+            return self.cooccurrence_semantic if self.cooccurrence_semantic else self.entity_cooccurrence
+        else:
+            # Fallback or skip
+            return self.entity_cooccurrence if self.entity_cooccurrence else {}
+    
+    def _should_do_second_round(
+        self, 
+        entity: Dict, 
+        selected_chunks: List[Dict], 
+        threshold: float = 0.15
+    ) -> Tuple[bool, float]:
+        """
+        Check if second round of chunk selection is needed
+        
+        Only for semantic entities (Track 1).
+        Computes centroid of selected chunks and checks distance to entity embedding.
+        
+        Args:
+            entity: Entity dict with 'embedding'
+            selected_chunks: List of selected chunk dicts with 'embedding'
+            threshold: Distance threshold (default: 0.15)
+        
+        Returns:
+            Tuple[bool, float]: (should_do_second_round, distance)
+        """
+        if not selected_chunks:
+            return False, 0.0
+        
+        entity_embedding = np.array(entity['embedding'])
+        
+        # Compute centroid of selected chunks
+        chunk_embeddings = np.array([c['embedding'] for c in selected_chunks])
+        centroid = np.mean(chunk_embeddings, axis=0)
+        
+        # Compute cosine distance
+        similarity = cosine_similarity(entity_embedding, centroid)
+        distance = 1.0 - similarity
+        
+        logger.debug(f"    Centroid distance: {distance:.3f} (threshold: {threshold})")
+        
+        return distance > threshold, distance
     
     # ========================================================================
     # STEP 1: CANDIDATE GATHERING
@@ -857,6 +980,77 @@ class RAKGRelationExtractor:
             return {"relations": []}  # Graceful fallback
     
     # ========================================================================
+    # ACADEMIC ENTITY EXTRACTION (Track 2)
+    # ========================================================================
+    
+    def _extract_academic_relations(
+        self,
+        entity: Dict,
+        chunks: List[Dict],
+        detected_concepts: List[Dict]
+    ) -> List[Dict]:
+        """
+        Extract relations for academic entities (subject-constrained)
+        
+        Strategy:
+        - Subject: Always the academic entity (citation/author/journal)
+        - Predicate: Always "discusses"
+        - Object: Only concepts from detected_concepts list
+        
+        Args:
+            entity: Academic entity dict
+            chunks: Selected chunks
+            detected_concepts: List of concept entities detected in chunks
+        
+        Returns:
+            List[Dict]: Relations with subject=entity, predicate="discusses"
+        """
+        from src.prompts.prompts import ACADEMIC_ENTITY_EXTRACTION_PROMPT
+        
+        entity_name = entity.get('name', 'Unknown')
+        chunks_text = format_chunks_for_prompt(chunks)
+        
+        # Format detected concepts list
+        if detected_concepts:
+            detected_list = "\n".join([
+                f"- {e['name']} [{e['type']}]"
+                for e in detected_concepts
+            ])
+        else:
+            detected_list = "(No concepts detected in context)"
+        
+        # Build prompt with academic template
+        prompt = ACADEMIC_ENTITY_EXTRACTION_PROMPT.format(
+            entity_name=entity_name,
+            entity_type=entity.get('type', 'Unknown'),
+            entity_description=entity.get('description', 'No description'),
+            detected_entities_list=detected_list,
+            chunks_text=chunks_text
+        )
+        
+        # Validate prompt size
+        should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
+        if not should_proceed:
+            logger.error(f"  ✗ Academic prompt too large (~{token_estimate} tokens)")
+            return []
+        
+        logger.debug(f"  Academic extraction prompt: ~{token_estimate} tokens")
+        
+        # Call LLM
+        response = self.extract_relations_llm(prompt)
+        relations = response.get('relations', [])
+        
+        # Validate: subject must be entity_name, predicate must be "discusses"
+        validated_relations = []
+        for relation in relations:
+            if relation.get('subject') == entity_name and relation.get('predicate') == 'discusses':
+                validated_relations.append(relation)
+            else:
+                logger.warning(f"  ⚠️ Invalid academic relation: {relation}")
+        
+        return validated_relations
+    
+    # ========================================================================
     # MAIN EXTRACTION METHOD
     # ========================================================================
     
@@ -903,6 +1097,14 @@ class RAKGRelationExtractor:
         logger.info(f"\nEntity: {entity_name} [{entity_type}]")
         
         try:
+            # Step 0: Classify entity strategy
+            strategy = self._classify_entity(entity)
+            logger.info(f"  Strategy: {strategy.upper()}")
+            
+            if strategy == 'skip':
+                logger.info(f"  Skipping entity (skip type)")
+                return []
+            
             # Step 1: Gather candidates
             logger.info(f"  Gathering candidates...")
             start_time = time.time()
@@ -914,20 +1116,61 @@ class RAKGRelationExtractor:
                 return []
             
             # Step 2: Two-stage MMR selection (semantic + entity diversity)
-            logger.info(f"  Two-stage MMR selection...")
+            # Use appropriate matrix based on strategy
+            appropriate_matrix = self._get_appropriate_matrix(strategy)
+            
+            # Temporarily swap matrix for two-stage MMR
+            original_matrix = self.entity_cooccurrence
+            self.entity_cooccurrence = appropriate_matrix
+            
+            logger.info(f"  Two-stage MMR selection (matrix: {strategy})...")
             start_time = time.time()
             selected_chunks = self.two_stage_mmr_select(entity, candidates)
             logger.info(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
             
-            # Step 2.5: Get detected entities from selected chunks
+            # Restore original matrix
+            self.entity_cooccurrence = original_matrix
+            # Restore original matrix
+            self.entity_cooccurrence = original_matrix
+            
+            # Step 2.5: Check for second round (Track 1: Semantic only)
+            second_round_chunks = []
+            if strategy == 'semantic':
+                should_do_second, distance = self._should_do_second_round(
+                    entity, selected_chunks, threshold=0.15
+                )
+                
+                if should_do_second:
+                    logger.info(f"  Second round triggered (distance: {distance:.3f} > 0.15)")
+                    
+                    # Get remaining candidates
+                    selected_ids = set(c.get('chunk_id', c.get('id', '')) for c in selected_chunks)
+                    remaining_candidates = [c for c in candidates if c.get('chunk_id', c.get('id', '')) not in selected_ids]
+                    
+                    if remaining_candidates:
+                        logger.info(f"  Selecting second batch from {len(remaining_candidates)} remaining candidates...")
+                        
+                        # Swap matrix again for second MMR
+                        self.entity_cooccurrence = appropriate_matrix
+                        second_round_chunks = self.two_stage_mmr_select(entity, remaining_candidates)
+                        self.entity_cooccurrence = original_matrix
+                        
+                        logger.info(f"    ✓ Second round: {len(second_round_chunks)} chunks")
+                else:
+                    logger.debug(f"    No second round (distance: {distance:.3f} <= 0.15)")
+            
+            # Step 3: Get detected entities from selected chunks
+            # Use appropriate matrix for detected entities
             detected_entities = []
-            if self.entity_cooccurrence and self.entity_map:
-                entity_name = entity['name']
+            if appropriate_matrix and self.entity_map:
                 detected_entity_names = set()
                 
-                for chunk in selected_chunks:
+                # Gather from both batches
+                all_selected = selected_chunks + second_round_chunks
+                
+                for chunk in all_selected:
                     chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
-                    cooccurring = self.entity_cooccurrence.get(chunk_id, [])
+                    cooccurring = appropriate_matrix.get(chunk_id, [])
                     detected_entity_names.update(cooccurring)
                 
                 # Remove target entity
@@ -942,47 +1185,77 @@ class RAKGRelationExtractor:
                 
                 logger.info(f"    ✓ Detected {len(detected_entities)} co-occurring entities")
             
-            # Step 3: Build prompt with detected entities
-            logger.info(f"  Building prompt...")
-            prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities)
-            prompt_chars = len(prompt)
-            logger.info(f"    ✓ Prompt built: {prompt_chars:,} chars")
+            # Step 4: Extract relations based on strategy
+            all_relations = []
             
-            # Step 4: Validate prompt size
-            logger.info(f"  Validating prompt size...")
-            should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
+            if strategy == 'semantic':
+                # Track 1: Full OPENIE extraction
+                logger.info(f"  Track 1: Semantic OPENIE extraction...")
+                
+                # First batch
+                logger.info(f"  Building prompt (batch 1: {len(selected_chunks)} chunks)...")
+                prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities)
+                should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
+                
+                if should_proceed:
+                    if save_prompt:
+                        save_prompt_to_file(prompt, entity_name, token_estimate)
+                    
+                    logger.info(f"  Calling LLM batch 1 (~{token_estimate} tokens)...")
+                    start_time = time.time()
+                    response = self.extract_relations_llm(prompt)
+                    logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
+                    
+                    batch1_relations = response.get('relations', [])
+                    all_relations.extend(batch1_relations)
+                    logger.info(f"    Batch 1: {len(batch1_relations)} relations")
+                
+                # Second batch (if triggered)
+                if second_round_chunks:
+                    logger.info(f"  Building prompt (batch 2: {len(second_round_chunks)} chunks)...")
+                    prompt2 = build_relation_extraction_prompt(entity, second_round_chunks, detected_entities)
+                    should_proceed2, token_estimate2 = validate_prompt_size(prompt2, entity_name)
+                    
+                    if should_proceed2:
+                        logger.info(f"  Calling LLM batch 2 (~{token_estimate2} tokens)...")
+                        start_time = time.time()
+                        response2 = self.extract_relations_llm(prompt2)
+                        logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
+                        
+                        batch2_relations = response2.get('relations', [])
+                        all_relations.extend(batch2_relations)
+                        logger.info(f"    Batch 2: {len(batch2_relations)} relations")
+                
+            elif strategy == 'academic':
+                # Track 2: Subject-constrained extraction (concepts only)
+                logger.info(f"  Track 2: Academic extraction (subject-constrained)...")
+                
+                # Filter detected entities to concepts only
+                detected_concepts = [e for e in detected_entities if 'concept' in e.get('type', '').lower()]
+                logger.info(f"    Detected concepts: {len(detected_concepts)}")
+                
+                # Single batch only for academic entities
+                all_selected = selected_chunks
+                all_relations = self._extract_academic_relations(entity, all_selected, detected_concepts)
             
-            if not should_proceed:
-                logger.error(f"  ✗ Prompt too large (~{token_estimate} tokens), skipping entity")
-                return []
+            # Step 5: Post-processing
+            # Deduplicate relations (same subject-predicate-object)
+            seen = set()
+            deduplicated = []
+            for relation in all_relations:
+                key = (relation.get('subject'), relation.get('predicate'), relation.get('object'))
+                if key not in seen:
+                    seen.add(key)
+                    relation['extracted_from_entity'] = entity_name
+                    relation['extraction_strategy'] = strategy
+                    deduplicated.append(relation)
             
-            # Log prompt preview
-            logger.debug(f"  Prompt preview (first 500 chars):")
-            logger.debug(f"    {prompt[:500]}...")
-            
-            # Save full prompt to file
-            if save_prompt:
-                save_prompt_to_file(prompt, entity_name, token_estimate)
-            
-            # Step 5: LLM extraction
-            logger.info(f"  Calling LLM (~{token_estimate} tokens)...")
-            start_time = time.time()
-            response = self.extract_relations_llm(prompt)
-            logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
-            
-            # Step 6: Post-processing
-            relations = response.get('relations', [])
-            
-            # Add metadata
-            for relation in relations:
-                relation['extracted_from_entity'] = entity_name
-            
-            if len(relations) == 0:
-                logger.warning(f"  ⚠️ No relations extracted (try lowering threshold)")
+            if len(deduplicated) == 0:
+                logger.warning(f"  ⚠️ No relations extracted")
             else:
-                logger.info(f"  ✓ Extracted {len(relations)} relations")
+                logger.info(f"  ✓ Extracted {len(deduplicated)} unique relations (from {len(all_relations)} total)")
             
-            return relations
+            return deduplicated
             
         except Exception as e:
             logger.error(f"  ✗ Failed to extract relations for {entity_name}: {e}")

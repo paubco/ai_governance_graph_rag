@@ -9,157 +9,26 @@ Approach: Negative template - classify what's NOT semantic
 # ============================================================================
 # ACADEMIC TYPES - Track 2 subjects (excluded from semantic matrix)
 # ============================================================================
+# After Phase 1C normalization: 121 types → 15 canonical types
 
 ACADEMIC_TYPES = {
-    # Core academic entities
-    'Academic',
-    'Academic Article',
-    'Academic Authors',
-    'Academic Citation',
-    'Academic Conference',
-    'Academic Department',
-    'Academic Discipline',
-    'Academic Editor',
-    'Academic Editors',
-    'Academic Field',
-    'Academic Institution',
-    'Academic Journal',
-    'Academic Journal Article',
-    'Academic Literature',
-    'Academic Paper',
-    'Academic Publication',
-    'Academic Reference',
-    'Academic Work',
-    
-    # Citations & References
+    # 15 canonical academic types (normalized in Phase 1C filter)
     'Citation',
-    'Reference',
-    
-    # Authors & Editors
     'Author',
-    'Authors',
-    'Author(s)',
-    'Author Group',
-    'Author List',
-    'Author and Year',
-    'Author (Year)',
-    'Author (2012)',
-    'Author (2022)',
-    'Authors (2019)',
-    'Authorship',
     'Editor',
-    'Editors',
-    'Editor(s)',
-    'Editor Citation',
-    'Editors (2012)',
-    'Editorial Team',
-    'News Article Authors',
-    
-    # Journals & Publications
     'Journal',
-    'Journal Article',
-    'Journal Article Reference',
-    'Journal Name',
-    'Journal Citation',
-    'Journal Section',
-    'Journal Volume and Pages',
-    'Journal Volume and Number',
-    'Journal and Publication Date',
-    'Journal and Year',
-    'Journal or Publication',
     'Publication',
-    'Publication Source',
-    'Publication Title',
-    'Publication Type',
-    'Publication Volume',
-    'Publication Issue',
-    'Publication Edition',
-    'Publication Series',
-    'Publication Status',
-    'Publication Model',
-    'Publication Month',
-    'Publication Information',
-    'Publication Metadata',
-    'Publication Reference',
-    'Publication Venue',
-    'Academic Journal',
-    'Academic Journal Article',
-    
-    # Books
     'Book',
-    'Book Title',
-    'Book Series',
-    'Book Chapter',
-    'Book Chapter Title',
-    'Book Subtitle',
-    'Book Volume',
-    'Book Edition',
-    'Book Section',
-    
-    # Papers & Articles
     'Paper',
-    'Paper Title',
-    'Article Title',
-    'Article Subtitle',
-    'Article Volume and Issue',
-    'Research Paper',
-    'Research Paper Title',
-    'Academic Paper',
-    'Working Paper',
-    'White Paper',
-    'Discussion Paper',
-    'Position Paper',
-    'Review Paper',
-    'Policy Paper',
-    'Technical Report',
-    'Technical Report Title',
-    'Research Report',
-    
-    # Conferences
+    'Article',
+    'Report',
     'Conference',
-    'Conference Proceedings',
-    'Conference Title',
-    'Conference Full Name',
-    'Conference Abbreviation',
-    'Conference Acronym',
-    'Conference or Event',
-    'Conference or Journal',
-    'Conference/Book Title',
-    'Conference/Workshop',
-    
-    # Document metadata
-    'Document Title',
-    'Report Title',
-    'Study Title',
-    'Research Title',
-    'Thesis Title',
-    'Project Title',
-    'Volume Identifier',
-    'Volume and Pages',
-    'Volume or Edition',
-    'Issue Number',
-    
-    # Academic works
     'Thesis',
-    'Dissertation',
-    'Manuscript',
     'Preprint',
-    'Preprint Identifier',
-    
-    # Literature
+    'Document',
     'Literature',
-    'Literature Type',
-    'Literary Work',
-    'Academic Literature',
-    
-    # Publisher info
     'Publisher',
-    
-    # Identifiers (borderline, but related to academic metadata)
-    'arXiv Identifier',
-    'PubMed ID',
-    'PubMed Identifier',
-}  # 118 types
+}
 
 
 # ============================================================================
@@ -177,7 +46,7 @@ SKIP_TYPES = {
     
     # Phase 1B artifacts
     'Chunk ID',
-}  # 7 types
+}
 
 
 # ============================================================================
