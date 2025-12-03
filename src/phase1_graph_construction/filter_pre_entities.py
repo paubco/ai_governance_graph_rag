@@ -67,14 +67,17 @@ class PreEntityFilter:
     Philosophy: Conservative - preserve legitimate entities, only remove obvious junk
     """
     
-    def __init__(self, min_chunks: int = 1):
+    def __init__(self):
         """
         Initialize filter with conservative defaults
         
-        Args:
-            min_chunks: Minimum chunk mentions (default: 1 for Phase 1B)
+        Single-mention filtering: ONLY removes entities that are BOTH:
+        - Single mention (appears in 1 chunk only)
+        - Short name (< 4 characters)
+        
+        Rationale: Legitimate entities often appear once (e.g., specific regulations),
+        but short single-mention entities are usually junk/typos.
         """
-        self.min_chunks = min_chunks
         
         # ACADEMIC TYPE CANONICALIZATION MAP
         # Reduces 121 academic types → 15 canonical types
@@ -340,8 +343,7 @@ class PreEntityFilter:
             'description_too_long': 0,
             'empty_name': 0,
             'no_letters': 0,
-            'single_mention': 0,
-            'single_appear_short': 0,
+            'single_appear_short': 0,  # Single + short combo only
             'social_media_pattern': 0,
             'latex_notation': 0,
             'math_notation_dollars': 0,
@@ -524,11 +526,12 @@ class PreEntityFilter:
         """
         Check chunk mention quality
         
-        Phase 1B has single chunk_id per entity, so min_chunks=1 keeps all.
-        Use min_chunks=2+ after Phase 1C deduplication for stricter filtering.
+        CONSERVATIVE: Only remove single-mention entities if they're ALSO short (<4 chars)
         
-        Special case: single-appearance + very short name (<4 chars) = likely junk
-        Exception: Protected types (citations, authors, journals) kept even if single
+        Rationale:
+        - Single mention + long name (≥4 chars) = legitimate entity (keep)
+        - Single mention + short name (<4 chars) = likely junk/typo (remove)
+        - Exception: Protected types (citations, authors, journals) kept regardless
         
         Returns:
             (keep: bool, reason: str)
@@ -543,14 +546,11 @@ class PreEntityFilter:
         if entity_type in self.protected_single_appearance:
             return True, 'OK'
         
-        # Single appearance + short name = likely junk
+        # ONLY filter: single appearance + short name = likely junk
         if num_chunks == 1 and len(name) < 4:
             return False, 'single_appear_short'
         
-        # Min chunks threshold
-        if num_chunks < self.min_chunks:
-            return False, 'single_mention'
-        
+        # All other entities (including single-mention with name ≥4 chars): KEEP
         return True, 'OK'
     
     def _flatten_entities(self, nested_data: Dict) -> List[Dict]:
@@ -594,7 +594,6 @@ class PreEntityFilter:
         self.stats['input_entities'] = len(flat_entities)
         
         logger.info(f"Input entities: {len(flat_entities):,}")
-        logger.info(f"Minimum chunks: {self.min_chunks} (Phase 1B has single chunk_id per entity)")
         logger.info("")
         logger.info("Filtering...")
         
@@ -731,8 +730,7 @@ class PreEntityFilter:
         logger.info(f"  Description long:     {self.stats['description_too_long']:>8,}")
         logger.info(f"  Empty name:           {self.stats['empty_name']:>8,}")
         logger.info(f"  No letters in name:   {self.stats['no_letters']:>8,}")
-        logger.info(f"  Single mention:       {self.stats['single_mention']:>8,}")
-        logger.info(f"  Single + short:       {self.stats['single_appear_short']:>8,}")
+        logger.info(f"  Single + short (<4):  {self.stats['single_appear_short']:>8,}")
         logger.info("")
         logger.info(f"Character fixes:       {self.stats['character_fixes']:>8,}")
         logger.info("")
@@ -745,22 +743,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Basic usage (conservative defaults)
+    # Basic usage
     python scripts/filter_pre_entities.py \\
         --input data/interim/entities/pre_entities.json \\
         --output data/interim/entities/pre_entities_clean.json
-    
-    # Stricter filtering (3+ chunks required)
-    python scripts/filter_pre_entities.py \\
-        --input data/interim/entities/pre_entities.json \\
-        --output data/interim/entities/pre_entities_clean.json \\
-        --min-chunks 3
 
 Conservative defaults:
     - Min name length: 2 chars (allows acronyms)
     - Max name length: 200 chars (prevents sentences)
     - Min description: 10 chars (must be informative)
-    - Min chunks: 1 mention (Phase 1B has single chunk_id per entity)
+    - Single-mention filtering: Only removes if BOTH single-mention AND short (<4 chars)
     
 NEW: Academic type normalization
     - Collapses 121 academic types → 15 canonical types
@@ -781,12 +773,6 @@ NEW: Academic type normalization
         type=str,
         required=True,
         help='Output file (pre_entities_clean.json)'
-    )
-    parser.add_argument(
-        '--min-chunks',
-        type=int,
-        default=1,
-        help='Minimum chunk mentions (default: 1)'
     )
     
     args = parser.parse_args()
@@ -810,7 +796,7 @@ NEW: Academic type normalization
         data = json.load(f)
     
     # Filter
-    filter = PreEntityFilter(min_chunks=args.min_chunks)
+    filter = PreEntityFilter()
     filtered_data = filter.filter_entities(data)
     
     # Save
