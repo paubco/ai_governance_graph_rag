@@ -520,10 +520,7 @@ class RAKGRelationExtractor:
         """
         from src.utils.entity_type_classification import get_extraction_strategy
         
-        entity_type = entity.get('type', '')
-        entity_name = entity.get('name', '')
-        
-        return get_extraction_strategy(entity_type, entity_name)
+        return get_extraction_strategy(entity)
     
     def _get_appropriate_matrix(self, entity_strategy: str) -> Dict:
         """
