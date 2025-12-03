@@ -20,6 +20,7 @@ FlagEmbedding>=1.2.0
 
 # LLM
 together>=1.2.0
+openai>= 2.8.1
 
 # Scopus
 pybliometrics>=4.4

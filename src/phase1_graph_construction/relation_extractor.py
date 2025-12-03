@@ -15,7 +15,7 @@ Usage:
     from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
     
     extractor = RAKGRelationExtractor(
-        model_name="mistralai/Mistral-7B-Instruct-v0.3",
+        model_name="deepseek-chat",
         api_key="your_key"
     )
     
@@ -45,7 +45,7 @@ from pathlib import Path
 
 # Third-party
 import numpy as np
-from together import Together
+from openai import OpenAI  # DeepSeek uses OpenAI-compatible API
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -522,8 +522,8 @@ class RAKGRelationExtractor:
         Initialize RAKG Relation Extractor
         
         Args:
-            model_name: Together.ai model (e.g., "mistralai/Mistral-7B-Instruct-v0.3")
-            api_key: Together.ai API key (if None, loads from .env TOGETHER_API_KEY)
+            model_name: DeepSeek model (e.g., "deepseek-chat" or "deepseek-coder")
+            api_key: DeepSeek API key (if None, loads from .env DEEPSEEK_API_KEY)
             semantic_threshold: Cosine similarity threshold (default: 0.85)
             mmr_lambda: MMR balance (0.5=balanced, 1.0=relevance only)
             num_chunks: Final chunks to select (default: 20)
@@ -537,12 +537,12 @@ class RAKGRelationExtractor:
         
         # API key: use provided, or load from .env
         if api_key is None:
-            api_key = os.getenv('TOGETHER_API_KEY')
+            api_key = os.getenv('DEEPSEEK_API_KEY')
             if not api_key:
                 raise ValueError(
-                    "TOGETHER_API_KEY not found. Either:\n"
+                    "DEEPSEEK_API_KEY not found. Either:\n"
                     "1. Pass api_key parameter, or\n"
-                    "2. Add TOGETHER_API_KEY to .env file"
+                    "2. Add DEEPSEEK_API_KEY to .env file"
                 )
         self.api_key = api_key
         
@@ -553,8 +553,11 @@ class RAKGRelationExtractor:
         self.temperature = temperature
         self.max_tokens = max_tokens
         
-        # Initialize Together client
-        self.client = Together(api_key=self.api_key)
+        # Initialize DeepSeek client (OpenAI-compatible)
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.deepseek.com/v1"
+        )
         
         # Load entity co-occurrence matrices
         # NEW: Support for typed matrices (semantic, concept, full)
@@ -1122,8 +1125,7 @@ class RAKGRelationExtractor:
                 max_tokens=self.max_tokens,
                 stop=stop_sequences,
                 response_format={
-                    "type": "json_schema",
-                    "schema": RelationOutput.model_json_schema()
+                    "type": "json_object"  # DeepSeek uses json_object instead of json_schema
                 }
             )
             
