@@ -161,7 +161,7 @@ def save_prompt_to_file(prompt: str, entity_name: str, token_count: int) -> None
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85  # For semantic neighbors retrieval
 DEFAULT_MMR_LAMBDA = 0.55          # Balance: 0.5=balanced, 1.0=pure relevance
-DEFAULT_NUM_CHUNKS = 10            # Chunks per stage (10 + optional 10 second round = max 20 total)
+DEFAULT_NUM_CHUNKS = 8             # Chunks per stage (8 + optional 8 second round = max 16 total)
 DEFAULT_CANDIDATE_POOL = 200       # Pre-filter size before MMR
                                    # Why 200? Gives MMR a large enough pool for diversity
                                    # while keeping computation manageable
@@ -378,7 +378,7 @@ class RAKGRelationExtractor:
         num_chunks: int = DEFAULT_NUM_CHUNKS,
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
-        max_tokens: int = 15000,
+        max_tokens: int = 6000,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None
     ):
@@ -393,7 +393,7 @@ class RAKGRelationExtractor:
             num_chunks: Final chunks to select (default: 20)
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
-            max_tokens: Max LLM response tokens (default: 15000, increased for large entity lists)
+            max_tokens: Max LLM response tokens (default: 6000, optimized for compact JSON output)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
         """
@@ -890,6 +890,10 @@ class RAKGRelationExtractor:
         try:
             # Call API - Use CHAT endpoint for instruct models
             logger.debug(f"  Calling LLM API...")
+            logger.debug(f"    Model: {self.model_name}")
+            logger.debug(f"    max_tokens: {self.max_tokens}")
+            logger.debug(f"    temperature: {self.temperature}")
+            
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
@@ -900,8 +904,44 @@ class RAKGRelationExtractor:
                 stop=stop_sequences
             )
             
+            # DEBUG: Log full response structure
+            logger.debug(f"  ✓ API call completed")
+            logger.debug(f"    Response type: {type(response)}")
+            logger.debug(f"    Response has choices: {hasattr(response, 'choices')}")
+            if hasattr(response, 'choices'):
+                logger.debug(f"    Number of choices: {len(response.choices)}")
+                if len(response.choices) > 0:
+                    logger.debug(f"    Choice[0] has message: {hasattr(response.choices[0], 'message')}")
+                    if hasattr(response.choices[0], 'message'):
+                        logger.debug(f"    Message has content: {hasattr(response.choices[0].message, 'content')}")
+                        logger.debug(f"    Content type: {type(response.choices[0].message.content)}")
+                        logger.debug(f"    Content is None: {response.choices[0].message.content is None}")
+                    # Check finish_reason
+                    if hasattr(response.choices[0], 'finish_reason'):
+                        logger.debug(f"    Finish reason: {response.choices[0].finish_reason}")
+                        if response.choices[0].finish_reason == 'length':
+                            logger.warning(f"    ⚠️ Response cut off due to max_tokens limit!")
+                        elif response.choices[0].finish_reason == 'content_filter':
+                            logger.error(f"    ✗ Response blocked by content filter!")
+            
+            # Check for usage info (token counts)
+            if hasattr(response, 'usage'):
+                logger.debug(f"    Usage - prompt_tokens: {response.usage.prompt_tokens}")
+                logger.debug(f"    Usage - completion_tokens: {response.usage.completion_tokens}")
+                logger.debug(f"    Usage - total_tokens: {response.usage.total_tokens}")
+            
             # Extract raw response from chat format
-            raw_text = response.choices[0].message.content.strip()
+            try:
+                raw_text = response.choices[0].message.content
+                if raw_text is None:
+                    logger.error(f"  ✗ API returned None content!")
+                    logger.error(f"    Full response object: {response}")
+                    return {"relations": []}
+                raw_text = raw_text.strip()
+            except (AttributeError, IndexError) as e:
+                logger.error(f"  ✗ Failed to extract content from response: {e}")
+                logger.error(f"    Response structure: {response}")
+                return {"relations": []}
             
             # Log response details
             logger.debug(f"  ✓ Response received: {len(raw_text)} chars")
