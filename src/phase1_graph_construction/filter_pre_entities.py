@@ -64,8 +64,7 @@ class PreEntityFilter:
             'Year', 'Date', 'Publication Year', 'Publication Date', 
             'Time Period', 'Time Frame',
             
-            # Document structure metadata
-            'DOI', 'Digital Object Identifier', 'Digital Object Identifier (DOI)',
+            # Document structure metadata (KEEP DOI for enrichment!)
             'Page Range', 'Page Number', 'Pages', 'Article Pages',
             'Volume', 'Volume Number', 'Volume and Issue', 
             'Journal Volume and Issue', 'Journal Volume',
@@ -87,10 +86,40 @@ class PreEntityFilter:
             # Contact/web metadata
             'Email', 'URL', 'Website', 'Contact Information', 'Address',
             
+            # Social media junk (Phase 1C update)
+            'Twitter Handle', 'Social Media Handle', 'Hashtag', 'Campaign',
+            
+            # Math/technical junk (Phase 1C update)
+            'Variable', 'Parameter', 'Technical Parameter',
+            'Mathematical Concept', 'Mathematical Constraint',
+            'Matrix', 'Mathematical Matrix', 'Algorithm Component',
+            'Model Parameter', 'Threshold', 'Numerical Value',
+            'Data Size', 'Edition',
+            
             # Other junk
             'Unknown',  # Entities with "Unknown" type
             'Journal Abbreviation',
             'Document Element',
+        }
+        
+        # PROTECTED TYPES: Keep even if single-appearance (for Scopus enrichment)
+        self.protected_single_appearance = {
+            # Citations (will enrich with Scopus)
+            'Academic Citation', 'Citation', 'Reference',
+            
+            # Authors (will match to Scopus authors - 570 names)
+            'Author', 'Authors', 'Author(s)', 'Editor',
+            
+            # Journals (will match to Scopus journals - 119 names)
+            'Journal', 'Publication',
+            
+            # Publications (might be regulations/reports)
+            'Book', 'Book Title', 'Conference',
+            'Article Title', 'Paper Title', 'Document Title',
+            
+            # Regulatory documents (unique documents are legitimate)
+            'Regulation', 'Regulatory Document', 'Legal Document',
+            'Report', 'Policy',
         }
         
         # Statistics tracking
@@ -104,6 +133,11 @@ class PreEntityFilter:
             'empty_name': 0,
             'no_letters': 0,
             'single_mention': 0,
+            'single_appear_short': 0,  # New: single + short combo
+            'social_media_pattern': 0,  # New: @ or #
+            'latex_notation': 0,        # New: backslash
+            'math_notation_dollars': 0, # New: $...$
+            'high_special_char_density': 0,  # New: >40% special chars
             'output_entities': 0,
             'character_fixes': 0,
         }
@@ -155,6 +189,48 @@ class PreEntityFilter:
         
         if entity_type in self.banned_types:
             return False, 'banned_type'
+        
+        return True, 'OK'
+    
+    def check_pattern_bans(self, entity: Dict) -> Tuple[bool, str]:
+        """
+        Pattern-based entity bans (social media, math notation)
+        
+        Filters:
+        - Social media: Starts with @ or #
+        - LaTeX notation: Contains backslash
+        - Math notation: Starts AND ends with $
+        - High special char density: >40% special characters (with DOI exception)
+        
+        Returns:
+            (keep: bool, reason: str)
+        """
+        name = entity.get('name', '')
+        entity_type = entity.get('type', '')
+        
+        # Social media (@ or #)
+        if name.startswith('@') or name.startswith('#'):
+            return False, 'social_media_pattern'
+        
+        # LaTeX notation (backslash)
+        if '\\' in name:
+            return False, 'latex_notation'
+        
+        # Math notation: starts AND ends with $
+        if name.startswith('$') and name.endswith('$'):
+            return False, 'math_notation_dollars'
+        
+        # High special character density (>40% for strings >=3 chars)
+        # EXCEPTION: DOIs have high special chars but are valid identifiers
+        if len(name) >= 3:
+            # Check if it's a DOI pattern: starts with "10." and has slashes
+            is_doi_pattern = name.startswith('10.') and '/' in name
+            is_doi_type = entity_type in {'DOI', 'Digital Object Identifier'}
+            
+            if not (is_doi_pattern or is_doi_type):
+                special_count = sum(c in '!@#$%^&*()_+-=[]{}|;:",.<>?/\\~`' for c in name)
+                if special_count / len(name) > 0.4:
+                    return False, 'high_special_char_density'
         
         return True, 'OK'
     
@@ -217,6 +293,16 @@ class PreEntityFilter:
         """
         Check entity has sufficient mentions (optional, configurable)
         
+        Combined checks:
+        1. Single-appearance + short (<=2 chars) = automatic elimination
+        2. Single-appearance for non-protected types
+        
+        Protected types (for Scopus enrichment):
+        - Academic Citation, Citation, Reference
+        - Author, Authors, Author(s), Editor
+        - Journal, Publication
+        - Book, Conference, Regulatory documents
+        
         NOTE: Phase 1B outputs 'chunk_id' (singular), but after deduplication
         entities will have 'chunk_ids' (plural). Handle both formats.
         
@@ -237,9 +323,17 @@ class PreEntityFilter:
         if isinstance(chunk_ids, str):
             chunk_ids = [chunk_ids]
         
+        # Special case: single-appearance + short (<=2 chars) = automatic out
+        name = entity.get('name', '')
+        if len(chunk_ids) == 1 and len(name) <= 2:
+            return False, 'single_appear_short'
+        
         # Check minimum mentions
         if len(chunk_ids) < self.min_chunks:
-            return False, 'single_mention'
+            # Protected types get exception (for Scopus enrichment)
+            entity_type = entity.get('type', '')
+            if entity_type not in self.protected_single_appearance:
+                return False, 'single_mention'
         
         return True, 'OK'
     
@@ -328,6 +422,12 @@ class PreEntityFilter:
                 self.stats[reason] += 1
                 continue
             
+            # Pattern-based filters (social media, math notation, etc.)
+            keep, reason = self.check_pattern_bans(entity)
+            if not keep:
+                self.stats[reason] += 1
+                continue
+            
             # Length checks
             keep, reason = self.check_length_validity(entity)
             if not keep:
@@ -412,6 +512,10 @@ class PreEntityFilter:
         logger.info("")
         logger.info("Removal reasons:")
         logger.info(f"  Banned type:          {self.stats['banned_type']:>8,}")
+        logger.info(f"  Social media (@, #):  {self.stats['social_media_pattern']:>8,}")
+        logger.info(f"  LaTeX notation (\\):   {self.stats['latex_notation']:>8,}")
+        logger.info(f"  Math notation ($...$): {self.stats['math_notation_dollars']:>8,}")
+        logger.info(f"  High special chars:   {self.stats['high_special_char_density']:>8,}")
         logger.info(f"  Name too short:       {self.stats['name_too_short']:>8,}")
         logger.info(f"  Name too long:        {self.stats['name_too_long']:>8,}")
         logger.info(f"  Description short:    {self.stats['description_too_short']:>8,}")
@@ -419,6 +523,7 @@ class PreEntityFilter:
         logger.info(f"  Empty name:           {self.stats['empty_name']:>8,}")
         logger.info(f"  No letters in name:   {self.stats['no_letters']:>8,}")
         logger.info(f"  Single mention:       {self.stats['single_mention']:>8,}")
+        logger.info(f"  Single + short:       {self.stats['single_appear_short']:>8,}")
         logger.info("")
         logger.info(f"Character fixes:       {self.stats['character_fixes']:>8,}")
         logger.info("")
