@@ -21,8 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 from tqdm import tqdm
 
-from server_scripts.checkpoint_manager import CheckpointManager
-from server_scripts.rate_limiter import RateLimiter
+from src.utils.checkpoint_manager import CheckpointManager
+from src.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
