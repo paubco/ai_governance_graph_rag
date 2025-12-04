@@ -81,12 +81,13 @@ def load_entities_for_test(
     return sample
 
 
-def create_test_extractor(chunks_file: Path, config: dict):
+def create_test_extractor(entities_file: Path, cooccurrence_file: Path, config: dict):
     """
     Create RAKGRelationExtractor instance for testing.
     
     Args:
-        chunks_file: Path to chunks_embedded.json
+        entities_file: Path to normalized_entities.json
+        cooccurrence_file: Path to cooccurrence matrix
         config: Configuration dict
         
     Returns:
@@ -97,11 +98,12 @@ def create_test_extractor(chunks_file: Path, config: dict):
     logger.info("Initializing RAKGRelationExtractor...")
     
     extractor = RAKGRelationExtractor(
-        chunks_file=chunks_file,
-        model=config.get('model', 'mistralai/Mistral-7B-Instruct-v0.3'),
+        model_name=config.get('model', 'mistralai/Mistral-7B-Instruct-v0.3'),
         num_chunks=config.get('num_chunks', 6),
-        second_round_threshold=config.get('second_round_threshold', 0.30),
-        mmr_lambda=config.get('mmr_lambda', 0.65)
+        mmr_lambda=config.get('mmr_lambda', 0.65),
+        semantic_threshold=config.get('semantic_threshold', 0.85),
+        entity_cooccurrence_file=str(cooccurrence_file),
+        normalized_entities_file=str(entities_file)
     )
     
     logger.info("✓ Extractor initialized")
@@ -117,9 +119,11 @@ def main():
     args = parser.parse_args()
     
     # Paths (adjust to your project structure)
-    entities_file = Path("data/interim/entities/normalized_entities.json")
-    chunks_file = Path("data/interim/chunks/chunks_embedded.json")
-    output_dir = Path("data/interim/relations_test")
+    project_root = Path(__file__).parent.parent
+    entities_file = project_root / "data/interim/entities/normalized_entities.json"
+    chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
+    cooccurrence_file = project_root / "data/interim/entities/cooccurrence_semantic.json"
+    output_dir = project_root / "data/interim/relations_test"
     
     # Configuration
     config = {
@@ -153,17 +157,33 @@ def main():
         print("Please run Phase 1A-2 first to generate chunks_embedded.json")
         return 1
     
+    if not cooccurrence_file.exists():
+        logger.error(f"Co-occurrence file not found: {cooccurrence_file}")
+        print(f"\n❌ ERROR: {cooccurrence_file} not found")
+        print("Please run Phase 1D-0 first to generate cooccurrence matrices")
+        return 1
+    
     try:
         # Load entities
         entities = load_entities_for_test(entities_file, num_entities=args.entities)
         print(f"✓ Loaded {len(entities)} entities for testing\n")
         
+        # Load chunks for extraction
+        print("Loading chunks...")
+        with open(chunks_file, 'r') as f:
+            chunks = json.load(f)
+        # Convert to list if dict
+        if isinstance(chunks, dict):
+            chunks = list(chunks.values())
+        print(f"✓ Loaded {len(chunks)} chunks\n")
+        
         # Create extractor
-        extractor = create_test_extractor(chunks_file, config)
+        extractor = create_test_extractor(entities_file, cooccurrence_file, config)
         
         # Create processor
         processor = ParallelRelationProcessor(
             extractor=extractor,
+            all_chunks=chunks,
             num_workers=args.workers,
             checkpoint_freq=10,  # More frequent for testing
             rate_limit_rpm=2900,

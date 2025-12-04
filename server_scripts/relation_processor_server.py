@@ -51,6 +51,7 @@ class ParallelRelationProcessor:
     def __init__(
         self,
         extractor,                              # RAKGRelationExtractor instance
+        all_chunks: List[Dict],                 # All chunks for extraction
         num_workers: int = 40,
         checkpoint_freq: int = 100,
         rate_limit_rpm: int = 2900,
@@ -62,6 +63,7 @@ class ParallelRelationProcessor:
         
         Args:
             extractor: RAKGRelationExtractor instance (must be thread-safe)
+            all_chunks: List of all chunk dicts (passed to extractor)
             num_workers: Number of parallel threads
             checkpoint_freq: Save progress every N entities
             rate_limit_rpm: Together.ai rate limit (conservative: 2900 < 3000)
@@ -69,6 +71,7 @@ class ParallelRelationProcessor:
             config: Optional config dict for extraction parameters
         """
         self.extractor = extractor
+        self.all_chunks = all_chunks
         self.num_workers = num_workers
         self.config = config or {}
         
@@ -235,14 +238,15 @@ class ParallelRelationProcessor:
                     logger.debug(f"Rate limit wait: {wait_time:.1f}s for {entity.get('name')}")
                 
                 # Extract relations (main work)
-                extraction_result = self.extractor.extract_relations(
+                relations_list = self.extractor.extract_relations_for_entity(
                     entity,
+                    self.all_chunks,
                     **self.config  # Pass through any config params
                 )
                 
                 # Estimate cost (rough: $0.20 per 1M tokens)
                 # Assuming ~1500 tokens per batch average
-                num_batches = extraction_result.get('num_batches', 1)
+                num_batches = 1  # Default, adjust based on your logging
                 tokens_used = num_batches * 1500  # Estimate
                 cost = (tokens_used / 1_000_000) * 0.20
                 
@@ -251,9 +255,9 @@ class ParallelRelationProcessor:
                     'entity_id': entity['entity_id'],
                     'entity_name': entity['name'],
                     'entity_type': entity['type'],
-                    'relations': extraction_result['relations'],
+                    'relations': relations_list,
                     'num_batches': num_batches,
-                    'chunks_used': len(extraction_result.get('chunks', [])),
+                    'chunks_used': len(entity.get('chunk_ids', [])),
                     'cost': round(cost, 6),
                     'timestamp': datetime.now().isoformat()
                 }
