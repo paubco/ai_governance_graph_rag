@@ -48,7 +48,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from server_scripts.relation_processor_server import ParallelRelationProcessor
+from src.phase1_graph_construction.relation_processor import ParallelRelationProcessor
 
 # Configure logging
 logging.basicConfig(

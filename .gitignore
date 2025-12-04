@@ -8,6 +8,10 @@ venv/
 graphrag/
 *.egg-info/
 
+#Claude
+.claude
+.claude/*
+
 # Secrets
 .env
 *.env

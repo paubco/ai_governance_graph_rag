@@ -6,7 +6,7 @@ Stage 2: FAISSBlocker - HNSW approximate nearest neighbors (CPU)
 Stage 3: TieredThresholdFilter - Similarity-based filtering with auto-merge
 Stage 4: SameJudge - LLM verification (CPU, single-threaded)
 
-For GPU versions, use server_scripts/disambiguation_server.py
+For GPU versions, use src/phase1_graph_construction/disambiguation_processor.py
 """
 
 # Standard library
@@ -295,7 +295,7 @@ class FAISSBlocker:
     
     **NOTE**: This is the CPU-only version for local development.
     For GPU-accelerated version with multithreading, use:
-        server_scripts/disambiguation_server.py
+        src/phase1_graph_construction/disambiguation_processor.py
     
     Uses Hierarchical Navigable Small World (HNSW) graph to find similar entities
     efficiently. Reduces N² comparisons to N×k comparisons.
@@ -326,7 +326,7 @@ class FAISSBlocker:
         }
         
         logger.info("FAISSBlocker initialized (CPU version)")
-        logger.info("For GPU version, use server_scripts/disambiguation_server.py")
+        logger.info("For GPU version, use src/phase1_graph_construction/disambiguation_processor.py")
     
     def build_index(self, entities: List[Dict], ef_construction: int = 200):
         """
@@ -621,7 +621,7 @@ class SameJudge:
     
     Simple, single-threaded implementation for development/testing.
     For GPU-optimized multithreaded version, use:
-        server_scripts/disambiguation_server.py
+        src/phase1_graph_construction/disambiguation_processor.py
     
     Uses centralized prompt from src/prompts/prompts.py
     
@@ -652,7 +652,7 @@ class SameJudge:
         self.cost_per_call = 0.00003  # Approximate for 7B model
         
         logger.info("SameJudge initialized (CPU version - single-threaded)")
-        logger.info("For GPU version with 8 workers, use server_scripts/disambiguation_server.py")
+        logger.info("For GPU version with 8 workers, use src/phase1_graph_construction/disambiguation_processor.py")
     
     def verify_pair(self, entity1: Dict, entity2: Dict) -> Dict:
         """
