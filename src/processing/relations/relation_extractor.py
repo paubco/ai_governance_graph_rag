@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 """
 Module: relation_extractor.py
-Phase: 1D - Relation Extraction  
+Phase: 1D - Relation Extraction
 Purpose: RAKG-style relation extraction with MMR diversity-aware chunk selection
 Author: Pau Barba i Colomer
 Created: 2025-12-01

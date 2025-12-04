@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Parallel Entity Extraction Server Script
 Uses threading for fast parallel API calls to Together.ai

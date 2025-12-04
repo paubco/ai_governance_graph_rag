@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 SCOPUS CSV LOADER
 Loads and cleans Scopus export CSV with full metadata

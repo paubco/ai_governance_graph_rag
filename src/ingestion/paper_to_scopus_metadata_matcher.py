@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MINERU METADATA MATCHER
 Links MinerU papers to Scopus metadata using:

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Universal BGE-M3 Embedder for RAKG Pipeline
 Supports both chunk and entity embedding

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Phase 1: Graph Construction - Data Acquisition Module
 DLA Piper AI Laws of the World Scraper (SIMPLIFIED)

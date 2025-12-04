@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Thread-Safe Rate Limiter for Together.ai API (FIXED VERSION)
 

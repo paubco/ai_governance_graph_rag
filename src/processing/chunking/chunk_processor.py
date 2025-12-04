@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Chunk Processor for AI Governance GraphRAG Pipeline
 Orchestrates document loading, chunking, and storage

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Entity Disambiguation Server - GPU Version
 
@@ -6,7 +7,7 @@ Runs all 4 stages: dedup -> embed -> FAISS -> thresholds -> LLM
 
 CURRENT WORKFLOW (December 2025):
     1. Phase 1B outputs: pre_entities.json (~143k raw entities)
-    2. Phase 1C-0 filters: pre_entities_clean.json (~21k clean entities) 
+    2. Phase 1C-0 filters: pre_entities_clean.json (~21k clean entities)
     3. THIS SCRIPT processes: pre_entities_clean.json -> normalized_entities.json
     
     Default: Start from Stage 1 (dedup raw entities)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Entity Type Classification for Phase 1D-0
 Strategy: Define NON-SEMANTIC types, everything else defaults to semantic

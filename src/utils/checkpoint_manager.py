@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Checkpoint Manager for Parallel Relation Extraction
 

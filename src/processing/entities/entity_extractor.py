@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Phase 1B: Entity Extraction using RAKG methodology
 

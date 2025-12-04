@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Universal Embed Processor - Pipeline orchestration for embedding
 Handles batch processing, checkpoints, and progress tracking

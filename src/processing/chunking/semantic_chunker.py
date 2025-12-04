@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Semantic Chunker for AI Governance GraphRAG Pipeline
 Implements RAKG-style chunking with hierarchical boundaries:

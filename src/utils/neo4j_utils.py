@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from neo4j import GraphDatabase
 import ast
 

@@ -1,60 +1,68 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-venv/
-graphrag/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-#Claude
-.claude
-.claude/*
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
 
-# Secrets
+# Environment Variables
 .env
-*.env
 .env.local
-
-# Data
-data/raw/*
-data/interim*
-data/processed/*
-data/enriched/*
-
-# Keep directory structure
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/enriched/.gitkeep
-!data/interim/.gitkeep
-
-# Logs
-logs/
-*.log
-
-# Daily logs - personal notes, keep private
-docs/daily_logs/
-docs/project/
-
-# Archive
-archive/
+.env.*.local
 
 # IDE
 .vscode/
 .idea/
-.DS_Store
+*.swp
+*.swo
+*~
 
-# Jupyter
-.ipynb_checkpoints/
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+data/
+logs/
+docs/daily_logs/
+CLAUDE.MD
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Distribution / packaging
+*.egg-info/
+dist/
 
 # Testing
 .pytest_cache/
+.coverage
 htmlcov/
 
-# Backups
-*_old.py
-*_backup.py
-requirements_old.txt
-src/utils/config_old.py
-*.bak
+# Neo4j
+.neo4j/
+
+# Git
+.gitignore

@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
 """
 Phase 1D: Parallel Relation Extraction
 
-Production runner for extracting semantic relations from 76K normalized entities using 
+Production runner for extracting semantic relations from 76K normalized entities using
 parallel processing with Mistral-7B-Instruct-v0.3.
 
 Features:

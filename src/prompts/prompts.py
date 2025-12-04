@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Extraction Prompts for Phases 1B, 1C, 1D
 """

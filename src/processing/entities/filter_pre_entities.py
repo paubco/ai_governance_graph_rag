@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Pre-Entity Quality Filter (Stage 0) - Updated with Academic Type Normalization
 Location: scripts/filter_pre_entities.py

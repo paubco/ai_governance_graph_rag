@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Phase 1D-0: Entity Co-occurrence Matrix Construction (Typed Matrices)
 
