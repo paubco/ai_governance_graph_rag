@@ -977,7 +977,8 @@ class RAKGRelationExtractor:
     def two_stage_mmr_select(
         self,
         entity: Dict,
-        candidate_chunks: List[Dict]
+        candidate_chunks: List[Dict],
+        cooccurrence_matrix: Optional[Dict] = None
     ) -> List[Dict]:
         """
         Two-stage chunk selection: semantic diversity + entity coverage
@@ -1015,8 +1016,11 @@ class RAKGRelationExtractor:
             k=min(40, len(candidate_chunks))
         )
         
+        # Use provided matrix or fall back to instance variable
+        matrix = cooccurrence_matrix if cooccurrence_matrix is not None else self.entity_cooccurrence
+        
         # If no co-occurrence data, fall back to taking first 20
-        if not self.entity_cooccurrence:
+        if not matrix:
             logger.debug(f"  No co-occurrence data, using first {self.num_chunks} from MMR")
             return semantic_diverse[:self.num_chunks]
         
@@ -1031,7 +1035,7 @@ class RAKGRelationExtractor:
         chunk_scores = []
         for chunk in semantic_diverse:
             chunk_id = chunk.get('chunk_id', chunk.get('id', ''))
-            cooccurring = set(self.entity_cooccurrence.get(chunk_id, []))
+            cooccurring = set(matrix.get(chunk_id, []))
             
             # Remove target entity
             cooccurring.discard(entity_name)
@@ -1396,19 +1400,14 @@ class RAKGRelationExtractor:
             # Use appropriate matrix based on strategy
             appropriate_matrix = self._get_appropriate_matrix(strategy)
             
-            # Temporarily swap matrix for two-stage MMR
-            original_matrix = self.entity_cooccurrence
-            self.entity_cooccurrence = appropriate_matrix
-            
             logger.info(f"  Two-stage MMR selection (matrix: {strategy})...")
             start_time = time.time()
-            selected_chunks = self.two_stage_mmr_select(entity, candidates)
+            selected_chunks = self.two_stage_mmr_select(
+                entity, 
+                candidates,
+                cooccurrence_matrix=appropriate_matrix
+            )
             logger.info(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
-            
-            # Restore original matrix
-            self.entity_cooccurrence = original_matrix
-            # Restore original matrix
-            self.entity_cooccurrence = original_matrix
             
             # Step 2.5: Check for second round (Track 1: Semantic only)
             second_round_chunks = []
@@ -1427,10 +1426,11 @@ class RAKGRelationExtractor:
                     if remaining_candidates:
                         logger.info(f"  Selecting second batch from {len(remaining_candidates)} remaining candidates...")
                         
-                        # Swap matrix again for second MMR
-                        self.entity_cooccurrence = appropriate_matrix
-                        second_round_chunks = self.two_stage_mmr_select(entity, remaining_candidates)
-                        self.entity_cooccurrence = original_matrix
+                        second_round_chunks = self.two_stage_mmr_select(
+                            entity,
+                            remaining_candidates,
+                            cooccurrence_matrix=appropriate_matrix
+                        )
                         
                         logger.info(f"    ✓ Second round: {len(second_round_chunks)} chunks")
                 else:
