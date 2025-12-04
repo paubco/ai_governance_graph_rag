@@ -29,7 +29,7 @@ import time
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.phase1_graph_construction.entity_extractor import RAKGEntityExtractor
+from src.processing.entities.entity_extractor import RAKGEntityExtractor
 from dotenv import load_dotenv
 import json
 

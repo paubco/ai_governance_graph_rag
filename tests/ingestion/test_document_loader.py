@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Add src to path so we can import document_loader
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.phase0_data_ingestion.document_loader import DocumentLoader, Document
+from src.ingestion.document_loader import DocumentLoader, Document
 
 def test_single_regulation():
     """Test loading a single regulation."""

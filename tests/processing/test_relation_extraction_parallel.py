@@ -21,7 +21,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.phase1_graph_construction.relation_processor import ParallelRelationProcessor
+from src.processing.relations.relation_processor import ParallelRelationProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -89,7 +89,7 @@ def create_test_extractor(entities_file: Path, cooccurrence_file: Path, config: 
     Returns:
         RAKGRelationExtractor instance
     """
-    from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
+    from src.processing.relations.relation_extractor import RAKGRelationExtractor
     
     logger.info("Initializing RAKGRelationExtractor...")
     

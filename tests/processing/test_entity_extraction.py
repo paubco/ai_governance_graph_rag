@@ -82,7 +82,7 @@ def test_extraction(
         api_key: Together.ai API key
         output_file: Where to save results (optional)
     """
-    from src.phase1_graph_construction.entity_extractor import RAKGEntityExtractor
+    from src.processing.entities.entity_extractor import RAKGEntityExtractor
     
     print(f"\n{'='*60}")
     print("ENTITY EXTRACTION TEST")

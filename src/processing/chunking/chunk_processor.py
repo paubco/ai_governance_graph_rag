@@ -15,7 +15,7 @@ import logging
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.phase1_graph_construction.semantic_chunker import SemanticChunker, Chunk
+from src.processing.chunking.semantic_chunker import SemanticChunker, Chunk
 
 # Setup logging
 logging.basicConfig(
@@ -216,12 +216,12 @@ def main():
     from pathlib import Path
     
     # Import DocumentLoader (adjust path as needed)
-    # Assuming you have: src/phase0_data_ingestion/document_loader.py
+    # Assuming you have: src/ingestion/document_loader.py
     project_root = Path(__file__).parent.parent.parent
-    sys.path.insert(0, str(project_root / 'src' / 'phase0_data_ingestion'))
+    sys.path.insert(0, str(project_root / 'src' / 'ingestion'))
     
     try:
-        from src.phase0_data_ingestion.document_loader import DocumentLoader
+        from src.ingestion.document_loader import DocumentLoader
         
         # Initialize
         loader = DocumentLoader(year='2023')
@@ -248,7 +248,7 @@ def main():
         
     except ImportError as e:
         print(f"Error importing DocumentLoader: {e}")
-        print("Make sure document_loader.py exists in src/phase0_data_ingestion/")
+        print("Make sure document_loader.py exists in src/ingestion/")
         return
     except Exception as e:
         print(f"Error: {e}")

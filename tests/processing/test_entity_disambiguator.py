@@ -16,7 +16,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.phase1_graph_construction.entity_disambiguator import (
+from src.processing.entities.entity_disambiguator import (
     ExactDeduplicator,
     FAISSBlocker,
     TieredThresholdFilter,

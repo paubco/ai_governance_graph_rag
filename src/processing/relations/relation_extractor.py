@@ -12,7 +12,7 @@ Dependencies:
     - json: JSON parsing
 
 Usage:
-    from src.phase1_graph_construction.relation_extractor import RAKGRelationExtractor
+    from src.processing.relations.relation_extractor import RAKGRelationExtractor
     
     extractor = RAKGRelationExtractor(
         model_name="mistralai/Mistral-7B-Instruct-v0.3",

@@ -65,7 +65,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import local modules
-from src.phase1_graph_construction.entity_disambiguator import (
+from src.processing.entities.entity_disambiguator import (
     ExactDeduplicator,
     TieredThresholdFilter,
     normalize_key
@@ -222,7 +222,7 @@ class FAISSBlockerGPU:
             List of pair dicts with entity1_key, entity2_key, similarity
         """
         import faiss
-        from src.phase1_graph_construction.entity_disambiguator import get_entity_key
+        from src.processing.entities.entity_disambiguator import get_entity_key
         
         # Get embeddings for this batch
         batch_embeddings = np.array([entities[i]['embedding'] for i in batch_indices]).astype('float32')
@@ -537,7 +537,7 @@ class SameJudgeGPU:
         Returns:
             List of pair dicts confirmed as matches
         """
-        from src.phase1_graph_construction.entity_disambiguator import build_entity_map
+        from src.processing.entities.entity_disambiguator import build_entity_map
         
         # Build entity map once for all workers (read-only, thread-safe)
         entity_map = build_entity_map(entities)
@@ -912,7 +912,7 @@ STAGE CONTROL:
         
         # Update uncertain pairs with canonical entity keys
         # Build entity map for validation (entities may have been removed in merging)
-        from src.phase1_graph_construction.entity_disambiguator import build_entity_map
+        from src.processing.entities.entity_disambiguator import build_entity_map
         entity_map = build_entity_map(entities)
         
         updated_uncertain = []
@@ -1121,7 +1121,7 @@ Examples:
 
     # RECOMMENDED: Full pipeline from filtered entities (Phase 1C-0 output)
     export TOGETHER_API_KEY="your-key"
-    nohup python src/phase1_graph_construction/disambiguation_processor.py \\
+    nohup python src/processing/entities/disambiguation_processor.py \\
         --input data/interim/entities/pre_entities_clean.json \\
         --output data/interim/entities/normalized_entities.json \\
         --start-from-stage 1 \\
@@ -1131,14 +1131,14 @@ Examples:
         > logs/disambiguation.log 2>&1 &
 
     # Resume from embedded entities (if Stage 1-1.5 already done)
-    python src/phase1_graph_construction/disambiguation_processor.py \\
+    python src/processing/entities/disambiguation_processor.py \\
         --input data/interim/entities/stage1_deduplicated_embedded.json \\
         --start-from-stage 2 \\
         --faiss-workers 4 \\
         --samejudge-workers 8
 
     # Debug: Run only FAISS blocking (stop before expensive LLM)
-    python src/phase1_graph_construction/disambiguation_processor.py \\
+    python src/processing/entities/disambiguation_processor.py \\
         --input data/interim/entities/pre_entities_clean.json \\
         --start-from-stage 1 \\
         --stop-at-stage 2 \\

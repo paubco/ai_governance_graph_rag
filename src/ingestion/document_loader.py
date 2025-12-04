@@ -499,7 +499,7 @@ def main():
     Demo script to test the document loader.
     
     Run with:
-        python src/phase0_data_ingestion/document_loader.py
+        python src/ingestion/document_loader.py
     """
     # Initialize loader (default 2023)
     loader = DocumentLoader()
