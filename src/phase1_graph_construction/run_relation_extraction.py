@@ -22,7 +22,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from server_scripts.relation_processor_server import ParallelRelationProcessor
 
@@ -96,7 +96,7 @@ def main():
     args = parser.parse_args()
     
     # Paths
-    project_root = Path(__file__).parent.parent
+    project_root = Path(__file__).parent.parent.parent
     entities_file = project_root / "data/interim/entities/normalized_entities.json"
     chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
     cooccurrence_file = project_root / "data/interim/entities/cooccurrence_semantic.json"
