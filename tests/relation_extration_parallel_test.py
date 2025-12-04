@@ -117,10 +117,9 @@ def main():
     args = parser.parse_args()
     
     # Paths (adjust to your project structure)
-    project_root = Path(__file__).parent
-    entities_file = "data/interim/entities/normalized_entities.json"
-    chunks_file = "data/interim/chunks/chunks_embedded.json"
-    output_dir = "data/interim/relations_test"
+    entities_file = Path("data/interim/entities/normalized_entities.json")
+    chunks_file = Path("data/interim/chunks/chunks_embedded.json")
+    output_dir = Path("data/interim/relations_test")
     
     # Configuration
     config = {
