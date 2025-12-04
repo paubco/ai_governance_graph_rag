@@ -166,7 +166,9 @@ class ParallelRelationProcessor:
                             self.checkpoint_manager.update_progress(
                                 cost=result['cost'],
                                 success=True,
-                                total_entities=len(remaining)
+                                total_entities=len(remaining),
+                                retries=result.get('retry_attempts', 0),
+                                had_second_batch=(result.get('num_batches', 1) > 1)
                             )
                         else:  # Failed after retries
                             self.checkpoint_manager.update_progress(
@@ -201,6 +203,8 @@ class ParallelRelationProcessor:
         print(f"Completed: {stats['completed']}")
         print(f"Failed: {stats['failed']}")
         print(f"Success rate: {100 * stats['completed'] / stats['total_processed']:.1f}%")
+        print(f"Retry attempts: {stats['retry_attempts']}")
+        print(f"Second batches: {stats['second_batch_count']}")
         print(f"Total cost: ${stats['cost_usd']:.2f}")
         print(f"Elapsed time: {elapsed/3600:.1f} hours ({elapsed/60:.1f} minutes)")
         print(f"Avg per entity: {stats['elapsed_sec']/stats['total_processed']:.1f}s")
@@ -258,6 +262,7 @@ class ParallelRelationProcessor:
                     'num_batches': num_batches,
                     'chunks_used': len(entity.get('chunk_ids', [])),
                     'cost': round(cost, 6),
+                    'retry_attempts': attempt,  # Track retry count
                     'timestamp': datetime.now().isoformat()
                 }
                 

@@ -69,6 +69,8 @@ class CheckpointManager:
         self.completed_count = 0
         self.failed_count = 0
         self.total_cost = 0.0
+        self.retry_count = 0  # Total retry attempts
+        self.second_batch_count = 0  # Entities that triggered second batch
         self.start_time = None
         self.checkpoint_counter = 0
     
@@ -125,7 +127,9 @@ class CheckpointManager:
         self,
         cost: float,
         success: bool = True,
-        total_entities: Optional[int] = None
+        total_entities: Optional[int] = None,
+        retries: int = 0,
+        had_second_batch: bool = False
     ):
         """
         Thread-safe progress counter update.
@@ -134,6 +138,8 @@ class CheckpointManager:
             cost: API cost for this entity (USD)
             success: True if extraction succeeded
             total_entities: Total entities to process (for ETA)
+            retries: Number of retry attempts for this entity
+            had_second_batch: Whether entity triggered second batch
         """
         with self.progress_lock:
             if success:
@@ -141,6 +147,10 @@ class CheckpointManager:
                 self.total_cost += cost
             else:
                 self.failed_count += 1
+            
+            self.retry_count += retries
+            if had_second_batch:
+                self.second_batch_count += 1
             
             # Checkpoint at intervals
             total = self.completed_count + self.failed_count
@@ -174,6 +184,8 @@ class CheckpointManager:
             'failed_entities': self.failed_count,
             'success_rate_pct': round(100 * self.completed_count / total_processed, 2) if total_processed > 0 else 0,
             'total_cost_usd': round(self.total_cost, 4),
+            'retry_attempts': self.retry_count,
+            'second_batch_count': self.second_batch_count,
             'avg_time_per_entity_sec': round(avg_time, 2),
             'elapsed_time_sec': round(elapsed, 1),
             'eta_remaining_sec': round(eta_sec, 1) if eta_sec else None
@@ -199,6 +211,8 @@ class CheckpointManager:
             f"Checkpoint {self.checkpoint_counter}: "
             f"{self.completed_count} completed, "
             f"{self.failed_count} failed, "
+            f"{self.retry_count} retries, "
+            f"{self.second_batch_count} second batches, "
             f"${self.total_cost:.2f} cost"
         )
     
@@ -275,6 +289,8 @@ class CheckpointManager:
                 'failed': self.failed_count,
                 'total_processed': total_processed,
                 'cost_usd': round(self.total_cost, 4),
+                'retry_attempts': self.retry_count,
+                'second_batch_count': self.second_batch_count,
                 'elapsed_sec': round(elapsed, 1)
             }
 

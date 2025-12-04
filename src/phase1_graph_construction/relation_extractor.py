@@ -516,7 +516,8 @@ class RAKGRelationExtractor:
         temperature: float = 0.0,
         max_tokens: int = 16000,
         entity_cooccurrence_file: str = None,
-        normalized_entities_file: str = None
+        normalized_entities_file: str = None,
+        debug_mode: bool = False
     ):
         """
         Initialize RAKG Relation Extractor
@@ -532,8 +533,10 @@ class RAKGRelationExtractor:
             max_tokens: Max LLM response tokens (default: 16000, accommodates 100-150 relations per batch)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
+            debug_mode: Enable prompt/response saving to log files (default: False)
         """
         self.model_name = model_name
+        self.debug_mode = debug_mode
         
         # API key: use provided, or load from .env
         if api_key is None:
@@ -1171,20 +1174,22 @@ class RAKGRelationExtractor:
                 return {"relations": []}
             
             # === DEBUG: Save full response and analyze ===
-            save_response_to_file(
-                response_text=raw_text,
-                entity_name=entity_name,
-                batch_num=batch_num,
-                num_entities=num_entities
-            )
-            
-            # Quick analysis
-            analysis = analyze_response_verbosity(raw_text)
-            logger.info(f"    📊 Analysis: {analysis['relation_count']} apparent relations, "
-                       f"{len(analysis['unique_predicates'])} unique predicates")
-            if analysis['unique_predicates']:
-                sample_preds = list(analysis['unique_predicates'])[:10]
-                logger.info(f"    📝 Sample predicates: {sample_preds}")
+            if self.debug_mode:
+                save_response_to_file(
+                    response_text=raw_text,
+                    entity_name=entity_name,
+                    batch_num=batch_num,
+                    num_entities=num_entities
+                )
+                
+                # Quick analysis
+                analysis = analyze_response_verbosity(raw_text)
+                logger.info(f"    📄 Response saved: {entity_name}_batch{batch_num}_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+                logger.info(f"    📊 Analysis: {analysis['relation_count']} apparent relations, "
+                           f"{len(analysis['unique_predicates'])} unique predicates")
+                if analysis['unique_predicates']:
+                    sample_preds = list(analysis['unique_predicates'])[:10]
+                    logger.info(f"    📝 Sample predicates: {sample_preds}")
             # === End debug section ===
             
             # Log response details
@@ -1375,22 +1380,22 @@ class RAKGRelationExtractor:
         """
         entity_name = entity.get('name', 'Unknown')
         entity_type = entity.get('type', 'Unknown')
-        logger.info(f"\nEntity: {entity_name} [{entity_type}]")
+        logger.debug(f"\nEntity: {entity_name} [{entity_type}]")
         
         try:
             # Step 0: Classify entity strategy
             strategy = self._classify_entity(entity)
-            logger.info(f"  Strategy: {strategy.upper()}")
+            logger.debug(f"  Strategy: {strategy.upper()}")
             
             if strategy == 'skip':
-                logger.info(f"  Skipping entity (skip type)")
+                logger.debug(f"  Skipping entity (skip type)")
                 return []
             
             # Step 1: Gather candidates
-            logger.info(f"  Gathering candidates...")
+            logger.debug(f"  Gathering candidates...")
             start_time = time.time()
             candidates = self.gather_candidate_chunks(entity, all_chunks)
-            logger.info(f"    ✓ Gathered {len(candidates)} candidates ({time.time() - start_time:.2f}s)")
+            logger.debug(f"    ✓ Gathered {len(candidates)} candidates ({time.time() - start_time:.2f}s)")
             
             if not candidates:
                 logger.warning(f"  ⚠️ No candidates found for {entity_name}")
@@ -1400,14 +1405,14 @@ class RAKGRelationExtractor:
             # Use appropriate matrix based on strategy
             appropriate_matrix = self._get_appropriate_matrix(strategy)
             
-            logger.info(f"  Two-stage MMR selection (matrix: {strategy})...")
+            logger.debug(f"  Two-stage MMR selection (matrix: {strategy})...")
             start_time = time.time()
             selected_chunks = self.two_stage_mmr_select(
                 entity, 
                 candidates,
                 cooccurrence_matrix=appropriate_matrix
             )
-            logger.info(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
+            logger.debug(f"    ✓ Selected {len(selected_chunks)} chunks ({time.time() - start_time:.2f}s)")
             
             # Step 2.5: Check for second round (Track 1: Semantic only)
             second_round_chunks = []
@@ -1417,14 +1422,14 @@ class RAKGRelationExtractor:
                 )
                 
                 if should_do_second:
-                    logger.info(f"  Second round triggered (distance: {distance:.3f} > 0.25)")
+                    logger.debug(f"  Second round triggered (distance: {distance:.3f} > 0.25)")
                     
                     # Get remaining candidates
                     selected_ids = set(c.get('chunk_id', c.get('id', '')) for c in selected_chunks)
                     remaining_candidates = [c for c in candidates if c.get('chunk_id', c.get('id', '')) not in selected_ids]
                     
                     if remaining_candidates:
-                        logger.info(f"  Selecting second batch from {len(remaining_candidates)} remaining candidates...")
+                        logger.debug(f"  Selecting second batch from {len(remaining_candidates)} remaining candidates...")
                         
                         second_round_chunks = self.two_stage_mmr_select(
                             entity,
@@ -1432,7 +1437,7 @@ class RAKGRelationExtractor:
                             cooccurrence_matrix=appropriate_matrix
                         )
                         
-                        logger.info(f"    ✓ Second round: {len(second_round_chunks)} chunks")
+                        logger.debug(f"    ✓ Second round: {len(second_round_chunks)} chunks")
                 else:
                     logger.debug(f"    No second round (distance: {distance:.3f} <= 0.25)")
             
@@ -1441,23 +1446,23 @@ class RAKGRelationExtractor:
             
             if strategy == 'semantic':
                 # Track 1: Full OPENIE extraction
-                logger.info(f"  Track 1: Semantic OPENIE extraction...")
+                logger.debug(f"  Track 1: Semantic OPENIE extraction...")
                 
                 # First batch - get entities from first batch chunks only
                 detected_entities_batch1 = self._get_detected_entities_from_chunks(
                     selected_chunks, entity_name, appropriate_matrix
                 )
-                logger.info(f"    Batch 1: Detected {len(detected_entities_batch1)} co-occurring entities")
+                logger.debug(f"    Batch 1: Detected {len(detected_entities_batch1)} co-occurring entities")
                 
-                logger.info(f"  Building prompt (batch 1: {len(selected_chunks)} chunks)...")
+                logger.debug(f"  Building prompt (batch 1: {len(selected_chunks)} chunks)...")
                 prompt = build_relation_extraction_prompt(entity, selected_chunks, detected_entities_batch1)
                 should_proceed, token_estimate = validate_prompt_size(prompt, entity_name)
                 
                 if should_proceed:
-                    if save_prompt:
+                    if self.debug_mode:
                         save_prompt_to_file(prompt, entity_name, token_estimate)
                     
-                    logger.info(f"  Calling LLM batch 1 (~{token_estimate} tokens)...")
+                    logger.debug(f"  Calling LLM batch 1 (~{token_estimate} tokens)...")
                     start_time = time.time()
                     response = self.extract_relations_llm(
                         prompt,
@@ -1465,25 +1470,25 @@ class RAKGRelationExtractor:
                         batch_num=1,
                         num_entities=len(detected_entities_batch1)
                     )
-                    logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
+                    logger.debug(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
                     
                     batch1_relations = response.get('relations', [])
                     all_relations.extend(batch1_relations)
-                    logger.info(f"    Batch 1: {len(batch1_relations)} relations")
+                    logger.debug(f"    Batch 1: {len(batch1_relations)} relations")
                 
                 # Second batch (if triggered) - get entities from second batch chunks only
                 if second_round_chunks:
                     detected_entities_batch2 = self._get_detected_entities_from_chunks(
                         second_round_chunks, entity_name, appropriate_matrix
                     )
-                    logger.info(f"    Batch 2: Detected {len(detected_entities_batch2)} co-occurring entities")
+                    logger.debug(f"    Batch 2: Detected {len(detected_entities_batch2)} co-occurring entities")
                     
                     logger.info(f"  Building prompt (batch 2: {len(second_round_chunks)} chunks)...")
                     prompt2 = build_relation_extraction_prompt(entity, second_round_chunks, detected_entities_batch2)
                     should_proceed2, token_estimate2 = validate_prompt_size(prompt2, entity_name)
                     
                     if should_proceed2:
-                        logger.info(f"  Calling LLM batch 2 (~{token_estimate2} tokens)...")
+                        logger.debug(f"  Calling LLM batch 2 (~{token_estimate2} tokens)...")
                         start_time = time.time()
                         response2 = self.extract_relations_llm(
                             prompt2,
@@ -1491,15 +1496,15 @@ class RAKGRelationExtractor:
                             batch_num=2,
                             num_entities=len(detected_entities_batch2)
                         )
-                        logger.info(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
+                        logger.debug(f"    ✓ LLM responded ({time.time() - start_time:.2f}s)")
                         
                         batch2_relations = response2.get('relations', [])
                         all_relations.extend(batch2_relations)
-                        logger.info(f"    Batch 2: {len(batch2_relations)} relations")
+                        logger.debug(f"    Batch 2: {len(batch2_relations)} relations")
                 
             elif strategy == 'academic':
                 # Track 2: Subject-constrained extraction (concepts only)
-                logger.info(f"  Track 2: Academic extraction (subject-constrained)...")
+                logger.debug(f"  Track 2: Academic extraction (subject-constrained)...")
                 
                 # Get detected entities from selected chunks
                 detected_entities = self._get_detected_entities_from_chunks(
@@ -1508,7 +1513,7 @@ class RAKGRelationExtractor:
                 
                 # Filter detected entities to concepts only
                 detected_concepts = [e for e in detected_entities if 'concept' in e.get('type', '').lower()]
-                logger.info(f"    Detected {len(detected_entities)} entities, {len(detected_concepts)} concepts")
+                logger.debug(f"    Detected {len(detected_entities)} entities, {len(detected_concepts)} concepts")
                 
                 # Single batch only for academic entities
                 all_selected = selected_chunks
@@ -1527,9 +1532,9 @@ class RAKGRelationExtractor:
                     deduplicated.append(relation)
             
             if len(deduplicated) == 0:
-                logger.warning(f"  ⚠️ No relations extracted")
+                logger.debug(f"  ⚠️ No relations extracted")
             else:
-                logger.info(f"  ✓ Extracted {len(deduplicated)} unique relations (from {len(all_relations)} total)")
+                logger.debug(f"  ✓ Extracted {len(deduplicated)} unique relations (from {len(all_relations)} total)")
             
             return deduplicated
             

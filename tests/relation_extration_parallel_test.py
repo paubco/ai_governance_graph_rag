@@ -8,7 +8,7 @@ Author: Pau Barba i Colomer
 Date: Dec 4, 2025
 
 Usage:
-    python test_parallel_100.py [--workers N] [--resume]
+    python test_parallel_100.py [--workers N] [--resume] [--debug]
 """
 
 import sys
@@ -47,29 +47,25 @@ def load_entities_for_test(
         num_entities: Number to load (default 100)
         
     Returns:
-        List of entity dicts
+        List of entity dicts with entity_id added
     """
     logger.info(f"Loading {num_entities} entities from {entities_file}")
     
     with open(entities_file, 'r', encoding='utf-8') as f:
         all_entities = json.load(f)
     
-    # Convert dict to list if needed
+    # Convert to list if dict
     if isinstance(all_entities, dict):
-        entities_list = [
-            {
-                'entity_id': k,
-                'name': v['name'],
-                'type': v['type'],
-                **v  # Include all other fields
-            }
-            for k, v in all_entities.items()
-        ]
+        entities_list = list(all_entities.values())
     else:
         entities_list = all_entities
     
-    # Get diverse sample (not just first 100)
-    # Mix of high-mention and low-mention entities
+    # Add entity_id to each entity (use name as unique ID)
+    for entity in entities_list:
+        if 'entity_id' not in entity:
+            entity['entity_id'] = entity['name']
+    
+    # Get diverse sample
     if len(entities_list) > num_entities:
         step = len(entities_list) // num_entities
         sample = entities_list[::step][:num_entities]
@@ -103,7 +99,8 @@ def create_test_extractor(entities_file: Path, cooccurrence_file: Path, config: 
         mmr_lambda=config.get('mmr_lambda', 0.65),
         semantic_threshold=config.get('semantic_threshold', 0.85),
         entity_cooccurrence_file=str(cooccurrence_file),
-        normalized_entities_file=str(entities_file)
+        normalized_entities_file=str(entities_file),
+        debug_mode=config.get('debug_mode', False)
     )
     
     logger.info("✓ Extractor initialized")
@@ -116,9 +113,10 @@ def main():
     parser.add_argument('--workers', type=int, default=40, help='Number of parallel workers')
     parser.add_argument('--resume', action='store_true', help='Resume from checkpoint')
     parser.add_argument('--entities', type=int, default=100, help='Number of entities to test')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode (save prompts/responses)')
     args = parser.parse_args()
     
-    # Paths (adjust to your project structure)
+    # Paths
     project_root = Path(__file__).parent.parent
     entities_file = project_root / "data/interim/entities/normalized_entities.json"
     chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
@@ -128,10 +126,11 @@ def main():
     # Configuration
     config = {
         'model': 'mistralai/Mistral-7B-Instruct-v0.3',
-        'num_chunks': 6,  # Chunks per batch
-        'second_round_threshold': 0.30,  # Centroid distance for second batch
+        'num_chunks': 6,
+        'second_round_threshold': 0.35,
         'mmr_lambda': 0.65,
-        'semantic_threshold': 0.85
+        'semantic_threshold': 0.85,
+        'debug_mode': args.debug
     }
     
     print("\n" + "="*80)
@@ -140,6 +139,7 @@ def main():
     print(f"Workers: {args.workers}")
     print(f"Entities: {args.entities}")
     print(f"Resume: {args.resume}")
+    print(f"Debug mode: {args.debug}")
     print(f"Config: {config}")
     print(f"Output: {output_dir}")
     print("="*80 + "\n")
@@ -168,11 +168,10 @@ def main():
         entities = load_entities_for_test(entities_file, num_entities=args.entities)
         print(f"✓ Loaded {len(entities)} entities for testing\n")
         
-        # Load chunks for extraction
+        # Load chunks
         print("Loading chunks...")
         with open(chunks_file, 'r') as f:
             chunks = json.load(f)
-        # Convert to list if dict
         if isinstance(chunks, dict):
             chunks = list(chunks.values())
         print(f"✓ Loaded {len(chunks)} chunks\n")
@@ -185,7 +184,7 @@ def main():
             extractor=extractor,
             all_chunks=chunks,
             num_workers=args.workers,
-            checkpoint_freq=10,  # More frequent for testing
+            checkpoint_freq=10,
             rate_limit_rpm=2900,
             output_dir=output_dir,
             config=config
@@ -194,7 +193,7 @@ def main():
         # Cost estimate
         estimate = processor.estimate_cost_and_time(
             num_entities=len(entities),
-            second_round_rate=0.30
+            second_round_rate=0.35
         )
         print("\n📊 Cost & Time Estimate:")
         for key, value in estimate.items():
@@ -239,15 +238,16 @@ def main():
             print(f"\nOutput file: {output_file}")
             
             # Sample results
-            print(f"\n📝 Sample relations (first entity):")
-            sample = results[0]
-            print(f"  Entity: {sample['entity_name']} [{sample['entity_type']}]")
-            print(f"  Relations: {len(sample['relations'])}")
-            print(f"  Batches: {sample['num_batches']}")
-            for i, rel in enumerate(sample['relations'][:3], 1):
-                print(f"    {i}. ({rel['subject']}, {rel['predicate']}, {rel['object']})")
-            if len(sample['relations']) > 3:
-                print(f"    ... and {len(sample['relations'])-3} more")
+            if results:
+                print(f"\n🔍 Sample relations (first entity):")
+                sample = results[0]
+                print(f"  Entity: {sample['entity_name']} [{sample['entity_type']}]")
+                print(f"  Relations: {len(sample['relations'])}")
+                print(f"  Batches: {sample['num_batches']}")
+                for i, rel in enumerate(sample['relations'][:3], 1):
+                    print(f"    {i}. ({rel['subject']}, {rel['predicate']}, {rel['object']})")
+                if len(sample['relations']) > 3:
+                    print(f"    ... and {len(sample['relations'])-3} more")
         
         print("="*80 + "\n")
         
