@@ -96,11 +96,11 @@ def main():
     args = parser.parse_args()
     
     # Paths
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).parent.parent
     entities_file = project_root / "data/interim/entities/normalized_entities.json"
     chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
     cooccurrence_file = project_root / "data/interim/entities/cooccurrence_semantic.json"
-    output_dir = project_root / "data/interim/relations"
+    output_dir = project_root / "data/interim/relations_test"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Configuration
