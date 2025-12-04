@@ -118,9 +118,9 @@ def main():
     
     # Paths (adjust to your project structure)
     project_root = Path(__file__).parent
-    entities_file = project_root / "data/interim/entities/normalized_entities.json"
-    chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
-    output_dir = project_root / "data/interim/relations_test"
+    entities_file = "data/interim/entities/normalized_entities.json"
+    chunks_file = "data/interim/chunks/chunks_embedded.json"
+    output_dir = "data/interim/relations_test"
     
     # Configuration
     config = {
