@@ -21,8 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 from tqdm import tqdm
 
-from src.utils.checkpoint_manager import CheckpointManager
-from src.utils.rate_limiter import RateLimiter
+from server_scripts.checkpoint_manager import CheckpointManager
+from server_scripts.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -240,8 +240,7 @@ class ParallelRelationProcessor:
                 # Extract relations (main work)
                 relations_list = self.extractor.extract_relations_for_entity(
                     entity,
-                    self.all_chunks,
-                    **self.config  # Pass through any config params
+                    self.all_chunks
                 )
                 
                 # Estimate cost (rough: $0.20 per 1M tokens)
