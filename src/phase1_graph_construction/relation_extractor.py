@@ -515,6 +515,7 @@ class RAKGRelationExtractor:
         candidate_pool_size: int = DEFAULT_CANDIDATE_POOL,
         temperature: float = 0.0,
         max_tokens: int = 16000,
+        second_round_threshold: float = 0.25,
         entity_cooccurrence_file: str = None,
         normalized_entities_file: str = None,
         debug_mode: bool = False
@@ -531,6 +532,7 @@ class RAKGRelationExtractor:
             candidate_pool_size: Pre-filter pool size (default: 200)
             temperature: LLM temperature (default: 0.0 for deterministic)
             max_tokens: Max LLM response tokens (default: 16000, accommodates 100-150 relations per batch)
+            second_round_threshold: Distance threshold for triggering second batch (default: 0.25)
             entity_cooccurrence_file: Path to entity co-occurrence JSON (optional)
             normalized_entities_file: Path to normalized entities JSON (optional)
             debug_mode: Enable prompt/response saving to log files (default: False)
@@ -555,6 +557,7 @@ class RAKGRelationExtractor:
         self.candidate_pool_size = candidate_pool_size
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.second_round_threshold = second_round_threshold
         
         # Initialize Together client
         self.client = Together(api_key=self.api_key)
@@ -1389,7 +1392,7 @@ class RAKGRelationExtractor:
             
             if strategy == 'skip':
                 logger.debug(f"  Skipping entity (skip type)")
-                return []
+                return {'relations': [], 'num_batches': 0, 'chunks_used': 0}
             
             # Step 1: Gather candidates
             logger.debug(f"  Gathering candidates...")
@@ -1399,7 +1402,7 @@ class RAKGRelationExtractor:
             
             if not candidates:
                 logger.warning(f"  ⚠️ No candidates found for {entity_name}")
-                return []
+                return {'relations': [], 'num_batches': 0, 'chunks_used': 0}
             
             # Step 2: Two-stage MMR selection (semantic + entity diversity)
             # Use appropriate matrix based on strategy
@@ -1418,11 +1421,11 @@ class RAKGRelationExtractor:
             second_round_chunks = []
             if strategy == 'semantic':
                 should_do_second, distance = self._should_do_second_round(
-                    entity, selected_chunks, threshold=0.25
+                    entity, selected_chunks, threshold=self.second_round_threshold
                 )
                 
                 if should_do_second:
-                    logger.debug(f"  Second round triggered (distance: {distance:.3f} > 0.25)")
+                    logger.debug(f"  Second round triggered (distance: {distance:.3f} > {self.second_round_threshold})")
                     
                     # Get remaining candidates
                     selected_ids = set(c.get('chunk_id', c.get('id', '')) for c in selected_chunks)
@@ -1439,7 +1442,7 @@ class RAKGRelationExtractor:
                         
                         logger.debug(f"    ✓ Second round: {len(second_round_chunks)} chunks")
                 else:
-                    logger.debug(f"    No second round (distance: {distance:.3f} <= 0.25)")
+                    logger.debug(f"    No second round (distance: {distance:.3f} <= {self.second_round_threshold})")
             
             # Step 3: Extract relations based on strategy
             all_relations = []
@@ -1536,10 +1539,22 @@ class RAKGRelationExtractor:
             else:
                 logger.debug(f"  ✓ Extracted {len(deduplicated)} unique relations (from {len(all_relations)} total)")
             
-            return deduplicated
+            # Return dict with metadata
+            num_batches = 2 if len(second_round_chunks) > 0 else 1
+            total_chunks = len(selected_chunks) + len(second_round_chunks)
+            
+            return {
+                'relations': deduplicated,
+                'num_batches': num_batches,
+                'chunks_used': total_chunks
+            }
             
         except Exception as e:
             logger.error(f"  ✗ Failed to extract relations for {entity_name}: {e}")
             import traceback
             logger.debug(f"  Traceback: {traceback.format_exc()}")
-            return []
+            return {
+                'relations': [],
+                'num_batches': 0,
+                'chunks_used': 0
+            }

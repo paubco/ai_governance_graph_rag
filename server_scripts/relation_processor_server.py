@@ -242,15 +242,25 @@ class ParallelRelationProcessor:
                     logger.debug(f"Rate limit wait: {wait_time:.1f}s for {entity.get('name')}")
                 
                 # Extract relations (main work)
-                relations_list = self.extractor.extract_relations_for_entity(
+                extraction_result = self.extractor.extract_relations_for_entity(
                     entity,
                     self.all_chunks
                 )
                 
+                # Handle dict return with metadata
+                if isinstance(extraction_result, dict):
+                    relations_list = extraction_result['relations']
+                    num_batches = extraction_result['num_batches']
+                    chunks_used = extraction_result['chunks_used']
+                else:
+                    # Backward compatibility (shouldn't happen)
+                    relations_list = extraction_result
+                    num_batches = 1
+                    chunks_used = len(entity.get('chunk_ids', []))
+                
                 # Estimate cost (rough: $0.20 per 1M tokens)
                 # Assuming ~1500 tokens per batch average
-                num_batches = 1  # Default, adjust based on your logging
-                tokens_used = num_batches * 1500  # Estimate
+                tokens_used = num_batches * 1500
                 cost = (tokens_used / 1_000_000) * 0.20
                 
                 # Format result for JSONL
@@ -260,9 +270,9 @@ class ParallelRelationProcessor:
                     'entity_type': entity['type'],
                     'relations': relations_list,
                     'num_batches': num_batches,
-                    'chunks_used': len(entity.get('chunk_ids', [])),
+                    'chunks_used': chunks_used,
                     'cost': round(cost, 6),
-                    'retry_attempts': attempt,  # Track retry count
+                    'retry_attempts': attempt,
                     'timestamp': datetime.now().isoformat()
                 }
                 

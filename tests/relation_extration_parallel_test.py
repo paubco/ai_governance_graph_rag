@@ -98,6 +98,8 @@ def create_test_extractor(entities_file: Path, cooccurrence_file: Path, config: 
         num_chunks=config.get('num_chunks', 6),
         mmr_lambda=config.get('mmr_lambda', 0.65),
         semantic_threshold=config.get('semantic_threshold', 0.85),
+        max_tokens=config.get('max_tokens', 20000),
+        second_round_threshold=config.get('second_round_threshold', 0.25),
         entity_cooccurrence_file=str(cooccurrence_file),
         normalized_entities_file=str(entities_file),
         debug_mode=config.get('debug_mode', False)
@@ -127,7 +129,8 @@ def main():
     config = {
         'model': 'mistralai/Mistral-7B-Instruct-v0.3',
         'num_chunks': 6,
-        'second_round_threshold': 0.35,
+        'second_round_threshold': 0.25,
+        'max_tokens': 20000,
         'mmr_lambda': 0.65,
         'semantic_threshold': 0.85,
         'debug_mode': args.debug
