@@ -1,10 +1,12 @@
 """
-Tests for entity_disambiguator.py (CPU version - all 4 stages)
-Covers: ExactDeduplicator, FAISSBlocker, TieredThresholdFilter, SameJudge
+Entity disambiguation test suite for CPU version.
 
-Author: Pau Barba i Colomer
-Created: 2025-11-29
-Last Modified: 2025-11-29
+Tests all 4 stages of entity disambiguation: ExactDeduplicator (hash-based
+exact deduplication), FAISSBlocker (HNSW blocking), TieredThresholdFilter
+(threshold-based filtering), and SameJudge (LLM-based verification).
+Includes integration tests for full pipeline.
+
+Run: pytest tests/processing/test_entity_disambiguator.py -v
 """
 
 import pytest

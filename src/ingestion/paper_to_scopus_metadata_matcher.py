@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-MINERU METADATA MATCHER
-Links MinerU papers to Scopus metadata using:
-1. DOI from content_list.json (footer/header)
-2. Title matching (handles multi-language titles)
-3. Abstract matching (fallback)
+MinerU to Scopus metadata matcher using multi-strategy linking.
 
-OUTPUT: data/interim/academic/
+Links MinerU parsed papers to Scopus metadata records using DOI extraction,
+title similarity matching, and abstract matching as fallback strategies.
+
+Matching strategies:
+    1. DOI extraction from content_list.json (footer/header)
+    2. Title matching with multi-language support
+    3. Abstract similarity matching (fallback)
+
+Output:
+    Enhanced paper_mapping.json with Scopus metadata in data/interim/academic/
 """
 
 import pandas as pd

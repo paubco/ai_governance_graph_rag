@@ -1,41 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Pre-Entity Quality Filter (Stage 0) - Updated with Academic Type Normalization
-Location: scripts/filter_pre_entities.py
-Runs BEFORE Phase 1C disambiguation pipeline
+Pre-entity quality filter with academic type normalization.
 
-NEW: Collapses 121 academic entity types to ~15 canonical types
-NEW: Expanded banned types with all identifier types
+Conservative filtering to remove metadata entities and low-quality extractions
+before Phase 1C disambiguation. Collapses 121 academic types to 15 canonical types.
 
-Purpose: Remove metadata entities, normalize academic types, filter low-quality extractions
-Approach: Conservative - only remove obvious junk
+Features:
+    Academic type normalization (121 types to 15 canonical)
+    Metadata entity removal (identifiers, dates, structural elements)
+    Character cleaning and length validation
+    Conservative single-mention filtering
 
-Usage:
-    python scripts/filter_pre_entities.py \\
+Example:
+    python src/processing/entities/filter_pre_entities.py \\
         --input data/interim/entities/pre_entities.json \\
         --output data/interim/entities/pre_entities_clean.json
-    
-    # With stricter filtering
-    python scripts/filter_pre_entities.py \\
-        --input data/interim/entities/pre_entities.json \\
-        --output data/interim/entities/pre_entities_clean.json \\
-        --min-chunks 3
 """
 
-import json
+# Standard library
 import argparse
+import json
 import logging
-import unicodedata
 import sys
+import unicodedata
+from collections import Counter
 from pathlib import Path
 from typing import List, Dict, Tuple
-from collections import Counter
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# Import entity type classification
+# Local
 try:
     from src.utils.entity_type_classification import SKIP_TYPES
 except ImportError:

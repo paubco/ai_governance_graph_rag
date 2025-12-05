@@ -1,39 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Module: relation_extractor.py
-Phase: 1D - Relation Extraction
-Purpose: RAKG-style relation extraction with MMR diversity-aware chunk selection
-Author: Pau Barba i Colomer
-Created: 2025-12-01
-Last Modified: 2025-12-01
+RAKG-style relation extractor with MMR diversity-aware chunk selection.
 
-Dependencies:
-    - numpy: Vector operations, cosine similarity
-    - together: Together.ai API client (or compatible LLM client)
-    - json: JSON parsing
+Implements retrieval-augmented relation extraction using two-stage MMR
+for semantic and entity diversity in chunk selection. Follows RAKG methodology
+(Zhang et al., 2025) with Maximal Marginal Relevance (Carbonell & Goldstein, 1998)
+for diversity-aware chunk selection.
 
-Usage:
-    from src.processing.relations.relation_extractor import RAKGRelationExtractor
-    
+Features permissive extraction with downstream validation, configurable similarity
+thresholds, and structured JSON output using Mistral models.
+
+Example:
     extractor = RAKGRelationExtractor(
-        model_name="mistralai/Mistral-7B-Instruct-v0.3",
-        api_key="your_key"
+        model_name="mistralai/Mistral-7B-Instruct-v0.3"
     )
-    
-    relations = extractor.extract_relations_for_entity(
-        entity=entity_dict,
-        all_chunks=chunks_list
-    )
-
-Notes:
-    - Implements RAKG Equation 24: rel(ei) = LLMrel(entity, retriever(ei))
-    - Uses MMR (Carbonell & Goldstein, 1998) for diversity-aware chunk selection
-    - Permissive extraction (no entity list constraints), validation in Phase 2B
-    - Configurable parameters for testing (similarity threshold, lambda, k)
-    
-Reference:
-    Zhang et al. (2025) - RAKG: Document-level Retrieval Augmented KG Construction
-    Carbonell & Goldstein (1998) - Maximal Marginal Relevance (MMR)
+    relations = extractor.extract_relations_for_entity(entity, chunks)
 """
 
 # Standard library

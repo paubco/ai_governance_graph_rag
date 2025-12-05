@@ -1,21 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Chunk Processor for AI Governance GraphRAG Pipeline
-Orchestrates document loading, chunking, and storage
+Chunk processor for AI governance GraphRAG pipeline.
+
+Orchestrates document loading, chunking, and storage using semantic chunker.
 """
 
+# Standard library
 import json
+import logging
 import sys
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
-from datetime import datetime
-from dataclasses import asdict
-import logging
 
-# Add project root to path (adjust based on where this file lives)
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+# Local
 from src.processing.chunking.semantic_chunker import SemanticChunker, Chunk
 
 # Setup logging

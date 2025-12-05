@@ -1,6 +1,11 @@
 """
-Quick test script for semantic chunker
-Run this to validate chunking behavior before processing all documents
+Semantic chunker test suite.
+
+Tests semantic chunker on sample regulatory text to validate chunking
+behavior before processing all documents. Displays chunk statistics
+and preview of generated chunks.
+
+Run: python tests/processing/test_semantic_chunker.py
 """
 import sys
 from pathlib import Path

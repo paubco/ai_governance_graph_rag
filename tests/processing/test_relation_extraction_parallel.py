@@ -1,14 +1,13 @@
 """
-Test Script: 100-Entity Parallel Extraction
+Parallel relation extraction test suite.
 
-Validates parallel processing system before full 55K entity run.
-Tests: threading, checkpointing, rate limiting, resume capability.
+Validates parallel processing system before full 55K entity run with 100-entity
+sample. Tests threading, checkpointing, rate limiting, and resume capability.
+Provides cost and time estimates before full extraction.
 
-Author: Pau Barba i Colomer
-Date: Dec 4, 2025
-
-Usage:
-    python test_parallel_100.py [--workers N] [--resume] [--debug]
+Run:
+    python tests/processing/test_relation_extraction_parallel.py [--workers N]
+    python tests/processing/test_relation_extraction_parallel.py [--resume] [--debug]
 """
 
 import sys

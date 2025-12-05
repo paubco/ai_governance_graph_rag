@@ -47,23 +47,69 @@ src/
 
 ---
 
-## 2. File Header Template
+## 2. File Header Template (Google Style, Condensed)
 
 ```python
 # -*- coding: utf-8 -*-
 """
-Module: <filename>.py
-Package: src.<module>.<submodule>
-Purpose: <One-line description>
+<One-line summary.>
 
-Author: Pau Barba i Colomer
-Created: <YYYY-MM-DD>
-Modified: <YYYY-MM-DD>
+<Extended description as flowing prose - methodology, key details, outputs.
+No category headers like "Notes:" or "Usage:". Just write it naturally.>
 
-References:
-    - <Paper if applicable>
-    - See docs/ARCHITECTURE.md for context
+Example:
+    result = function_name("input")
+    # Returns: expected_output
 """
+```
+
+### Examples
+
+```python
+# -*- coding: utf-8 -*-
+"""
+Hash-based entity ID generator for normalized entities.
+
+Assigns unique, reproducible entity IDs to normalized entities using SHA-256
+hashing. Ensures consistency across pipeline runs for reliable entity linking.
+Uses first 12 characters of SHA-256 hash (48 bits, ~281 trillion combinations)
+with collision detection. IDs follow format: "ent_<12-char-hex>".
+
+Outputs: normalized_entities_with_ids.json and entity_name_to_id.json lookup.
+
+Example:
+    entity_id = generate_entity_id("GDPR", "Regulation")
+    # Returns: "ent_a3f4e9c2d5b1"
+"""
+```
+
+```python
+# -*- coding: utf-8 -*-
+"""
+Semantic chunker for AI governance GraphRAG pipeline.
+
+Implements RAKG-style chunking with hierarchical boundaries: headers are hard
+boundaries (respect document structure), within sections use sentence similarity
+for semantic coherence, and sentences are never split (atomic units).
+"""
+```
+
+### What NOT to do (old verbose style)
+
+```python
+# DON'T use category headers like:
+Author: ...
+Created: ...
+Key functions:
+    ...
+Usage:
+    ...
+Notes:
+    ...
+References:
+    ...
+
+# DO condense into flowing prose
 ```
 
 ---

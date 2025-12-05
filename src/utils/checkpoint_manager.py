@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Checkpoint Manager for Parallel Relation Extraction
+Checkpoint manager for parallel extraction with thread-safe operations.
 
-Handles progress tracking, JSONL append operations, and rolling checkpoints.
-Thread-safe operations for concurrent writes.
-
-Author: Pau Barba i Colomer
-Date: Dec 4, 2025
+Handles progress tracking, JSONL append operations, and rolling checkpoints
+for parallel relation extraction with concurrent writes. Features JSONL
+append-only output (O(1) per entity), progress state tracking (counts, cost, ETA),
+rolling checkpoints, thread-safe file operations, and resume capability.
 """
 
 import json

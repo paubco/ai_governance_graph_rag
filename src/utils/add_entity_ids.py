@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Add hash-based entity IDs to normalized entities.
+Hash-based entity ID generator for normalized entities.
 
-Hash-based IDs are deterministic: same (name, type) → same ID every time.
-This ensures reproducibility across pipeline runs.
+Assigns unique, reproducible entity IDs to normalized entities using SHA-256
+hashing. Ensures consistency across pipeline runs for reliable entity linking.
+Uses first 12 characters of SHA-256 hash (48 bits, ~281 trillion combinations)
+with collision detection. IDs follow format: "ent_<12-char-hex>".
+
+Outputs: normalized_entities_with_ids.json and entity_name_to_id.json lookup.
+
+Example:
+    entity_id = generate_entity_id("GDPR", "Regulation")
+    # Returns: "ent_a3f4e9c2d5b1"
 """
 
 import json

@@ -1,9 +1,11 @@
 """
-Universal Embedder Test Suite
-Tests for both chunk and entity embedding using universal architecture
+Universal embedder test suite for RAKG pipeline.
 
-Author: Pau Barba i Colomer
-Run: pytest tests/test_embedder_universal.py -v
+Tests BGEEmbedder and EmbedProcessor with both chunk and entity embedding
+using the universal architecture. Includes unit tests, integration tests
+with real data, and performance benchmarks.
+
+Run: pytest tests/utils/test_embedder.py -v
 """
 import sys
 import pytest

@@ -47,6 +47,7 @@ Thumbs.db
 data/
 logs/
 docs/daily_logs/
+docs/standardization_audit.md
 CLAUDE.MD
 
 # Jupyter Notebook
@@ -56,7 +57,7 @@ CLAUDE.MD
 *.egg-info/
 dist/
 
-# Testing
+# Testinggit a
 .pytest_cache/
 .coverage
 htmlcov/
@@ -66,3 +67,5 @@ htmlcov/
 
 # Git
 .gitignore
+.gitignore.local
+.gitignore.*.local

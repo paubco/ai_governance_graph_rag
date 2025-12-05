@@ -1,11 +1,11 @@
 """
-Test script for Document Loader
+Document loader test suite.
 
-This script tests the document loader on a small subset of files
-to verify everything works before loading the full dataset.
+Tests the document loader on a small subset of files to verify functionality
+before loading the full dataset. Includes tests for single regulations,
+single papers, small batches, and full dataset loading.
 
-Usage:
-    python test_document_loader.py
+Run: python tests/ingestion/test_document_loader.py
 """
 
 import sys

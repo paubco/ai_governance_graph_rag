@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Phase 0: data ingestion - Document Loader Module
+Document loader module for data ingestion.
 
-This module loads documents from different sources (DLA Piper regulations and
-academic papers) into a standardized format for downstream processing.
-
+Loads documents from different sources (DLA Piper regulations and academic papers)
+into a standardized format for downstream processing.
 """
 
 import json

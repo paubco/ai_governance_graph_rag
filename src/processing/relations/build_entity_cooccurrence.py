@@ -1,40 +1,42 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1D-0: Entity Co-occurrence Matrix Construction (Typed Matrices)
+Entity co-occurrence matrix construction with typed filtering.
 
-Pre-computes which normalized entities appear in each chunk.
-Creates 3 matrices with different type filters:
-  - semantic: Excludes academic entities (for Track 1 OPENIE)
-  - concept: Only concept-type entities (for Track 2 objects)
-  - full: All entities (backup/debugging)
+Pre-computes which normalized entities appear in each chunk using three
+type-filtered matrices for optimized relation extraction lookups.
 
-This enables O(1) entity lookup during relation extraction and
-supports entity-aware diversity in chunk selection.
+Matrix types:
+    semantic: Excludes academic entities (Track 1 OPENIE)
+    concept: Only concept-type entities (Track 2 objects)
+    full: All entities (backup/debugging)
 
-Input:
-  - normalized_entities.json (~18-21k entities)
-  - chunks_embedded.json (25,131 chunks)
+Input files:
+    normalized_entities.json (~18-21k entities)
+    chunks_embedded.json (25,131 chunks)
 
-Output:
-  - cooccurrence_semantic.json (~8-10MB)
-  - cooccurrence_concept.json (~3-5MB)
-  - cooccurrence_full.json (~10-12MB)
+Output files:
+    cooccurrence_semantic.json (~8-10MB)
+    cooccurrence_concept.json (~3-5MB)
+    cooccurrence_full.json (~10-12MB)
 
-Runtime: ~30-60 minutes (one-time cost)
+Runtime: ~30-60 minutes (one-time preprocessing cost)
 """
 
+# Standard library
 import json
 import logging
+import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict
-from collections import defaultdict
-import sys
 
-# Add project root to Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+# Local
 from src.utils.entity_type_classification import (
     is_semantic, is_concept, is_skip, is_academic,
     get_extraction_strategy, print_classification_stats

@@ -1,12 +1,13 @@
 """
-Phase 1B: Entity Extraction Testing
+Entity extraction test suite.
 
-Test entity extraction on manually selected chunks before full run.
+Tests entity extraction on manually selected chunks before full run.
+Supports chunk selection by ID, random sampling, or custom test files.
 
-Usage:
-    python test_entity_extraction.py --chunk-ids chunk_1,chunk_2,chunk_3
-    python test_entity_extraction.py --sample 10  # Random sample
-    python test_entity_extraction.py --test-file test_chunks.json
+Run:
+    python tests/processing/test_entity_extraction.py --chunk-ids chunk_1,chunk_2
+    python tests/processing/test_entity_extraction.py --sample 10
+    python tests/processing/test_entity_extraction.py --test-file test_chunks.json
 """
 import sys
 import json

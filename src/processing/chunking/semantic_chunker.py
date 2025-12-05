@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Semantic Chunker for AI Governance GraphRAG Pipeline
-Implements RAKG-style chunking with hierarchical boundaries:
-1. Headers are HARD boundaries (respect document structure)
-2. Within sections, use sentence similarity for semantic coherence
-3. Never split sentences (atomic units)
+Semantic chunker for AI governance GraphRAG pipeline.
+
+Implements RAKG-style chunking with hierarchical boundaries: headers are hard
+boundaries (respect document structure), within sections use sentence similarity
+for semantic coherence, and sentences are never split (atomic units).
 """
 
 import re

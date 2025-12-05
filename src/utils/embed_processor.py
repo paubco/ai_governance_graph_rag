@@ -1,28 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Universal Embed Processor - Pipeline orchestration for embedding
-Handles batch processing, checkpoints, and progress tracking
-Works for both chunks and entities
+Universal embedding processor with batch processing and checkpoints.
 
-Author: Pau Barba i Colomer
-Usage: Phase 1A-2 (chunks), Phase 1C-1 (entities)
-
-UPDATES (Dec 3, 2025):
-- Rolling checkpoint cleanup: Keeps only 2 most recent checkpoints (saves disk space)
-- Numpy array serialization: Converts numpy arrays to lists for JSON compatibility
-- Removed O(n²) checkpoint loop: No checkpoints during append phase (was causing slowdown)
-- Embedding takes 3 min, append takes <1 min without checkpoints
+Orchestrates batch embedding pipeline with progress tracking and checkpointing.
+Works for both text chunks (Phase 1A-2) and entities (Phase 1C-1) using BGE-M3
+embedder. Features rolling checkpoint cleanup, optimized append phase without
+checkpoints to prevent O(n²) slowdown, and numpy array serialization for JSON
+compatibility.
 """
 
+# Standard library
 import json
 import logging
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any
-from datetime import datetime
+
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
 import numpy as np
 from tqdm import tqdm
 
-from .embedder import BGEEmbedder
+# Local
+from src.utils.embedder import BGEEmbedder
 
 logger = logging.getLogger(__name__)
 

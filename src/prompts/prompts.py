@@ -1,12 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Extraction Prompts for Phases 1B, 1C, 1D
+Extraction prompts for entity extraction, disambiguation, and relation extraction.
+
+Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguation),
+and 1D (relation extraction) with standardized formats for LLM interactions.
+
+Prompts:
+    ENTITY_EXTRACTION_PROMPT: Phase 1B entity extraction from text chunks
+    SAMEJUDGE_PROMPT: Phase 1C entity disambiguation verification
+    RELATION_EXTRACTION_PROMPT: Phase 1D OpenIE-style relation extraction
+    ACADEMIC_ENTITY_EXTRACTION_PROMPT: Phase 1D subject-constrained extraction
 """
 
 # ============================================================================
 # PHASE 1B: ENTITY EXTRACTION
 # ============================================================================
 
+# Prompt for extracting entities from text chunks using free-type methodology.
+# Used by RAKGEntityExtractor to discover entities with LLM-determined types.
+# Instructs model to extract all significant entities including academic citations.
+# Output: JSON list of entities with name, type, and description fields.
 ENTITY_EXTRACTION_PROMPT = """You are an entity extraction assistant for AI governance and regulatory compliance documents.
 
 Text: {text}
@@ -37,6 +50,10 @@ JSON output:"""
 # PHASE 1C: ENTITY DISAMBIGUATION
 # ============================================================================
 
+# Prompt for determining if two entities refer to the same real-world entity.
+# Used by SameJudge to perform pairwise entity comparison during disambiguation.
+# Returns boolean result plus canonical name/type if entities match.
+# Critical for clustering duplicate entities discovered across different chunks.
 SAMEJUDGE_PROMPT = """Are these two entities the SAME real-world entity?
 
 Entity 1:
@@ -64,6 +81,11 @@ JSON:"""
 # PHASE 1D: RELATION EXTRACTION (OPENIE)
 # ============================================================================
 
+# Prompt for extracting semantic relations using OpenIE methodology (Track 1).
+# Used for semantic entities to discover relationships between co-occurring entities.
+# Allows free-form predicates (not constrained to predefined relation types).
+# Target entity can appear as either subject or object of relations.
+# Output: Relations with subject, predicate, object, and chunk_id provenance.
 RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in OpenIE (Open Information Extraction).
 
 TARGET ENTITY:
@@ -108,6 +130,11 @@ JSON:"""
 # PHASE 1D: ACADEMIC ENTITY EXTRACTION (Subject-Constrained)
 # ============================================================================
 
+# Prompt for extracting what concepts academic entities discuss (Track 2).
+# Used for academic entities (citations, authors, journals) with fixed subject.
+# Subject is always the academic entity; predicate is always "discusses".
+# Object must be a concept from the co-occurring semantic entities.
+# Enables mapping academic literature to the concepts they address.
 ACADEMIC_ENTITY_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in academic literature mapping.
 
 TARGET ACADEMIC ENTITY:

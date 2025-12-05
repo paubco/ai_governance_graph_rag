@@ -1,27 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-Parallel Relation Processor - Main Orchestration
+Parallel relation extraction processor with checkpoint resume.
 
-Coordinates parallel extraction of relations from 55K+ entities using:
-- 40 parallel workers (ThreadPoolExecutor)
-- 3000 RPM rate limiting
-- JSONL append-only output
-- Progress tracking with checkpoints
-- Automatic resume capability
+Coordinates parallel extraction of relations from normalized entities using
+multithreaded processing with rate limiting and progress tracking. Uses
+ThreadPoolExecutor with 40 configurable workers, 3000 RPM rate limiting for
+API compliance, and JSONL append-only output for resilience with automatic
+checkpoint/resume capability.
 
-Author: Pau Barba i Colomer
-Date: Dec 4, 2025
+Example:
+    processor = ParallelRelationProcessor(
+        extractor=RAKGRelationExtractor(...),
+        num_workers=40,
+        output_dir=Path("data/interim/relations")
+    )
+    processor.process_all_entities(entities_list)
 """
 
+# Standard library
 import json
 import logging
+import sys
 import time
-from pathlib import Path
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
+
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
 from tqdm import tqdm
 
+# Local
 from src.utils.checkpoint_manager import CheckpointManager
 from src.utils.rate_limiter import RateLimiter
 

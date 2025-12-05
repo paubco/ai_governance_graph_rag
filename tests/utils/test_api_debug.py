@@ -1,13 +1,11 @@
 """
-Minimal API Test Script - Debug Together.ai API Issues
+Together.ai API debugging test suite.
 
-Tests three scenarios:
-1. Basic connectivity (hello world)
-2. Simple JSON extraction
-3. Actual relation extraction (minimal)
+Tests three scenarios: basic connectivity (hello world), simple JSON extraction,
+and minimal relation extraction. Used for debugging API issues and validating
+Together.ai API integration.
 
-Usage:
-    python test_api_debug.py
+Run: python tests/utils/test_api_debug.py
 """
 
 import os

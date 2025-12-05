@@ -1,44 +1,59 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Parallel Entity Extraction Server Script
-Uses threading for fast parallel API calls to Together.ai
+Parallel entity extraction server with threading for fast API calls.
 
-Features:
-- Multi-threaded extraction (3-10 workers based on rate limit tier)
-- Auto-resume from checkpoints
-- Rate limit handling with exponential backoff
-- Progress tracking and statistics
-- Integrates with existing EntityProcessor
+Multi-threaded entity extraction using Together.ai API with checkpoint resume,
+rate limit handling, and progress tracking. Uses ThreadPoolExecutor with 3-10
+workers for I/O-bound API calls, exponential backoff for rate limiting, and
+automatic checkpoint/resume capability for long-running extractions.
 
-Author: Pau Barba i Colomer
-Server: RTX 3060 GPU (for future embedding, not used here)
-Usage: python extract_entities_server.py [--workers N] [--limit N]
+Workflow:
+    1. Load chunks from JSON file
+    2. Resume from checkpoint if available
+    3. Extract entities in parallel (N worker threads)
+    4. Save checkpoints every 1000 chunks
+    5. Generate final validated output
+
+Config:
+    --workers N: Parallel workers (3 for Tier 1, 10 for Tier 2+ rate limits)
+    --limit N: Process only N chunks (for testing)
+    --chunks-file: Input chunks JSON path
+    --output-file: Output entities JSON path
+
+Example:
+    python extract_entities_server.py --workers 10
+    python extract_entities_server.py --workers 3 --limit 100
 """
 
-import sys
-import os
-from pathlib import Path
-import logging
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
-from collections import defaultdict
-import time
-
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.processing.entities.entity_extractor import RAKGEntityExtractor
-from dotenv import load_dotenv
+# Standard library
+import argparse
 import json
+import logging
+import os
+import sys
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+from threading import Lock
+
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
+from dotenv import load_dotenv
+
+# Local
+from src.processing.entities.entity_extractor import RAKGEntityExtractor
 
 # Load environment
 load_dotenv(PROJECT_ROOT / '.env')
 
 # Setup logging with immediate flush
-import sys
 log_handler_stream = logging.StreamHandler(sys.stdout)
 log_handler_stream.setLevel(logging.INFO)
 log_handler_file = logging.FileHandler('logs/entity_extraction_server.log', mode='a')

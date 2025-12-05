@@ -1,54 +1,52 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1D: Parallel Relation Extraction
+Parallel relation extraction runner for production deployment.
 
-Production runner for extracting semantic relations from 76K normalized entities using
-parallel processing with Mistral-7B-Instruct-v0.3.
+Production runner for extracting semantic relations from normalized entities
+using parallel processing with checkpoint resume and cost monitoring. Supports
+40 parallel workers with thread-safe rate limiting (2900 RPM), JSONL append-only
+output for resilience, and real-time progress tracking.
 
-Features:
-- 40 parallel workers with ThreadPoolExecutor
-- 2900 RPM rate limiting for Together.ai compliance
-- JSONL append-only output for resilience
-- Automatic checkpoint and resume capability
-- Real-time progress tracking and cost monitoring
+Workflow:
+    1. Validate prerequisites (entities, chunks, cooccurrence matrix)
+    2. Load normalized entities for extraction
+    3. Initialize extractor with MMR-based chunk selection
+    4. Run parallel extraction with N workers
+    5. Save checkpoints every 100 entities
+    6. Generate final output and cost summary
 
 Architecture:
-- Subject-Predicate-Object triplet extraction (OpenIE-style)
-- Two-stage MMR chunk selection (semantic diversity + entity co-occurrence)
-- JSON schema enforcement with Pydantic for reliability
-- Entity-aware relation extraction using normalized entity list
+    Subject-Predicate-Object triplet extraction (OpenIE-style)
+    Two-stage MMR chunk selection (semantic + entity diversity)
+    JSON schema enforcement with Pydantic validation
+    Entity-aware extraction using normalized entity list
 
-Author: Pau Barba i Colomer
-Date: Dec 4, 2025
-Thesis: MSc Data Science, UOC
+Config:
+    --workers N: Number of parallel workers (default: 40 for 2900 RPM)
+    --entities N: Limit entities to process (for validation runs)
+    --resume: Resume from checkpoint (skip completed entities)
+    --debug: Enable debug mode (saves prompts/responses)
 
-Usage:
-    # Full extraction with 40 workers
-    python run_phase1d_extraction.py
-    
-    # Custom worker count
-    python run_phase1d_extraction.py --workers 20
-    
-    # Resume from checkpoint
+Example:
+    python run_phase1d_extraction.py --workers 40
+    python run_phase1d_extraction.py --entities 1000 --debug
     python run_phase1d_extraction.py --resume
-    
-    # Extract subset for validation
-    python run_phase1d_extraction.py --entities 1000
-    
-    # Enable debug mode (saves prompts/responses)
-    python run_phase1d_extraction.py --debug
 """
 
-import sys
+# Standard library
+import argparse
 import json
 import logging
-import argparse
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+# Local
 from src.processing.relations.relation_processor import ParallelRelationProcessor
 
 # Configure logging
@@ -225,13 +223,12 @@ Examples:
     )
     
     args = parser.parse_args()
-    
+
     # Define paths
-    project_root = Path(__file__).parent.parent.parent
-    entities_file = project_root / "data/interim/entities/normalized_entities.json"
-    chunks_file = project_root / "data/interim/chunks/chunks_embedded.json"
-    cooccurrence_file = project_root / "data/interim/entities/cooccurrence_semantic.json"
-    output_dir = project_root / "data/interim/relations"
+    entities_file = PROJECT_ROOT / "data/interim/entities/normalized_entities.json"
+    chunks_file = PROJECT_ROOT / "data/interim/chunks/chunks_embedded.json"
+    cooccurrence_file = PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"
+    output_dir = PROJECT_ROOT / "data/interim/relations"
     
     # Configuration (optimized for Mistral-7B)
     config = {

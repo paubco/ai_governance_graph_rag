@@ -1,27 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1: Graph Construction - Data Acquisition Module
-DLA Piper AI Laws of the World Scraper (SIMPLIFIED)
+DLA Piper AI Laws scraper for regulatory data acquisition.
 
-This module scrapes regulatory content from DLA Piper's AI Laws database.
+Scrapes regulatory content from DLA Piper's AI Laws of the World database.
+Extracts country-specific AI regulations with section-level granularity.
+Outputs JSON files per country with regulatory sections, notes, and subsections.
 
-Author: Pau Barba i Colomer
-Project: AI Governance GraphRAG Pipeline
+Data source: https://www.dlapiperintelligence.com/aihub/
 """
 
-import requests
-from bs4 import BeautifulSoup
+# Standard library
 import json
+import logging
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
-import logging
 from typing import Dict, List, Optional
 
-# Import project configuration
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from configs.config import SCRAPER_CONFIG, SCRAPER_LOGS_PATH
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
+import requests
+from bs4 import BeautifulSoup
+
+# Local
+from src.configs.config import SCRAPER_CONFIG, SCRAPER_LOGS_PATH
 
 
 # ============================================================================

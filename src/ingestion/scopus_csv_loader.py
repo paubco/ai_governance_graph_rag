@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-SCOPUS CSV LOADER
-Loads and cleans Scopus export CSV with full metadata
-INPUT: Raw Scopus CSV export (with UTF-8 BOM)
-OUTPUT: Clean structured CSV with metadata
+Scopus CSV loader for academic metadata processing.
+
+Loads and cleans Scopus export CSV files with full metadata extraction.
+Handles UTF-8 BOM encoding and structures data for downstream processing.
+
+Input:
+    Raw Scopus CSV export with UTF-8 BOM encoding
+
+Output:
+    Clean structured CSV with standardized metadata fields
 """
 import pandas as pd
 import logging

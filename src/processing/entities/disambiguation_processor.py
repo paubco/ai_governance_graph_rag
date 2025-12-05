@@ -1,47 +1,31 @@
 # -*- coding: utf-8 -*-
 """
-Entity Disambiguation Server - GPU Version
+GPU-optimized entity disambiguation with 4-stage pipeline.
 
-GPU-optimized pipeline for Phase 1C entity disambiguation.
-Runs all 4 stages: dedup -> embed -> FAISS -> thresholds -> LLM
+Production pipeline for Phase 1C entity disambiguation using GPU-accelerated
+embedding, FAISS HNSW blocking, and multithreaded LLM verification. Processes
+~21k filtered entities into ~18-20k normalized entities ready for relation extraction.
 
-CURRENT WORKFLOW (December 2025):
-    1. Phase 1B outputs: pre_entities.json (~143k raw entities)
-    2. Phase 1C-0 filters: pre_entities_clean.json (~21k clean entities)
-    3. THIS SCRIPT processes: pre_entities_clean.json -> normalized_entities.json
-    
-    Default: Start from Stage 1 (dedup raw entities)
-    Recommended: Use pre_entities_clean.json as input for better quality
+Workflow:
+    1. Load pre_entities_clean.json (~21k entities from Phase 1C-0 filtering)
+    2. Exact deduplication via name normalization
+    3. GPU-accelerated BGE-M3 embedding (1024-dim)
+    4. FAISS HNSW blocking with parallel search (4-8 workers)
+    5. Tiered threshold filtering with auto-merge decisions
+    6. SameJudge LLM verification via multithreaded API calls (8-12 workers)
+    7. Output normalized_entities.json (~18-20k disambiguated entities)
 
-STAGES:
-    Stage 1:   Exact deduplication (name normalization)
-    Stage 1.5: BGE-M3 embedding (1024-dim, GPU-accelerated)
-    Stage 2:   FAISS HNSW blocking (GPU, parallel search)
-    Stage 3:   Tiered threshold filtering (auto-merge high confidence)
-    Stage 4:   SameJudge LLM verification (multithreaded API calls)
+Config:
+    --faiss-workers N: Parallel FAISS search threads (4-8 recommended)
+    --samejudge-workers N: Parallel LLM API threads (8-12 recommended)
+    --start-from-stage N: 1 (all stages) or 2 (skip dedup+embed)
+    --stop-at-stage N: 1-4 for partial runs and debugging
+    --gpu-id N: CUDA device ID (default: 0)
 
-WORKER CONFIGURATION:
-    --faiss-workers: Parallel threads for FAISS search (recommended: 4-8)
-        - Higher = faster search but more memory
-        - 4 workers good for RTX 3060 (12GB VRAM)
-        
-    --samejudge-workers: Parallel threads for LLM calls (recommended: 8-12)
-        - Higher = faster verification but more API concurrency
-        - 8 workers = ~480 pairs/min with Together.ai
-        - Limited by API rate limits, not compute
-
-STAGE CONTROL:
-    --start-from-stage: Where to begin processing
-        1 = Start from raw entities (run all 4 stages)
-        2 = Start from embedded entities (skip dedup+embed, run FAISS+LLM)
-        
-    --stop-at-stage: Where to stop (for debugging/inspection)
-        1 = Stop after dedup (check entity counts)
-        2 = Stop after embedding (verify embeddings)
-        3 = Stop after thresholds (inspect auto-merges)
-        4 = Complete pipeline (default)
-
-This is the production GPU-accelerated version for Phase 1C disambiguation.
+Example:
+    python disambiguation_processor.py --input pre_entities_clean.json \
+        --output normalized_entities.json --faiss-workers 4 \
+        --samejudge-workers 8 --start-from-stage 1 --gpu-id 0
 """
 
 # Standard library
@@ -51,35 +35,39 @@ import logging
 import os
 import sys
 import threading
+import time
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
-from datetime import datetime
-from collections import defaultdict, Counter
-import time
+
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Third-party
 import numpy as np
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None  # Will handle gracefully
 
-# Import local modules
+# Local
 from src.processing.entities.entity_disambiguator import (
     ExactDeduplicator,
     TieredThresholdFilter,
     normalize_key
 )
-from src.utils.embedder import BGEEmbedder
 from src.utils.embed_processor import EmbedProcessor
+from src.utils.embedder import BGEEmbedder
 
-# Load .env file if available
-try:
-    from dotenv import load_dotenv
+# Load environment
+if load_dotenv:
     load_dotenv()
-except ImportError:
-    pass  # dotenv not installed, will use environment variables directly
 
 # Setup logging
 logging.basicConfig(
