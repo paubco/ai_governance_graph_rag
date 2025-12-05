@@ -2,8 +2,14 @@
 """
 RAKG-style entity extractor using LLM for free-type discovery.
 
-Extracts pre-entities from text chunks using LLM (Qwen2.5-72B-Instruct-Turbo).
-Following RAKG's approach: free entity types, high coverage, natural filtering later.
+Extracts pre-entities from text chunks using LLM (Qwen2.5-72B-Instruct-Turbo) with
+free entity type discovery. Follows RAKG methodology: permissive extraction with high
+coverage, letting downstream filtering and normalization handle quality control.
+
+Example:
+    extractor = RAKGEntityExtractor(api_key="your_key")
+    entities = extractor.extract_entities(chunk_text, chunk_id="chunk_001")
+    # Returns: List[Dict] with name, type, description, chunk_id
 """
 
 # Standard library

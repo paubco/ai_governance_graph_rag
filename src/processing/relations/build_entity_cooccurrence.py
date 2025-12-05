@@ -20,6 +20,10 @@ Output files:
     cooccurrence_full.json (~10-12MB)
 
 Runtime: ~30-60 minutes (one-time preprocessing cost)
+
+Example:
+    python src/processing/relations/build_entity_cooccurrence.py
+    # Outputs: Three cooccurrence matrices in data/interim/entities/
 """
 
 # Standard library

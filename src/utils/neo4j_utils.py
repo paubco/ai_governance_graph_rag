@@ -2,17 +2,12 @@
 """
 Neo4j database utilities for academic publication graph construction.
 
-Helper functions for connecting to Neo4j and loading academic publication
-metadata into graph database. Creates nodes and relationships for publications,
-authors, journals, and affiliations.
+Helper functions for connecting to Neo4j and loading academic publication metadata
+into graph database. Creates nodes and relationships for publications, authors,
+journals, and affiliations with schema: (Publication)-[PUBLISHED_IN]->(Journal),
+(Author)-[WROTE]->(Publication), (Author)-[AFFILIATED_WITH]->(Affiliation).
 
-Note:
-    Currently unused in active pipeline - reserved for future Phase 2 integration.
-
-Graph schema:
-    - (Publication) - [PUBLISHED_IN] -> (Journal)
-    - (Author) - [WROTE] -> (Publication)
-    - (Author) - [AFFILIATED_WITH] -> (Affiliation)
+Currently unused in active pipeline - reserved for future Phase 2 integration.
 """
 from neo4j import GraphDatabase
 import ast

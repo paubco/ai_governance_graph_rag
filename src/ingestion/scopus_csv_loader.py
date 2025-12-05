@@ -3,13 +3,19 @@
 Scopus CSV loader for academic metadata processing.
 
 Loads and cleans Scopus export CSV files with full metadata extraction.
-Handles UTF-8 BOM encoding and structures data for downstream processing.
+Handles UTF-8 BOM encoding and structures data for downstream processing with
+complex field parsing for authors, affiliations, keywords, and funding.
 
 Input:
     Raw Scopus CSV export with UTF-8 BOM encoding
 
 Output:
     Clean structured CSV with standardized metadata fields
+
+Example:
+    loader = ScopusCSVLoader(csv_path="data/raw/scopus_2023.csv")
+    loader.load_and_clean()
+    # Outputs: data/interim/scopus_2023_clean.csv
 """
 import pandas as pd
 import logging

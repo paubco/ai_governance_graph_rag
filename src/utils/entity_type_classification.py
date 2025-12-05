@@ -2,12 +2,10 @@
 """
 Entity type classification using negative template strategy.
 
-Defines non-semantic entity types; everything else defaults to semantic types.
-After normalization, reduces ~900 entity types to 15 canonical academic types
-plus semantic types for knowledge graph construction.
-
-Total entity types in normalized_entities.json: ~900
-Approach: Negative template - classify what's NOT semantic
+Defines non-semantic entity types via negative template; everything else defaults to
+semantic types. After normalization, reduces ~900 entity types to 15 canonical academic
+types plus semantic types for knowledge graph construction. Used by entity filtering and
+relation extraction to determine which entities participate in semantic relation tracks.
 """
 
 # ============================================================================

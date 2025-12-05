@@ -4,7 +4,13 @@ Semantic chunker for AI governance GraphRAG pipeline.
 
 Implements RAKG-style chunking with hierarchical boundaries: headers are hard
 boundaries (respect document structure), within sections use sentence similarity
-for semantic coherence, and sentences are never split (atomic units).
+for semantic coherence, and sentences are never split (atomic units). Uses
+sentence-transformers for embedding and cosine similarity for boundary detection.
+
+Example:
+    chunker = SemanticChunker(threshold=0.7, min_sentences=3, max_tokens=1500)
+    chunks = chunker.chunk_document(text="...", document_id="doc_001")
+    # Returns: List[Chunk] with semantic boundaries
 """
 
 import re

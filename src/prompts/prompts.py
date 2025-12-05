@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Extraction prompts for entity extraction, disambiguation, and relation extraction.
+LLM prompt templates for entity extraction, disambiguation, and relation extraction.
 
 Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguation),
-and 1D (relation extraction) with standardized formats for LLM interactions.
-
-Prompts:
-    ENTITY_EXTRACTION_PROMPT: Phase 1B entity extraction from text chunks
-    SAMEJUDGE_PROMPT: Phase 1C entity disambiguation verification
-    RELATION_EXTRACTION_PROMPT: Phase 1D OpenIE-style relation extraction
-    ACADEMIC_ENTITY_EXTRACTION_PROMPT: Phase 1D subject-constrained extraction
+and 1D (relation extraction) with standardized formats. Contains ENTITY_EXTRACTION_PROMPT
+for Phase 1B free-type entity discovery, SAMEJUDGE_PROMPT for Phase 1C entity verification,
+RELATION_EXTRACTION_PROMPT for Phase 1D OpenIE-style triplet extraction, and
+ACADEMIC_ENTITY_EXTRACTION_PROMPT for subject-constrained extraction.
 """
 
 # ============================================================================

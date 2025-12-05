@@ -2,7 +2,14 @@
 """
 Chunk processor for AI governance GraphRAG pipeline.
 
-Orchestrates document loading, chunking, and storage using semantic chunker.
+Orchestrates document loading, chunking, and storage using semantic chunker. Processes
+documents through semantic chunking pipeline and saves chunks with metadata to interim
+storage. Generates statistics on chunk distribution and quality metrics.
+
+Example:
+    processor = ChunkProcessor(interim_path=Path("data/interim"), threshold=0.7)
+    summary = processor.process_documents(documents)
+    # Outputs: chunks_text.json, chunks_metadata.json, chunking_summary.json
 """
 
 # Standard library

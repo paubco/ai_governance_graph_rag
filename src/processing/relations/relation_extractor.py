@@ -2,17 +2,23 @@
 """
 RAKG-style relation extractor with MMR diversity-aware chunk selection.
 
-Implements retrieval-augmented relation extraction using two-stage MMR
-for semantic and entity diversity in chunk selection. Follows RAKG methodology
-(Zhang et al., 2025) with Maximal Marginal Relevance (Carbonell & Goldstein, 1998)
-for diversity-aware chunk selection.
+Implements retrieval-augmented relation extraction using two-stage MMR for semantic
+and entity diversity in chunk selection. Follows RAKG methodology (Zhang et al., 2025)
+with Maximal Marginal Relevance (Carbonell & Goldstein, 1998). Features permissive
+extraction with downstream validation, configurable similarity thresholds, and
+structured JSON output using Mistral models.
 
-Features permissive extraction with downstream validation, configurable similarity
-thresholds, and structured JSON output using Mistral models.
+Algorithm:
+    1. Semantic MMR: Select top-k chunks by entity embedding similarity with diversity
+    2. Entity MMR: Add chunks containing co-occurring entities (diversified selection)
+    3. Threshold check: Trigger second batch if first batch yields < threshold relations
+    4. LLM extraction: OpenIE triplet extraction with JSON schema validation
+    5. Deduplication: Merge identical relations across chunks
 
 Example:
     extractor = RAKGRelationExtractor(
-        model_name="mistralai/Mistral-7B-Instruct-v0.3"
+        model_name="mistralai/Mistral-7B-Instruct-v0.3",
+        num_chunks=6, mmr_lambda=0.65
     )
     relations = extractor.extract_relations_for_entity(entity, chunks)
 """

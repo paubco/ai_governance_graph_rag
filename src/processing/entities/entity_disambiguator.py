@@ -3,7 +3,9 @@
 Entity disambiguation core classes with 4-stage pipeline.
 
 Implements hash-based deduplication, FAISS blocking, threshold filtering,
-and LLM verification for entity disambiguation. CPU versions for development.
+and LLM verification for entity disambiguation. CPU versions for development
+and testing. For production GPU-accelerated multithreaded versions, use
+disambiguation_processor.py instead.
 
 Stages:
     Stage 1: ExactDeduplicator (hash-based exact deduplication)
@@ -11,9 +13,11 @@ Stages:
     Stage 3: TieredThresholdFilter (similarity-based filtering with auto-merge)
     Stage 4: SameJudge (LLM verification, CPU single-threaded)
 
-Note:
-    For GPU-accelerated multithreaded versions, use:
-    src/processing/entities/disambiguation_processor.py
+Example:
+    deduplicator = ExactDeduplicator()
+    entities = deduplicator.deduplicate(raw_entities)
+    blocker = FAISSBlocker(embedding_dim=1024)
+    pairs = blocker.find_candidates(entities, k=50)
 """
 
 # Standard library

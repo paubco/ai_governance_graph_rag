@@ -3,7 +3,8 @@
 MinerU to Scopus metadata matcher using multi-strategy linking.
 
 Links MinerU parsed papers to Scopus metadata records using DOI extraction,
-title similarity matching, and abstract matching as fallback strategies.
+title similarity matching, and abstract matching as fallback strategies with
+confidence scoring and manual review flags for low-confidence matches.
 
 Matching strategies:
     1. DOI extraction from content_list.json (footer/header)
@@ -12,6 +13,11 @@ Matching strategies:
 
 Output:
     Enhanced paper_mapping.json with Scopus metadata in data/interim/academic/
+
+Example:
+    matcher = MinerUMatcher(papers_path="data/raw/papers", scopus_csv="scopus.csv")
+    matcher.match_all_papers()
+    # Outputs: data/interim/academic/paper_mapping.json
 """
 
 import pandas as pd
