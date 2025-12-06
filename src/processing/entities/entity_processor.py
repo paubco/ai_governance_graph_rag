@@ -49,29 +49,14 @@ from dotenv import load_dotenv
 
 # Local
 from src.processing.entities.entity_extractor import RAKGEntityExtractor
+from src.utils.logger import setup_logging
 
 # Load environment
 load_dotenv(PROJECT_ROOT / '.env')
 
-# Setup logging with immediate flush
-log_handler_stream = logging.StreamHandler(sys.stdout)
-log_handler_stream.setLevel(logging.INFO)
-log_handler_file = logging.FileHandler('logs/entity_extraction_server.log', mode='a')
-log_handler_file.setLevel(logging.INFO)
-
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-log_handler_stream.setFormatter(formatter)
-log_handler_file.setFormatter(formatter)
-
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[log_handler_stream, log_handler_file]
-)
+# Setup logging
+setup_logging(log_file='logs/entity_extraction_server.log')
 logger = logging.getLogger(__name__)
-
-# Force unbuffered output
-sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
-sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure') else None
 
 
 class ParallelEntityProcessor:

@@ -42,11 +42,10 @@ except ImportError:
         'ORCID', 'ISBN', 'ISSN', 'Chunk ID'
     }
 
+from src.utils.logger import setup_logging
+
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

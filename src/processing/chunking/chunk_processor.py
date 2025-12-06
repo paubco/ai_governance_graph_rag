@@ -28,12 +28,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Local
 from src.processing.chunking.semantic_chunker import SemanticChunker, Chunk
+from src.utils.logger import setup_logging
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

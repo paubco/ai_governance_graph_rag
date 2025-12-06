@@ -17,12 +17,13 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.processing.relations.relation_extractor import RAKGRelationExtractor
+from src.utils.logger import setup_logging
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # ============================================================================

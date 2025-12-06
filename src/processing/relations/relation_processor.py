@@ -38,7 +38,10 @@ from tqdm import tqdm
 # Local
 from src.utils.checkpoint_manager import CheckpointManager
 from src.utils.rate_limiter import RateLimiter
+from src.utils.logger import setup_logging
 
+# Setup logging - only configure if not already done
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

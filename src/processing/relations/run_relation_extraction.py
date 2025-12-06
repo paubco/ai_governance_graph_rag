@@ -48,16 +48,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Local
 from src.processing.relations.relation_processor import ParallelRelationProcessor
+from src.utils.logger import setup_logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('phase1d_extraction.log')
-    ]
-)
+setup_logging(log_file='logs/phase1d_extraction.log')
 logger = logging.getLogger(__name__)
 
 

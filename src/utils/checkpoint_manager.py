@@ -304,8 +304,9 @@ class CheckpointManager:
 
 # Example usage
 if __name__ == "__main__":
+    from src.utils.logger import setup_logging
     # Test checkpoint manager
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
     
     manager = CheckpointManager(
         output_dir=Path("test_checkpoints"),

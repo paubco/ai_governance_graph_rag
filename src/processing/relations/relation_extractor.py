@@ -40,15 +40,17 @@ from pydantic import BaseModel, Field
 # Load environment variables
 load_dotenv()
 
+# Local
+import sys
+from pathlib import Path as FilePath
+PROJECT_ROOT = FilePath(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.utils.logger import setup_logging
+
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('logs/pipeline.log')
-    ]
-)
+setup_logging(log_file='logs/pipeline.log')
 logger = logging.getLogger(__name__)
 
 # Create prompt logging directory

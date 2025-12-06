@@ -64,20 +64,14 @@ from src.processing.entities.entity_disambiguator import (
 )
 from src.utils.embed_processor import EmbedProcessor
 from src.utils.embedder import BGEEmbedder
+from src.utils.logger import setup_logging
 
 # Load environment
 if load_dotenv:
     load_dotenv()
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('logs/disambiguation_server.log')
-    ]
-)
+setup_logging(log_file='logs/disambiguation_server.log')
 logger = logging.getLogger(__name__)
 
 

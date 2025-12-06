@@ -21,16 +21,10 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.processing.relations.relation_processor import ParallelRelationProcessor
+from src.utils.logger import setup_logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('test_parallel_100.log')
-    ]
-)
+setup_logging(log_file='logs/test_parallel_100.log')
 logger = logging.getLogger(__name__)
 
 

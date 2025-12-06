@@ -45,12 +45,10 @@ from src.utils.entity_type_classification import (
     is_semantic, is_concept, is_skip, is_academic,
     get_extraction_strategy, print_classification_stats
 )
+from src.utils.logger import setup_logging
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
