@@ -1,0 +1,22 @@
+{
+  "completed_steps": [
+    "rels_cites_l2",
+    "rels_published_in",
+    "nodes_jurisdiction",
+    "rels_relation",
+    "rels_same_as",
+    "nodes_l2publication",
+    "nodes_entity",
+    "nodes_chunk",
+    "rels_matched_to",
+    "rels_contains_jurisdiction",
+    "constraints",
+    "nodes_publication",
+    "rels_cites_l1",
+    "rels_extracted_from",
+    "nodes_journal",
+    "rels_contains_publication",
+    "nodes_author",
+    "rels_authored_by"
+  ]
+}
