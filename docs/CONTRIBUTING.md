@@ -47,15 +47,29 @@ src/
 
 ---
 
-## 2. File Header Template (Google Style, Condensed)
+## 2. File Header Template (Google Style, Tiered)
+
+Scale complexity with the file. Use the simplest format that covers everything.
+
+### Tier 1: Simple (utility files, single-purpose modules)
 
 ```python
 # -*- coding: utf-8 -*-
 """
-<One-line summary.>
+One-line summary.
 
-<Extended description as flowing prose - methodology, key details, outputs.
-No category headers like "Notes:" or "Usage:". Just write it naturally.>
+Extended prose if needed. No headers, just flowing text.
+"""
+```
+
+### Tier 2: Standard (most files)
+
+```python
+# -*- coding: utf-8 -*-
+"""
+One-line summary.
+
+Extended description as flowing prose - methodology, key details, outputs.
 
 Example:
     result = function_name("input")
@@ -63,28 +77,46 @@ Example:
 """
 ```
 
-### Examples
+### Tier 3: Complex (pipelines, multi-stage processors)
+
+Use **short single-word headers** only when content is truly categorical:
 
 ```python
 # -*- coding: utf-8 -*-
 """
-Hash-based entity ID generator for normalized entities.
+One-line summary.
 
-Assigns unique, reproducible entity IDs to normalized entities using SHA-256
-hashing. Ensures consistency across pipeline runs for reliable entity linking.
-Uses first 12 characters of SHA-256 hash (48 bits, ~281 trillion combinations)
-with collision detection. IDs follow format: "ent_<12-char-hex>".
+Extended prose description of what this does and why.
 
-Outputs: normalized_entities_with_ids.json and entity_name_to_id.json lookup.
+Workflow:
+    1. Input: description
+    2. Process: description  
+    3. Output: description
+
+Stages:
+    Stage 1: What it does
+    Stage 2: What it does
+
+Config:
+    --flag-name: What it controls
+    --other-flag: What it controls
 
 Example:
-    entity_id = generate_entity_id("GDPR", "Regulation")
-    # Returns: "ent_a3f4e9c2d5b1"
+    python src/module/script.py --flag value
 """
 ```
 
+### Header Rules
+
+- **Single word + colon** (`Workflow:`, `Stages:`, `Config:`, `Features:`)
+- **Only when categorical** - if it can be prose, make it prose
+- **Terse content** - no full sentences under headers, just fragments
+- **No metadata headers** - no `Author:`, `Created:`, `Modified:`, `References:`
+
+### Examples
+
+**Simple utility:**
 ```python
-# -*- coding: utf-8 -*-
 """
 Semantic chunker for AI governance GraphRAG pipeline.
 
@@ -94,22 +126,68 @@ for semantic coherence, and sentences are never split (atomic units).
 """
 ```
 
-### What NOT to do (old verbose style)
-
+**Standard with example:**
 ```python
-# DON'T use category headers like:
-Author: ...
-Created: ...
-Key functions:
-    ...
-Usage:
-    ...
-Notes:
-    ...
-References:
-    ...
+"""
+Hash-based entity ID generator for normalized entities.
 
-# DO condense into flowing prose
+Assigns unique, reproducible entity IDs using SHA-256 hashing. Uses first 12 
+characters (48 bits, ~281 trillion combinations) with collision detection.
+Outputs normalized_entities_with_ids.json and entity_name_to_id.json lookup.
+
+Example:
+    entity_id = generate_entity_id("GDPR", "Regulation")
+    # Returns: "ent_a3f4e9c2d5b1"
+"""
+```
+
+**Complex pipeline:**
+```python
+"""
+GPU-optimized entity disambiguation with 4-stage pipeline.
+
+Production pipeline for Phase 1C using GPU-accelerated embedding, FAISS HNSW 
+blocking, and multithreaded LLM verification.
+
+Workflow:
+    1. pre_entities.json (~143k raw)
+    2. pre_entities_clean.json (~21k filtered)
+    3. normalized_entities.json (~18-20k disambiguated)
+
+Stages:
+    Stage 1:   Exact deduplication (name normalization)
+    Stage 1.5: BGE-M3 embedding (1024-dim, GPU)
+    Stage 2:   FAISS HNSW blocking (GPU, parallel)
+    Stage 3:   Tiered threshold filtering (auto-merge high confidence)
+    Stage 4:   SameJudge LLM verification (multithreaded)
+
+Config:
+    --faiss-workers: Parallel FAISS threads (4-8 recommended)
+    --samejudge-workers: Parallel LLM threads (8-12 recommended)
+    --start-from-stage: 1 (all) or 2 (skip dedup+embed)
+    --stop-at-stage: 1-4 for partial runs
+"""
+```
+
+**Filter with features:**
+```python
+"""
+Pre-entity quality filter with academic type normalization.
+
+Conservative filtering to remove metadata entities and low-quality extractions
+before Phase 1C disambiguation.
+
+Features:
+    Academic type normalization (121 → 15 canonical types)
+    Metadata entity removal (identifiers, dates, structural)
+    Character cleaning and length validation
+    Conservative single-mention filtering
+
+Example:
+    python src/processing/entities/filter_pre_entities.py \\
+        --input data/interim/entities/pre_entities.json \\
+        --output data/interim/entities/pre_entities_clean.json
+"""
 ```
 
 ---

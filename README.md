@@ -30,7 +30,9 @@ python -m src.processing.entities.add_entity_ids
 python -m src.processing.relations.build_entity_cooccurrence
 python -m src.processing.relations.run_relation_extraction
 python -m src.processing.relations.normalize_relations
-python -m src.enrichment.scopus_enricher
+python -m src.enrichment.enrichment_processor  # Phase 2A
+python -m src.graph.neo4j_import_processor     # Phase 2B
+python -m src.graph.faiss_builder              # Phase 2B
 ```
 
 ---
@@ -49,8 +51,8 @@ python -m src.enrichment.scopus_enricher
 | Artifact | Count |
 |----------|-------|
 | Chunks | 25,131 |
-| Entities | 76,249 |
-| Relations | ~155,000 |
+| Entities | 55,695 |
+| Relations | ~105,456 |
 
 ---
 
@@ -61,12 +63,13 @@ Graph_RAG/
 ├── src/
 │   ├── ingestion/      # Data loading
 │   ├── processing/     # Chunking, entities, relations
-│   ├── enrichment/     # Scopus metadata
+│   ├── enrichment/     # Scopus metadata, jurisdiction linking
+│   ├── graph/          # Neo4j import, FAISS builder
 │   └── utils/          # Shared utilities
 ├── data/
 │   ├── raw/            # Original inputs
 │   ├── interim/        # Checkpoints
-│   └── processed/      # Final outputs
+│   └── processed/      # Final outputs (entities/, relations/, reports/)
 └── docs/
     ├── ARCHITECTURE.md # Technical specification
     └── CONTRIBUTING.md # Code standards

@@ -18,7 +18,7 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 |--------|---------|-------|--------|
 | **Regulations** | Jurisdiction metadata + legal text | 48 | DLA Piper (2024) web scrape |
 | **Academic Papers** | Scopus metadata CSV + PDFs (MinerU-parsed) | 158 | Scopus export |
-| **Derived Metadata** | Authors, Journals, References | 638 / 119 / 1,513 | Scopus CSV |
+| **Derived Metadata** | Authors, Journals, References | 572 / 119 / 1,513 | Scopus CSV |
 
 **Note**: Both sources provide metadata AND text. DLA Piper provides jurisdiction codes and scraped legal text. Scopus provides bibliometric metadata and PDFs which are parsed to markdown via MinerU.
 
@@ -157,44 +157,43 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 │  ⚠️  Relations extracted before add_entity_ids ran - IDs added     │
 │      post-hoc via name matching in normalize_relations.py          │
 │                                                                     │
-│  Output: data/processed/neo4j_edges.jsonl (~155K relations)         │
+│  Output: data/processed/neo4j_edges.jsonl (105K relations)         │
 └─────────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                  PHASE 2A: SCOPUS ENRICHMENT                        │
 │                  src/enrichment/                                    │
 │                                                                     │
-│  Goal: Link text-derived "discusses" relations to structured       │
-│        academic metadata                                            │
+│  Files: enrichment_processor.py (orchestrator)                      │
+│         scopus_enricher.py (core matching)                          │
+│         jurisdiction_matcher.py (country linking)                   │
+│         tests/test_enrichment.py (16 unit tests)                    │
 │                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Step 1: Create metadata nodes from Scopus CSV              │   │
-│  │    • 158 Publication nodes (source papers)                  │   │
-│  │    • 638 Author nodes (deduplicated)                        │   │
-│  │    • 119 Journal nodes                                      │   │
-│  │    • Relations: authored_by, published_in                   │   │
-│  ├─────────────────────────────────────────────────────────────┤   │
-│  │  Step 2: Match academic citation entities → source papers   │   │
-│  │    • Find which chunk the citation came from                │   │
-│  │    • Match against Scopus metadata for that paper           │   │
-│  │    • Strategies: DOI, author+year, References field         │   │
-│  │    • Relation: matched_to                                   │   │
-│  └─────────────────────────────────────────────────────────────┘   │
+│  Pipeline (10 steps):                                               │
+│  1. Parse Scopus CSV (158 pubs, 572 authors, 119 journals)         │
+│  2. Parse references field (1,513 references)                       │
+│  3. Identify citation entities (3-tier: type/discusses/pattern)     │
+│  4. Build chunk→L1 mapping (uses 'eid' field)                       │
+│  5. Match citations to references (provenance-constrained)          │
+│  6. Match jurisdiction entities (41 SAME_AS links)                  │
+│  7. Generate 5 relation types                                       │
+│  8. Quality report                                                  │
+│  9. Save outputs                                                    │
 │                                                                     │
-│  Output: Enriched Neo4j graph with academic metadata                │
+│  Output: data/processed/{entities,relations,reports}/*.json         │
 └─────────────────────────────────────────────────────────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                  PHASE 2B: NEO4J STORAGE                            │
 │                                                                     │
-│  ⚠️  Embeddings (1.5GB) stored externally, NOT in Neo4j            │
+│  ⚠️  Embeddings (1.5GB) stored in FAISS, NOT in Neo4j              │
 │                                                                     │
 │  Neo4j stores graph structure only:                                 │
 │  • :Jurisdiction nodes (48) - top-level for regulations            │
-│  • :Publication nodes (158) - top-level for papers                 │
+│  • :Publication nodes (158 L1 + L2s) - top-level for papers        │
 │  • :Chunk nodes (25K) - no embeddings, metadata only               │
 │  • :Entity nodes (76K) - no embeddings                             │
-│  • :Author nodes (638)                                              │
+│  • :Author nodes (572)                                              │
 │  • :Journal nodes (119)                                             │
 │                                                                     │
 │  Relationships:                                                     │
@@ -203,7 +202,9 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 │  • :RELATION {predicate, chunk_ids} (Entity → Entity)              │
 │  • :AUTHORED_BY (Publication → Author)                             │
 │  • :PUBLISHED_IN (Publication → Journal)                           │
-│  • :MATCHED_TO (Citation Entity → Publication)                     │
+│  • :MATCHED_TO (Citation Entity → L2Publication)                   │
+│  • :CITES (L1 Publication → L2Publication)                         │
+│  • :SAME_AS (Country Entity → Jurisdiction)                        │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -242,7 +243,7 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 | Track | Entity Types | Predicate | Objects | Rationale |
 |-------|-------------|-----------|---------|-----------|
 | **Track 1** | Concepts, Orgs, Tech, Regulations | Any (OpenIE) | Any semantic | Domain knowledge backbone |
-| **Track 2** | Citations, Authors, Journals | `discusses`, `publishes_about` | Concepts only | Literature→concept mapping |
+| **Track 2** | Citations, Authors, Journals | `discusses` | Concepts only | Literature→concept mapping |
 
 **Key principles (novel)**:
 
@@ -260,7 +261,7 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 
 **Source paper vs. mentioned paper distinction**:
 - **Source papers** (158): Papers we parsed with MinerU. Have full Scopus metadata.
-- **Mentioned papers** (~6,800 entities): Papers cited in source papers' text. May match Scopus references.
+- **Mentioned papers** (7,023 entities): Papers cited in source papers' text. May match Scopus references.
 
 **Matching approach**:
 1. Find which chunk the citation entity came from (provenance)
@@ -272,6 +273,21 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 2. Author surname + year (0.95)
 3. Title fuzzy via embedding (0.80)
 4. References field cross-reference (0.75)
+
+**Jurisdiction entity linking** (optional):
+
+Country/region entities like "European Union" need linking to Jurisdiction nodes:
+```
+Entity("European Union") --[SAME_AS]--> Jurisdiction(EU)
+```
+
+| Entity Type | How It's Linked |
+|-------------|-----------------|
+| Country/region entities | SAME_AS → Jurisdiction (direct name match) |
+| Regulatory entities (GDPR, EU AI Act) | Via provenance: EXTRACTED_FROM → Chunk ← CONTAINS Jurisdiction |
+| Organizations (CNIL, FTC) | Not linked (would require external knowledge) |
+
+Implementation is simple post-disambiguation lookup: 41 matches expected.
 
 ---
 
@@ -311,7 +327,7 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
   metadata: {
     doc_type: "regulation" | "academic_paper",
     jurisdiction: "ES",         // Only for regulations
-    scopus_id: "85123456",      // Only for papers
+    eid: "2-s2.0-85123456",     // Only for papers (Scopus EID)
     section_title: "User transparency"
   }
 })
@@ -360,6 +376,9 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 (:Publication)-[:AUTHORED_BY]->(:Author)
 (:Publication)-[:PUBLISHED_IN]->(:Journal)
 (:Entity {type: "Academic Citation"})-[:MATCHED_TO]->(:Publication)
+
+// Jurisdiction linking (country entities only)
+(:Entity {type: "Country"})-[:SAME_AS]->(:Jurisdiction)
 ```
 
 ---
@@ -382,9 +401,9 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 │  • Publications: 158 nodes          │
 │  • Chunks: 25K nodes (no embed)     │
 │  • Entities: 76K nodes (no embed)   │
-│  • Authors: 638 nodes               │
+│  • Authors: 572 nodes               │
 │  • Journals: 119 nodes              │
-│  • Relations: ~155K edges           │
+│  • Relations: 105K edges           │
 │  Size: ~100MB                       │
 └─────────────────────────────────────┘
 ```
@@ -403,7 +422,7 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 | Disambiguation | 143K entities | 76K entities | 6 hrs | ~$6 |
 | ID Generation | 76K entities | entities + IDs | 1 min | $0 |
 | Co-occurrence | 76K entities | 3 matrices | 30 min | $0 |
-| Relation Extraction | entities + matrices | ~155K relations | 2-3 days | ~$7 |
+| Relation Extraction | entities + matrices | 105K relations | 2-3 days | ~$7 |
 | Relation Normalization | relations | Neo4j files | 5 min | $0 |
 | Scopus Enrichment | Neo4j + Scopus | enriched graph | 1-2 hrs | $0 |
 | **Total** | | | ~4-5 days | **~$43** |
