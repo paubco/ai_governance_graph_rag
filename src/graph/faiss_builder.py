@@ -4,24 +4,26 @@
 FAISS Index Builder for GraphRAG Vector Store
 
 Builds FAISS HNSW indexes for entity and chunk embeddings with parallel ID mapping.
-Maintains consistent ordering between FAISS indices and ID maps for efficient
-similarity search in the GraphRAG retrieval pipeline.
+Handles embedding extraction, index construction, and persistence with consistent
+ordering between FAISS indices and ID maps for efficient similarity search.
 
-Features:
-- HNSW indexing for approximate nearest neighbor search
-- Separate indexes for entities and chunks
-- Parallel ID mapping for result resolution
-- Configurable HNSW parameters (M, ef_construction)
-- Progress tracking and validation
+Index Categories:
+1. Entity Embeddings:
+   - Source: normalized_entities_with_ids.json
+   - Output: entity_embeddings.index + entity_id_map.json
+   - Dimension: 1024 (BGE-M3)
+2. Chunk Embeddings:
+   - Source: chunks_embedded.json
+   - Output: chunk_embeddings.index + chunk_id_map.json
+   - Dimension: 1024 (BGE-M3)
 
-Index Output:
-- entity_embeddings.index (FAISS HNSW index)
-- entity_id_map.json (position → entity_id mapping)
-- chunk_embeddings.index (FAISS HNSW index)
-- chunk_id_map.json (position → chunk_id mapping)
+HNSW Parameters:
+- M=32: Number of neighbors per node in graph
+- ef_construction=200: Dynamic candidate list size during construction
 
 Usage:
-    python src/graph/faiss_builder.py --data-dir data --output-dir data/processed/faiss
+    python -m src.graph.faiss_builder --data-dir data
+    python -m src.graph.faiss_builder --entities-file data/interim/entities/normalized_entities_with_ids.json
 """
 
 # Standard library
@@ -109,7 +111,13 @@ class FAISSIndexBuilder:
         logger.info(f"Loading chunk embeddings from {chunks_file}...")
         
         with open(chunks_file, 'r', encoding='utf-8') as f:
-            chunks = json.load(f)
+            chunks_data = json.load(f)
+        
+        # Handle dict structure: {chunk_id: chunk_object}
+        if isinstance(chunks_data, dict):
+            chunks = list(chunks_data.values())
+        else:
+            chunks = chunks_data
         
         # Extract in consistent order
         chunk_ids = []
