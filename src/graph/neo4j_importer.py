@@ -1,16 +1,29 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module: neo4j_importer.py
-Package: src.graph
-Purpose: Core Neo4j import functions with batched UNWIND pattern
+Neo4j Importer for GraphRAG Knowledge Graph
 
-Author: Pau Barba i Colomer
-Created: 2025-12-06
-Modified: 2025-12-06
+Core Neo4j import functionality with batched UNWIND pattern.
+Handles connection management, constraint creation, and all node/relationship imports
+using efficient batch processing with progress tracking.
 
-References:
-    - PHASE_2B_DESIGN.md for schema and import specification
-    - See docs/ARCHITECTURE.md for context
+Import Categories:
+1. Nodes:
+   - Jurisdictions (regulatory sources)
+   - Publications (L1 source papers, L2 cited papers)
+   - Authors and Journals
+   - Chunks (text segments)
+   - Entities (normalized with IDs)
+2. Relationships:
+   - Provenance: CONTAINS, EXTRACTED_FROM
+   - Metadata: AUTHORED_BY, PUBLISHED_IN
+   - Semantic: RELATION (entity-entity)
+   - Enrichment: MATCHED_TO, CITES, SAME_AS
+
+Usage:
+    from src.graph.neo4j_importer import Neo4jImporter
+    importer = Neo4jImporter(uri, user, password)
+    importer.import_jurisdictions(session, data)
 """
 
 # Standard library

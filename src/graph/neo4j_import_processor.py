@@ -1,16 +1,22 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Module: neo4j_import_processor.py
-Package: src.graph
-Purpose: Orchestrate Neo4j import with checkpointing and progress tracking
+Neo4j Import Processor for GraphRAG Knowledge Graph
 
-Author: Pau Barba i Colomer
-Created: 2025-12-06
-Modified: 2025-12-06
+Orchestrates complete Neo4j import with checkpointing and progress tracking.
+Handles loading all input files, database clearing with confirmation,
+import in correct dependency order, and checkpoint management for resume capability.
 
-References:
-    - PHASE_2B_DESIGN.md for import order and file locations
-    - See docs/ARCHITECTURE.md for context
+Features:
+- Checkpointing for resumable imports
+- Automatic file loading and validation
+- Dependency-ordered node and relationship creation
+- Support for both regulatory and academic data sources
+- Enrichment relation integration (citations, entity matching)
+
+Usage:
+    python src/graph/neo4j_import_processor.py --clear --uri bolt://localhost:7687
+    python src/graph/neo4j_import_processor.py --force-restart
 """
 
 # Standard library
