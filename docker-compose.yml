@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Application container: Python + FAISS + BGE + Tests
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: graphrag_app
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      # Neo4j connection (container-to-container)
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=graphrag2024
+      
+      # Together.ai API (from host .env)
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY}
+      
+      # Python configuration
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    
+    volumes:
+      # Mount local data directory (FAISS indices, entities)
+      - ./data:/app/data
+      
+      # Mount source code for development
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      
+      # Logs
+      - ./logs:/app/logs
+    
+    networks:
+      - graphrag
+    
+    # Keep container running for interactive testing
+    command: tail -f /dev/null
+    
+    restart: unless-stopped
+
+  # Neo4j container: Database + GDS plugin
+  neo4j:
+    image: neo4j:5.12.0-enterprise
+    container_name: graphrag_neo4j
+    ports:
+      - "7474:7474"  # HTTP (browser)
+      - "7687:7687"  # Bolt (for host access)
+    environment:
+      # Authentication
+      - NEO4J_AUTH=neo4j/graphrag2024
+      
+      # Accept enterprise license (required for GDS)
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      
+      # GDS plugin configuration
+      - NEO4J_PLUGINS=["graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=gds.*
+      - NEO4J_dbms_security_procedures_allowlist=gds.*
+      
+      # Memory configuration
+      - NEO4J_server_memory_heap_initial__size=2G
+      - NEO4J_server_memory_heap_max__size=4G
+      - NEO4J_server_memory_pagecache_size=2G
+      
+      # Performance tuning
+      - NEO4J_dbms_memory_transaction_total_max=2G
+      - NEO4J_server_jvm_additional=-XX:+UseG1GC
+      
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - ./data/neo4j_import:/var/lib/neo4j/import  # For LOAD CSV
+      - neo4j_plugins:/plugins
+    
+    networks:
+      - graphrag
+    
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    
+    restart: unless-stopped
+
+networks:
+  graphrag:
+    driver: bridge
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_plugins:
+    driver: local
