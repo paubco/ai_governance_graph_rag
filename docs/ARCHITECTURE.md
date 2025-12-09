@@ -1,18 +1,18 @@
 # Architecture
 
 **Project**: AI Governance GraphRAG Pipeline  
-**Version**: 2.0  
-**Last Updated**: December 4, 2025
+**Version**: 3.0  
+**Last Updated**: December 7, 2025
 
 ---
 
 ## 1. Overview
 
-### Goal
+### 1.1 Goal
 
-Build a knowledge graph for AI governance research using adapted RAKG methodology (Zhou et al., 2025) to answer complex regulatory queries across jurisdictions.
+Build a knowledge graph for AI governance research that enables cross-jurisdictional regulatory queries by combining 48 regulatory documents with 158 academic papers. The system implements entity-centric corpus retrospective retrieval following RAKG methodology (Zhang et al., 2025), adapted for the regulatory compliance domain.
 
-### Data Sources
+### 1.2 Data Sources
 
 | Source | Content | Count | Origin |
 |--------|---------|-------|--------|
@@ -20,433 +20,540 @@ Build a knowledge graph for AI governance research using adapted RAKG methodolog
 | **Academic Papers** | Scopus metadata CSV + PDFs (MinerU-parsed) | 158 | Scopus export |
 | **Derived Metadata** | Authors, Journals, References | 572 / 119 / 1,513 | Scopus CSV |
 
-**Note**: Both sources provide metadata AND text. DLA Piper provides jurisdiction codes and scraped legal text. Scopus provides bibliometric metadata and PDFs which are parsed to markdown via MinerU.
-
-### Tech Stack
+### 1.3 Tech Stack
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| **LLM (Extraction)** | Qwen-72B via Together.ai | Phase 1B entity extraction ($30) |
+| **LLM (Extraction)** | Qwen-72B via Together.ai | Phase 1B entity extraction |
 | **LLM (Disambiguation)** | Qwen-7B via Together.ai | Phase 1C |
-| **LLM (Relations)** | Mistral-7B via Together.ai | Phase 1D (Qwen-7B has JSON infinite loop bug) |
+| **LLM (Relations)** | Mistral-7B via Together.ai | Phase 1D (Qwen has JSON bug) |
+| **LLM (Generation)** | Configurable (Claude/Qwen) | Phase 3 |
 | **Embeddings** | BGE-M3 (1024-dim, multilingual) | All phases |
-| **Blocking** | FAISS HNSW | Phase 1C clustering/candidate generation |
-| **Graph DB** | Neo4j 5.x | Graph traversal, no embeddings |
-| **Vector Store** | TBD (FAISS file or external) | Embeddings too large for Neo4j (1.5GB) |
+| **Graph DB** | Neo4j Aura Free | Graph traversal, ~100MB |
+| **Vector Store** | FAISS (HNSW) | Entity + chunk indices, ~320MB |
 | **Hardware** | RTX 3060 GPU (12GB VRAM) | Local embedding computation |
 
-### Methodology
+### 1.4 Methodology Sources
 
-| Component | Source | Notes |
-|-----------|--------|-------|
-| Entity extraction | RAKG (Zhou et al., 2025) | Pre-entity extraction per chunk |
-| Entity disambiguation | **Adapted** from RAKG | FAISS blocking replaces VecJudge (see § 3.1) |
-| Relation extraction base | RAGulating Compliance (Chen et al., 2024) | OpenIE-style triplets |
-| Two-track extraction | **Novel contribution** | Semantic vs academic entity separation |
-| Blocking approach | Papadakis et al. (2021), Malkov & Yashunin (2020) | Entity resolution literature |
+| Component | Source | Reference |
+|-----------|--------|-----------|
+| Entity extraction | RAKG | Zhang et al. (2025) |
+| Entity disambiguation | Adapted RAKG | See § 4.2 |
+| Relation extraction | RAGulating Compliance | Agarwal et al. (2025) |
+| Retrieval | RAKG corpus retrospective | Zhang et al. (2025) |
+| Blocking | Entity resolution literature | Papadakis et al. (2021) |
+| Embeddings | BGE-M3 | Chen et al. (2024) |
 
 ---
 
-## 2. Pipeline Architecture
+## 2. System Architecture
+
+### 2.1 Code Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        DATA INGESTION                               │
-│                      src/ingestion/                                 │
-│                                                                     │
-│  ┌─────────────────────────┐    ┌─────────────────────────────────┐│
-│  │ DLA Piper (48 regs)     │    │ Scopus (158 papers)             ││
-│  │ • Jurisdiction metadata │    │ • Bibliometric CSV              ││
-│  │ • Legal text (scraped)  │    │ • PDFs → MinerU → markdown      ││
-│  └───────────┬─────────────┘    └────────────────┬────────────────┘│
-│              └────────────────┬──────────────────┘                 │
-│                               ▼                                     │
-│                   ┌───────────────────┐                            │
-│                   │  DocumentLoader   │ → 206 unified documents    │
-│                   └─────────┬─────────┘                            │
-└─────────────────────────────┼──────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 1A: CHUNKING                                 │
-│              src/processing/chunking/                               │
-│                                                                     │
-│  SemanticChunker → ChunkProcessor → 25,131 chunks                  │
-│                                                                     │
-│  Each chunk has metadata:                                           │
-│  • doc_type: "regulation" | "academic_paper"                       │
-│  • jurisdiction: "ES" (regulations only)                           │
-│  • scopus_id: "85123456" (papers only)                             │
-│  • section_title: "User transparency"                              │
-│                                                                     │
-│  Output: data/processed/chunks/chunks_embedded.json                 │
-└─────────────────────────────────────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 1B: ENTITY EXTRACTION                        │
-│              src/processing/entities/                               │
-│                                                                     │
-│  Model: Qwen-72B via Together.ai ($30)                             │
-│  Method: RAKG pre-entity extraction (Zhou et al., 2025)            │
-│                                                                     │
-│  RAKGEntityExtractor → ParallelEntityProcessor → ~200K pre-entities│
-│                                                                     │
-│  Output: data/interim/entities/pre_entities.json                    │
-│  ⚠️  Expensive to re-run - checkpoint frequently                   │
-└─────────────────────────────────────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 1C: ENTITY DISAMBIGUATION                    │
-│              src/processing/entities/                               │
-│                                                                     │
-│  *** ADAPTED FROM RAKG - See § 3.1 ***                             │
-│                                                                     │
-│  Model: Qwen-7B (disambiguation decisions)                         │
-│  Blocking: FAISS HNSW (candidate pair generation)                  │
-│                                                                     │
-│  Pipeline:                                                          │
-│  ┌────────────────────┐                                            │
-│  │filter_pre_entities │ → Exact dedup (200K → 143K)                │
-│  └─────────┬──────────┘                                            │
-│            ▼                                                        │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  4-Stage Tiered Threshold Pipeline                        │      │
-│  │  Stage 1: FAISS HNSW blocking (cosine > 0.70)            │      │
-│  │  Stage 2: Aggressive Merge (cosine > 0.90)               │      │
-│  │  Stage 3: Conservative Merge (cosine > 0.85)             │      │
-│  │  Stage 4: Final Polish (cosine > 0.82) → 76K final       │      │
-│  └──────────────────────────────────────────────────────────┘      │
-│            ▼                                                        │
-│  ┌────────────────────┐                                            │
-│  │  add_entity_ids    │ → Deterministic hash IDs for O(1) lookup   │
-│  └────────────────────┘                                            │
-│                                                                     │
-│  Output: data/processed/entities/normalized_entities_with_ids.json  │
-│          data/processed/entities/entity_name_to_id.json             │
-└─────────────────────────────────────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 1D: RELATION EXTRACTION                      │
-│              src/processing/relations/                              │
-│                                                                     │
-│  *** TWO-TRACK STRATEGY (Novel) - See § 3.2 ***                    │
-│                                                                     │
-│  Model: Mistral-7B (Qwen-7B has JSON infinite loop bug)            │
-│  Base method: OpenIE triplets per RAGulating (Chen et al., 2024)   │
-│                                                                     │
-│  ┌────────────────────────┐                                        │
-│  │build_entity_cooccurrence│ → 3 typed matrices                    │
-│  └───────────┬────────────┘                                        │
-│              ▼                                                      │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  Track 1 (Semantic): Concepts, Orgs, Tech, Regulations   │      │
-│  │    • Full OpenIE extraction                              │      │
-│  │    • Any predicate discovered                            │      │
-│  │    • ~120K relations                                     │      │
-│  ├──────────────────────────────────────────────────────────┤      │
-│  │  Track 2 (Academic): Citations, Authors, Journals        │      │
-│  │    • Constrained extraction                              │      │
-│  │    • Fixed predicates: discusses, publishes_about        │      │
-│  │    • Concept-only objects                                │      │
-│  │    • ~35K relations                                      │      │
-│  └──────────────────────────────────────────────────────────┘      │
-│            ▼                                                        │
-│  ┌────────────────────┐                                            │
-│  │normalize_relations │ → Add IDs via name lookup, Neo4j format    │
-│  └────────────────────┘                                            │
-│                                                                     │
-│  ⚠️  Relations extracted before add_entity_ids ran - IDs added     │
-│      post-hoc via name matching in normalize_relations.py          │
-│                                                                     │
-│  Output: data/processed/neo4j_edges.jsonl (105K relations)         │
-└─────────────────────────────────────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 2A: SCOPUS ENRICHMENT                        │
-│                  src/enrichment/                                    │
-│                                                                     │
-│  Files: enrichment_processor.py (orchestrator)                      │
-│         scopus_enricher.py (core matching)                          │
-│         jurisdiction_matcher.py (country linking)                   │
-│         tests/test_enrichment.py (16 unit tests)                    │
-│                                                                     │
-│  Pipeline (10 steps):                                               │
-│  1. Parse Scopus CSV (158 pubs, 572 authors, 119 journals)         │
-│  2. Parse references field (1,513 references)                       │
-│  3. Identify citation entities (3-tier: type/discusses/pattern)     │
-│  4. Build chunk→L1 mapping (uses 'eid' field)                       │
-│  5. Match citations to references (provenance-constrained)          │
-│  6. Match jurisdiction entities (41 SAME_AS links)                  │
-│  7. Generate 5 relation types                                       │
-│  8. Quality report                                                  │
-│  9. Save outputs                                                    │
-│                                                                     │
-│  Output: data/processed/{entities,relations,reports}/*.json         │
-└─────────────────────────────────────────────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PHASE 2B: NEO4J STORAGE                            │
-│                                                                     │
-│  ⚠️  Embeddings (1.5GB) stored in FAISS, NOT in Neo4j              │
-│                                                                     │
-│  Neo4j stores graph structure only:                                 │
-│  • :Jurisdiction nodes (48) - top-level for regulations            │
-│  • :Publication nodes (158 L1 + L2s) - top-level for papers        │
-│  • :Chunk nodes (25K) - no embeddings, metadata only               │
-│  • :Entity nodes (76K) - no embeddings                             │
-│  • :Author nodes (572)                                              │
-│  • :Journal nodes (119)                                             │
-│                                                                     │
-│  Relationships:                                                     │
-│  • :CONTAINS (Jurisdiction/Publication → Chunk)                    │
-│  • :EXTRACTED_FROM (Entity → Chunk) - provenance                   │
-│  • :RELATION {predicate, chunk_ids} (Entity → Entity)              │
-│  • :AUTHORED_BY (Publication → Author)                             │
-│  • :PUBLISHED_IN (Publication → Journal)                           │
-│  • :MATCHED_TO (Citation Entity → L2Publication)                   │
-│  • :CITES (L1 Publication → L2Publication)                         │
-│  • :SAME_AS (Country Entity → Jurisdiction)                        │
-└─────────────────────────────────────────────────────────────────────┘
+src/
+├── ingestion/                    # Data loading
+│   ├── document_loader.py        # Unified loader for DLA Piper + Scopus
+│   └── scopus_parser.py          # CSV metadata extraction
+│
+├── processing/
+│   ├── chunking/
+│   │   ├── semantic_chunker.py   # Sentence-boundary chunking
+│   │   └── chunk_processor.py    # Orchestrator + embedding
+│   │
+│   ├── entities/
+│   │   ├── entity_extractor.py   # RAKG pre-entity extraction (Qwen-72B)
+│   │   ├── entity_processor.py   # Parallel processing orchestrator
+│   │   ├── disambiguation.py     # FAISS blocking + tiered thresholds
+│   │   └── add_entity_ids.py     # Deterministic hash ID generation
+│   │
+│   └── relations/
+│       ├── build_entity_cooccurrence.py  # 3 typed matrices
+│       ├── run_relation_extraction.py    # OpenIE triplets (Mistral-7B)
+│       └── normalize_relations.py        # ID mapping + Neo4j format
+│
+├── enrichment/
+│   ├── enrichment_processor.py   # Orchestrator (10-step pipeline)
+│   ├── scopus_enricher.py        # Citation matching, author/journal nodes
+│   └── jurisdiction_matcher.py   # Country entity → Jurisdiction linking
+│
+├── graph/
+│   ├── neo4j_import_processor.py # Batch import to Neo4j Aura
+│   └── faiss_builder.py          # Build HNSW indices
+│
+├── retrieval/                    # Phase 3: Query-time
+│   ├── pipeline.py               # RetrievalPipeline (mode: naive/graphrag)
+│   ├── query_parser.py           # Embed query, extract mentions, filters
+│   ├── entity_resolver.py        # Query mentions → canonical entities
+│   ├── corpus_retriever.py       # Provenance + similarity retrieval
+│   ├── graph_expander.py         # Relations + 1-hop neighbors
+│   ├── ranker.py                 # Scoring, dedup, context fitting
+│   ├── prompt_builder.py         # Structured prompt construction
+│   └── generator.py              # LLM call + response parsing
+│
+└── utils/
+    ├── config.py                 # Paths, API keys, thresholds
+    ├── embeddings.py             # BGE-M3 wrapper
+    └── llm_client.py             # Together.ai / Anthropic client
+
+data/
+├── raw/                          # Original inputs (read-only)
+│   ├── dla_piper/                # 48 jurisdiction JSONs
+│   └── scopus/                   # CSV + PDFs
+├── interim/                      # Checkpoints (resumable)
+│   ├── chunks/
+│   ├── entities/
+│   └── relations/
+└── processed/                    # Final outputs
+    ├── chunks/                   # chunks_embedded.json
+    ├── entities/                 # normalized_entities_with_ids.json
+    ├── relations/                # neo4j_edges.jsonl
+    ├── neo4j/                    # Import-ready files
+    └── faiss/                    # .faiss indices + ID mappings
+```
+
+### 2.2 Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DATA PREPARATION                                    │
+│                                                                             │
+│   DLA Piper (48 jurisdictions)          Scopus (158 papers)                │
+│   • Web scrape → JSON                   • PDF → MinerU → Markdown           │
+│                     └──────────┬──────────┘                                 │
+│                                ▼                                            │
+│                    DocumentLoader → 206 unified documents                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+═══════════════════════════════════════════════════════════════════════════════
+                    PHASE 1: KNOWLEDGE GRAPH CONSTRUCTION
+═══════════════════════════════════════════════════════════════════════════════
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1A: CHUNKING                                                         │
+│  SemanticChunker → 25,131 chunks with BGE-M3 embeddings                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1B: ENTITY EXTRACTION                                                │
+│  Qwen-72B + RAKG method → ~200K pre-entities                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1C: ENTITY DISAMBIGUATION                                            │
+│  FAISS blocking + tiered thresholds → 55,695 normalized entities           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1D: RELATION EXTRACTION                                              │
+│  Mistral-7B + OpenIE (two-track) → 105,456 validated relations             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+═══════════════════════════════════════════════════════════════════════════════
+                       PHASE 2: ENRICHMENT & STORAGE
+═══════════════════════════════════════════════════════════════════════════════
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 2A: SCOPUS ENRICHMENT                                                │
+│  Add Authors, Journals, L2Publications; match citations; link jurisdictions │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 2B: STORAGE                                                          │
+│  Neo4j (graph structure) + FAISS (vector indices)                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                 │
+═══════════════════════════════════════════════════════════════════════════════
+                      PHASE 3: RETRIEVAL & GENERATION
+═══════════════════════════════════════════════════════════════════════════════
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Query → Parse → Resolve Entities → Retrieve Context → Rank → Generate     │
+│                                                                             │
+│  Modes: naive (baseline) | graphrag (full) | graphrag_lite (ablation)      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.3 Dual Storage Architecture
+
+```
+┌─────────────────────────────────┐     ┌─────────────────────────────────┐
+│  FAISS (Vector Search)          │     │  Neo4j (Graph Traversal)        │
+│                                 │     │                                 │
+│  entities.faiss                 │     │  :Jurisdiction (48)             │
+│  • 55,695 × 1024-dim            │◄───►│  :Publication (715)             │
+│  • HNSW index                   │     │  :Chunk (25,131)                │
+│                                 │     │  :Entity (55,695)               │
+│  chunks.faiss                   │     │  :Author (572)                  │
+│  • 25,131 × 1024-dim            │     │  :Journal (119)                 │
+│  • HNSW index                   │     │                                 │
+│                                 │     │  Relationships:                 │
+│  Linked via entity_id/chunk_id  │     │  RELATION, EXTRACTED_FROM,      │
+│                                 │     │  CONTAINS, AUTHORED_BY,         │
+│  Size: ~320MB                   │     │  PUBLISHED_IN, CITES, etc.      │
+└─────────────────────────────────┘     │                                 │
+                                        │  Size: ~100MB                   │
+                                        └─────────────────────────────────┘
 ```
 
 ---
 
-## 3. Methodology Adaptations
+## 3. Pipeline Phases
 
-### 3.1 Phase 1C: Deviation from RAKG VecJudge
+### 3.0 Data Preparation
 
-**Problem discovered**: RAKG's VecJudge methodology produced 15.2M candidate pairs on our corpus (expected: 500K-1M), requiring 77 hours and $300-400 in LLM costs.
+Raw data consists of 48 jurisdiction JSONs scraped from DLA Piper's "AI Laws of the World" database (2024) and 158 academic PDFs processed through MinerU for markdown extraction. Scopus CSV provides bibliometric metadata (authors, journals, references). The pipeline assumes these exist in `data/raw/`.
 
-**Root cause**: RAKG assumes 50-150 entities per document. Our corpus averages 755 entities/document due to regulatory text density, causing quadratic explosion in pairwise comparisons.
+---
 
-**Adaptation**: Replaced full VecJudge with FAISS HNSW blocking + tiered thresholds.
+### 3.1 Knowledge Graph Construction
+
+#### 3.1.1 Phase 1A: Chunking
+
+**Method**: Semantic chunking at sentence boundaries, respecting document structure.
+
+**Input**: 206 unified documents  
+**Output**: 25,131 chunks (~500 tokens avg)
+
+Each chunk contains:
+- `chunk_id`: Unique identifier
+- `text`: Chunk content
+- `embedding`: 1024-dim BGE-M3 vector
+- `metadata`: `{doc_type, jurisdiction|scopus_id, section_title}`
+
+**Embedding model**: BGE-M3 (Chen et al., 2024) — chosen for multilingual support across regulatory texts.
+
+---
+
+#### 3.1.2 Phase 1B: Entity Extraction
+
+**Method**: RAKG pre-entity extraction (Zhang et al., 2025)
+
+**Model**: Qwen-72B via Together.ai
+
+The LLM analyzes each chunk to identify entities with:
+- `name`: Canonical form
+- `type`: One of [Concept, Organization, Technology, Regulation, Person, Country, Academic Citation, ...]
+- `description`: Brief disambiguation context
+- `chunk_id`: Provenance link
+
+**Output**: ~200K pre-entities  
+**Cost**: ~$30 (6-8 hours)
+
+---
+
+#### 3.1.3 Phase 1C: Entity Disambiguation
+
+**Problem**: Same entity appears with variant surface forms ("EU AI Act" vs "AI Act" vs "Regulation 2024/1689").
+
+**Method**: Two-stage process:
+
+1. **Exact deduplication**: Normalize case/whitespace (200K → 143K)
+2. **Semantic clustering**: FAISS HNSW blocking + tiered thresholds (143K → 55,695)
+
+**Tiered threshold pipeline**:
+
+| Stage | Cosine Threshold | Purpose |
+|-------|------------------|---------|
+| 1 | > 0.70 | FAISS candidate generation |
+| 2 | > 0.90 | Aggressive merge (obvious duplicates) |
+| 3 | > 0.85 | Conservative merge |
+| 4 | > 0.82 | Final polish |
+
+**ID generation**: Deterministic SHA-256 hash of `{name}:{type}` for reproducibility.
+
+**Output**: 55,695 normalized entities with embeddings and IDs
+
+---
+
+#### 3.1.4 Phase 1D: Relation Extraction
+
+**Method**: OpenIE-style triplet extraction per RAGulating Compliance (Agarwal et al., 2025)
+
+**Model**: Mistral-7B via Together.ai (Qwen-7B has JSON infinite loop bug at temperature=0)
+
+**Two-track strategy**:
+
+| Track | Entity Types | Predicates | Rationale |
+|-------|--------------|------------|-----------|
+| **Semantic** | Concepts, Orgs, Tech, Regulations | Any (OpenIE) | Domain knowledge |
+| **Academic** | Citations, Authors, Journals | `discusses` only | Avoid duplicating Scopus |
+
+**Validation**: Relations only emitted if both subject and object exist in the entity index — construction-time grounding.
+
+**Output**: 105,456 validated relations (20,832 unique predicates)
+
+---
+
+### 3.2 Enrichment & Storage
+
+#### 3.2.1 Phase 2A: Scopus Metadata Enrichment
+
+**Purpose**: Add structured metadata that text extraction cannot provide reliably.
+
+**Created nodes**:
+- 572 Author nodes
+- 119 Journal nodes  
+- 557 L2Publication nodes (cited works)
+
+**Matching**:
+- Citation entities → Scopus references (provenance-constrained matching)
+- Country entities → Jurisdiction nodes (41 SAME_AS links)
+
+**Generated relationships**: `AUTHORED_BY`, `PUBLISHED_IN`, `CITES`, `MATCHED_TO`, `SAME_AS`
+
+---
+
+#### 3.2.2 Phase 2B: Graph & Vector Import
+
+**Neo4j schema**:
+
+```cypher
+// Document layer
+(:Jurisdiction {code, name, url})
+(:Publication {scopus_id, title, year, doi})
+(:L2Publication {title, year, doi, matched_confidence})
+
+// Content layer
+(:Chunk {chunk_id, text, metadata})
+(:Entity {entity_id, name, type, description, chunk_ids, frequency})
+
+// Metadata layer
+(:Author {author_id, name, scopus_id})
+(:Journal {journal_id, name, issn})
+
+// Key relationships
+(:Jurisdiction)-[:CONTAINS]->(:Chunk)
+(:Publication)-[:CONTAINS]->(:Chunk)
+(:Entity)-[:EXTRACTED_FROM]->(:Chunk)
+(:Entity)-[:RELATION {predicate, chunk_ids}]->(:Entity)
+(:Publication)-[:AUTHORED_BY]->(:Author)
+(:Publication)-[:PUBLISHED_IN]->(:Journal)
+(:Publication)-[:CITES]->(:L2Publication)
+(:Entity)-[:MATCHED_TO]->(:L2Publication)
+(:Entity)-[:SAME_AS]->(:Jurisdiction)
+```
+
+**FAISS indices**:
+- `entities.faiss`: 55,695 entity embeddings (HNSW)
+- `chunks.faiss`: 25,131 chunk embeddings (HNSW)
+- ID mapping JSONs link FAISS index positions to graph IDs
+
+---
+
+### 3.3 Retrieval & Generation
+
+**Method**: Entity-centric corpus retrospective retrieval (Zhang et al., 2025), adapted for QA.
+
+**Core principle**: Entities are the entry point. Chunks retrieved via provenance (high confidence) and similarity (medium confidence).
+
+**Retrieval modes**:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `naive` | Query → FAISS chunk search → Top-K → Generate | Baseline |
+| `graphrag` | Full entity-centric pipeline | Primary |
+| `graphrag_lite` | Entities + provenance only | Ablation |
+
+---
+
+#### 3.3.1 Query Understanding
+
+**Steps**:
+1. **Embed query** using BGE-M3
+2. **Extract entity mentions** from query text (rule-based + NER)
+3. **Parse filters** (jurisdiction, doc_type, date range)
+4. **Resolve mentions → canonical entities**:
+   - Exact match: `MATCH (e:Entity) WHERE toLower(e.name) = toLower($mention)`
+   - Fuzzy match: FAISS entity search with cosine threshold
+
+**Output**: Set of canonical entity IDs + query embedding + filters
+
+---
+
+#### 3.3.2 Context Retrieval
+
+**Two retrieval paths per entity**:
+
+| Path | Method | Confidence |
+|------|--------|------------|
+| **Provenance** | `(e:Entity)-[:EXTRACTED_FROM]->(c:Chunk)` | High — entity definitely here |
+| **Similarity** | FAISS chunk search with entity embedding | Medium — entity likely relevant |
+
+**Graph expansion** (optional):
+- Inter-entity relations: `(e1)-[:RELATION]->(e2)` where both matched
+- 1-hop neighbors: Related entities not in query
+- Jurisdiction context via chunk metadata
+
+**Filtering**: Jurisdiction/doc_type filters applied to both paths.
+
+---
+
+#### 3.3.3 Ranking & Prompt Assembly
+
+**Scoring function**:
+```
+score = w1 * vector_similarity
+      + w2 * entity_mention_count  
+      + w3 * jurisdiction_match_bonus
+      + w4 * is_provenance_chunk
+```
+
+**Assembly**:
+1. Deduplicate chunks (keep highest score)
+2. Sort by score, take top-K within token budget
+3. Build structured prompt:
+
+```
+ENTITIES:
+  - EU AI Act (Legislation): Regulation (EU) 2024/1689...
+  - emotion recognition (Technology): AI systems that...
+
+RELATIONS:
+  - EU AI Act --regulates--> emotion recognition [3 chunks]
+
+SOURCES:
+  [EU-Art50] "Deployers of emotion recognition systems..."
+  [ES-Impl] "Spain designates the AESIA as..."
+
+QUESTION: {user_query}
+```
+
+---
+
+#### 3.3.4 Answer Generation
+
+**Model**: Configurable (Claude Sonnet / Qwen-72B / local)
+
+**Parameters**:
+- Temperature: 0.3 (factual)
+- Max tokens: 2000
+- System prompt: "Answer based only on provided context. Cite sources."
+
+**Output**:
+- Answer with inline citations `[EU-Art50]`
+- Provenance summary (entities, jurisdictions, chunk count)
+- "Unable to answer from context" if insufficient evidence
+
+---
+
+#### 3.3.5 Evaluation Strategy
+
+**Test set**: 20-30 questions covering:
+- Single-jurisdiction factual: "What is Spain's definition of AI system?"
+- Cross-jurisdictional: "How do EU and US approaches to facial recognition differ?"
+- Academic-regulatory bridge: "What research supports the EU AI Act's transparency requirements?"
+- Negative: "What does Brazil say about quantum computing?" (not in corpus)
+
+**Metrics**:
+
+| Metric | Description |
+|--------|-------------|
+| Answer relevance | Manual 1-5 rating |
+| Factual accuracy | Binary: claims supported by citations? |
+| Citation precision | % of citations that support their claims |
+| Source diversity | # unique jurisdictions/papers |
+
+**Comparison**: Same metrics across `naive` vs `graphrag` vs `graphrag_lite` modes.
+
+---
+
+## 4. Methodological Contributions
+
+### 4.1 Two-Track Relation Extraction
+
+**Novel contribution**: Separating semantic entities from academic entities with different extraction strategies.
+
+| Track | Entity Types | Extraction | Why |
+|-------|--------------|------------|-----|
+| Semantic | Concepts, Orgs, Tech, Regs | Full OpenIE | Domain knowledge backbone |
+| Academic | Citations, Authors, Journals | `discusses` only | Scopus provides citation networks |
+
+**Key insight**: Academic-to-academic relations (citation networks) come from structured Scopus metadata, not text extraction. This avoids redundancy and leverages higher-quality source data.
+
+---
+
+### 4.2 Scalable Entity Disambiguation via Blocking
+
+**Problem**: RAKG's VecJudge produces O(n²) candidate pairs. Our corpus density (755 entities/doc vs RAKG's 50-150) caused explosion to 15.2M pairs (77 hours, $300-400).
+
+**Solution**: FAISS HNSW blocking + tiered thresholds from entity resolution literature (Papadakis et al., 2021).
 
 | Approach | Candidate Pairs | Time | Cost |
 |----------|-----------------|------|------|
-| Original RAKG VecJudge | 15.2M | 77 hrs | $300-400 |
-| **Our adaptation** | 250K | 6 hrs | $6 |
+| RAKG VecJudge | 15.2M | 77 hrs | $300-400 |
+| **Our blocking** | 250K | 6 hrs | $6 |
 
-**Literature grounding**:
-- FAISS HNSW algorithm: Malkov, Y., & Yashunin, D. (2020). "Efficient and Robust Approximate Nearest Neighbor Search Using HNSW Graphs." IEEE TPAMI.
-- Blocking strategies: Papadakis, G., et al. (2021). "Blocking and Filtering Techniques for Entity Resolution: A Survey." ACM Computing Surveys.
-- BGE-M3 cross-lingual matching: Chen, J., et al. (2024). "BGE M3-Embedding." arXiv:2402.03216.
-
-**Academic contribution**: Demonstrated RAKG's brittleness at higher entity densities and validated hybrid blocking approaches from entity resolution literature as compatible extensions.
+**Contribution**: Demonstrated RAKG's brittleness at higher entity densities; validated blocking as compatible extension.
 
 ---
 
-### 3.2 Phase 1D: Two-Track Relation Extraction (Novel)
+### 4.3 Construction-Time Relation Validation
 
-**Base methodology**: OpenIE-style triplet extraction per RAGulating Compliance (Chen et al., 2024).
+**RAKG approach**: "LLM as Judge" validates at query time.
 
-**Novel contribution**: Two-track strategy separating semantic from academic entities.
+**Our approach**: Validate at construction time:
+- Relations only created if both entities exist in index
+- Every entity has `EXTRACTED_FROM` provenance links
+- Result: 100% entity grounding, zero hallucinated references
 
-| Track | Entity Types | Predicate | Objects | Rationale |
-|-------|-------------|-----------|---------|-----------|
-| **Track 1** | Concepts, Orgs, Tech, Regulations | Any (OpenIE) | Any semantic | Domain knowledge backbone |
-| **Track 2** | Citations, Authors, Journals | `discusses` | Concepts only | Literature→concept mapping |
-
-**Key principles (novel)**:
-
-1. **Bidirectionality Principle**: Relations missed during entity A's extraction may be captured when co-occurring entities are processed as subjects. This justifies reducing chunks per entity (10 instead of 20) without losing coverage.
-
-2. **Typed Co-occurrence Matrices**: Pre-compute three matrices (semantic, concept, full) to enable clean track separation without runtime filtering.
-
-3. **No academic-to-academic relations**: Citation networks are handled by Scopus metadata (Phase 2A), not text extraction. Avoids duplicating what structured data provides better.
+**Trade-off**: Less flexible than query-time validation, but zero runtime cost and simpler implementation.
 
 ---
 
-### 3.3 Phase 2A: Scopus Metadata Enrichment
+## 5. Cost & Timeline
 
-**Design principle**: Phase 1D captures WHAT papers discuss (text-derived). Phase 2A captures WHO wrote them and WHERE published (metadata-derived). Complementary, not redundant.
+### 5.1 Construction (One-Time)
 
-**Source paper vs. mentioned paper distinction**:
-- **Source papers** (158): Papers we parsed with MinerU. Have full Scopus metadata.
-- **Mentioned papers** (7,023 entities): Papers cited in source papers' text. May match Scopus references.
+| Stage | Time | Cost |
+|-------|------|------|
+| Ingestion + Chunking | 15 min | $0 |
+| Embedding (chunks) | 30 min | $0 |
+| Entity Extraction | 6-8 hrs | ~$30 |
+| Entity Disambiguation | 6 hrs | ~$6 |
+| Relation Extraction | 2-3 days | ~$7 |
+| Enrichment + Import | 2 hrs | $0 |
+| **Total** | **~4-5 days** | **~$43** |
 
-**Matching approach**:
-1. Find which chunk the citation entity came from (provenance)
-2. Identify the source paper for that chunk
-3. Match against Scopus metadata for papers cited BY that source paper (References field)
+### 5.2 Query (Per Request)
 
-**Matching strategies** (confidence order):
-1. DOI exact match (1.0)
-2. Author surname + year (0.95)
-3. Title fuzzy via embedding (0.80)
-4. References field cross-reference (0.75)
-
-**Jurisdiction entity linking** (optional):
-
-Country/region entities like "European Union" need linking to Jurisdiction nodes:
-```
-Entity("European Union") --[SAME_AS]--> Jurisdiction(EU)
-```
-
-| Entity Type | How It's Linked |
-|-------------|-----------------|
-| Country/region entities | SAME_AS → Jurisdiction (direct name match) |
-| Regulatory entities (GDPR, EU AI Act) | Via provenance: EXTRACTED_FROM → Chunk ← CONTAINS Jurisdiction |
-| Organizations (CNIL, FTC) | Not linked (would require external knowledge) |
-
-Implementation is simple post-disambiguation lookup: 41 matches expected.
+| Step | Time | Cost |
+|------|------|------|
+| Parse + Resolve | <1 sec | $0 |
+| Retrieval + Expansion | <1 sec | $0 |
+| Ranking | <1 sec | $0 |
+| Generation | 5-15 sec | $0.01-0.05 |
+| **Total** | **~10-20 sec** | **~$0.02-0.10** |
 
 ---
 
-## 4. Graph Schema
-
-```cypher
-// ============================================
-// TOP-LEVEL DOCUMENT NODES
-// ============================================
-
-(:Jurisdiction {
-  code: "ES",
-  name: "Spain",
-  url: "https://...",
-  scraped_date: "2025-11-06",
-  source_file: "ES.json"
-})
-
-(:Publication {
-  scopus_id: "85123456",
-  title: "Algorithmic Fairness...",
-  authors: ["Smith, J."],
-  year: 2023,
-  journal: "Nature",
-  doi: "10.1234/...",
-  source_file: "paper_123"
-})
-
-// ============================================
-// CONTENT LAYER
-// ============================================
-
-(:Chunk {
-  chunk_id: "chunk_ES_001",
-  text: "Article 50...",
-  // NO embedding - stored externally
-  metadata: {
-    doc_type: "regulation" | "academic_paper",
-    jurisdiction: "ES",         // Only for regulations
-    eid: "2-s2.0-85123456",     // Only for papers (Scopus EID)
-    section_title: "User transparency"
-  }
-})
-
-(:Entity {
-  entity_id: "ent_a3f4e9c2d5b1",
-  name: "EU AI Act",
-  type: "Regulation",
-  description: "...",
-  chunk_ids: ["chunk_ES_001", ...],
-  frequency: 127
-  // NO embedding - stored externally
-})
-
-// ============================================
-// METADATA NODES (Phase 2A)
-// ============================================
-
-(:Author {
-  author_id: "author_12345",
-  name: "Luciano Floridi",
-  scopus_id: "12345678"
-})
-
-(:Journal {
-  journal_id: "journal_abc",
-  name: "Nature",
-  issn: "1234-5678"
-})
-
-// ============================================
-// RELATIONSHIPS
-// ============================================
-
-// Document containment
-(:Jurisdiction)-[:CONTAINS]->(:Chunk)
-(:Publication)-[:CONTAINS]->(:Chunk)
-
-// Provenance
-(:Entity)-[:EXTRACTED_FROM]->(:Chunk)
-
-// Knowledge graph
-(:Entity)-[:RELATION {predicate: "regulates", chunk_ids: [...]}]->(:Entity)
-
-// Academic metadata
-(:Publication)-[:AUTHORED_BY]->(:Author)
-(:Publication)-[:PUBLISHED_IN]->(:Journal)
-(:Entity {type: "Academic Citation"})-[:MATCHED_TO]->(:Publication)
-
-// Jurisdiction linking (country entities only)
-(:Entity {type: "Country"})-[:SAME_AS]->(:Jurisdiction)
-```
-
----
-
-## 5. Storage Architecture
-
-```
-┌─────────────────────────────────────┐
-│  External Vector Store (TBD)        │  ← Semantic similarity search
-│  • Entity embeddings (76K × 1024)   │
-│  • Chunk embeddings (25K × 1024)    │
-│  Size: ~1.5GB                       │
-│  Options: FAISS file, Pinecone,     │
-│           Weaviate, Qdrant          │
-└─────────────────────────────────────┘
-            ↕ (linked by entity_id / chunk_id)
-┌─────────────────────────────────────┐
-│  Neo4j Knowledge Graph              │  ← Graph traversal
-│  • Jurisdictions: 48 nodes          │
-│  • Publications: 158 nodes          │
-│  • Chunks: 25K nodes (no embed)     │
-│  • Entities: 76K nodes (no embed)   │
-│  • Authors: 572 nodes               │
-│  • Journals: 119 nodes              │
-│  • Relations: 105K edges           │
-│  Size: ~100MB                       │
-└─────────────────────────────────────┘
-```
-
----
-
-## 6. Processing Timeline
-
-| Stage | Input | Output | Time | Cost |
-|-------|-------|--------|------|------|
-| Ingestion | raw/ | documents | 3 sec | $0 |
-| Chunking | documents | 25K chunks | 10 min | $0 |
-| Embedding | chunks | embedded chunks | 30 min | $0 |
-| Entity Extraction | chunks | 200K pre-entities | 6-8 hrs | ~$30 |
-| Entity Filtering | 200K pre-entities | 143K entities | 2 min | $0 |
-| Disambiguation | 143K entities | 76K entities | 6 hrs | ~$6 |
-| ID Generation | 76K entities | entities + IDs | 1 min | $0 |
-| Co-occurrence | 76K entities | 3 matrices | 30 min | $0 |
-| Relation Extraction | entities + matrices | 105K relations | 2-3 days | ~$7 |
-| Relation Normalization | relations | Neo4j files | 5 min | $0 |
-| Scopus Enrichment | Neo4j + Scopus | enriched graph | 1-2 hrs | $0 |
-| **Total** | | | ~4-5 days | **~$43** |
-
----
-
-## 7. References
+## 6. References
 
 ### Core Methodologies
 
-1. **RAKG**: Zhou, Y., et al. (2025). "RAKG: Document-level Retrieval-Augmented Knowledge Graph Construction." arXiv:2504.09823.
+1. **Zhang, H., et al. (2025)**. "RAKG: Document-level Retrieval Augmented Knowledge Graph Construction." arXiv.
 
-2. **RAGulating Compliance**: Chen, X., et al. (2024). "Ontology-free Relation Extraction for Regulatory Documents."
+2. **Agarwal, B., et al. (2025)**. "RAGulating Compliance: Leveraging AI for Multi-Jurisdictional Regulatory Knowledge Graphs."
 
-### Entity Resolution / Blocking
+### Entity Resolution
 
-3. **FAISS HNSW**: Malkov, Y., & Yashunin, D. (2020). "Efficient and Robust Approximate Nearest Neighbor Search Using HNSW Graphs." IEEE TPAMI.
+3. **Papadakis, G., et al. (2021)**. "Blocking and Filtering Techniques for Entity Resolution: A Survey." ACM Computing Surveys.
 
-4. **Blocking Survey**: Papadakis, G., et al. (2021). "Blocking and Filtering Techniques for Entity Resolution: A Survey." ACM Computing Surveys.
+4. **Malkov, Y., & Yashunin, D. (2020)**. "Efficient and Robust Approximate Nearest Neighbor Search Using HNSW Graphs." IEEE TPAMI.
 
 ### Embeddings
 
-5. **BGE-M3**: Chen, J., et al. (2024). "BGE M3-Embedding: Multi-Functionality, Multi-Linguality, and Multi-Granularity Text Embeddings." arXiv:2402.03216.
+5. **Chen, J., et al. (2024)**. "BGE M3-Embedding: Multi-Functionality, Multi-Linguality, and Multi-Granularity Text Embeddings." arXiv:2402.05816.
 
 ### Data Sources
 
-6. **DLA Piper**: DLA Piper (2024). "AI Laws of the World." https://www.dlapiper.com/en/insights/artificial-intelligence
+6. **DLA Piper (2024)**. "AI Laws of the World." https://www.dlapiper.com/en/insights/artificial-intelligence
+
+7. **Scopus (Elsevier)**. Bibliometric database for academic paper metadata.

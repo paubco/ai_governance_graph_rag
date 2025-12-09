@@ -3,10 +3,12 @@
 LLM prompt templates for entity extraction, disambiguation, and relation extraction.
 
 Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguation),
-and 1D (relation extraction) with standardized formats. Contains ENTITY_EXTRACTION_PROMPT
-for Phase 1B free-type entity discovery, SAMEJUDGE_PROMPT for Phase 1C entity verification,
-RELATION_EXTRACTION_PROMPT for Phase 1D OpenIE-style triplet extraction, and
-ACADEMIC_ENTITY_EXTRACTION_PROMPT for subject-constrained extraction.
+1D (relation extraction), and 3 (query parsing) with standardized formats. Contains:
+- ENTITY_EXTRACTION_PROMPT: Phase 1B free-type entity discovery from chunks
+- SAMEJUDGE_PROMPT: Phase 1C entity verification
+- RELATION_EXTRACTION_PROMPT: Phase 1D OpenIE-style triplet extraction
+- ACADEMIC_ENTITY_EXTRACTION_PROMPT: Phase 1D subject-constrained extraction
+- QUERY_ENTITY_EXTRACTION_PROMPT: Phase 3 query entity extraction with type enforcement
 """
 
 # ============================================================================
@@ -169,3 +171,26 @@ OUTPUT FORMAT (JSON only, no other text):
 }}
 
 JSON:"""
+
+
+# ============================================================================
+# PHASE 3: QUERY ENTITY EXTRACTION
+# ============================================================================
+
+# Prompt for extracting entities from user queries with type enforcement.
+# Used by QueryParser (Phase 3) to identify entities in natural language questions.
+# Unlike Phase 1B which uses free-form types, this enforces predefined entity types
+# from the knowledge graph schema for consistent matching and resolution.
+# Output: JSON array of entities with name and type (type must be from allowed list).
+QUERY_ENTITY_EXTRACTION_PROMPT = """Extract entities from the query and return as JSON.
+
+Query: {query}
+
+Entity types: {entity_types}
+
+Return JSON object with "entities" array:
+{{
+  "entities": [
+    {{"name": "exact name from query", "type": "type from list above"}}
+  ]
+}}"""
