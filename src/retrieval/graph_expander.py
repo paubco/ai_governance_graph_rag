@@ -208,7 +208,7 @@ class GraphExpander:
                     WITH collect(id(n)) AS terminalNodeIds
                     
                     // Run PCST
-                    CALL gds.steinerTree.stream('entity-graph', {
+                    CALL gds.beta.steinerTree.stream('entity-graph', {
                         sourceNode: terminalNodeIds[0],
                         targetNodes: terminalNodeIds[1..],
                         delta: $delta
