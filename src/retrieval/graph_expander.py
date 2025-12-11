@@ -111,12 +111,12 @@ class GraphExpander:
                 session.run("""
                     CALL gds.graph.project(
                         'entity-graph',
+                        'Entity',
                         {
-                            Entity: {
-                                properties: ['entity_id']
+                            RELATION: {
+                                properties: ['confidence']
                             }
-                        },
-                        'RELATION'
+                        }
                     )
                 """)
                 print("✓ GDS projection created")
@@ -135,24 +135,19 @@ class GraphExpander:
             return Subgraph(entities=[], relations=[])
         
         # Stage 1: Get k-NN candidates via FAISS
-        print(f"  Finding FAISS candidates for {len(resolved_entities)} entities...")
         candidate_ids = self._get_faiss_candidates(resolved_entities)
-        print(f"  → {len(candidate_ids)} candidates")
         
         # Stage 2: Run PCST to find minimal connecting subgraph
         if len(resolved_entities) == 1:
             # Single entity: no paths to find, just return candidates
             subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
             relations = []
-            print(f"  Single entity: using top-{len(subgraph_entity_ids)} candidates")
         else:
             # Multiple entities: find connecting paths
-            print(f"  Running PCST to connect {len(resolved_entities)} entities...")
             subgraph_entity_ids, relations = self._run_pcst(
                 terminal_ids=[e.entity_id for e in resolved_entities],
                 candidate_ids=candidate_ids
             )
-            print(f"  → Expanded to {len(subgraph_entity_ids)} entities, {len(relations)} relations")
         
         return Subgraph(
             entities=subgraph_entity_ids,
@@ -204,55 +199,27 @@ class GraphExpander:
             (subgraph_entity_ids, relations)
         """
         with self.driver.session() as session:
-            # Ensure projection exists in this session
-            try:
-                result = session.run("""
-                    CALL gds.graph.exists('entity-graph')
-                    YIELD exists
-                    RETURN exists
-                """)
-                record = result.single()
-                projection_exists = record['exists'] if record else False
-            except Exception:
-                projection_exists = False
-            
-            if not projection_exists:
-                print("  Creating GDS projection...")
-                session.run("""
-                    CALL gds.graph.project(
-                        'entity-graph',
-                        {
-                            Entity: {
-                                properties: ['entity_id']
-                            }
-                        },
-                        'RELATION'
-                    )
-                """)
-            
             # Try to run PCST
             try:
                 result = session.run("""
-                    // Get GDS internal node IDs for terminals from entity_id property
-                    CALL gds.graph.nodeProperty.stream('entity-graph', 'entity_id')
-                    YIELD nodeId, propertyValue
-                    WHERE propertyValue IN $terminal_ids
-                    WITH collect(nodeId) AS terminalNodeIds
+                    // Get internal node IDs for terminals
+                    MATCH (n:Entity)
+                    WHERE n.entity_id IN $terminal_ids
+                    WITH collect(id(n)) AS terminalNodeIds
                     
                     // Run PCST
-                    CALL gds.beta.steinerTree.stream('entity-graph', {
+                    CALL gds.steinerTree.stream('entity-graph', {
                         sourceNode: terminalNodeIds[0],
                         targetNodes: terminalNodeIds[1..],
                         delta: $delta
                     })
                     YIELD nodeId
                     
-                    // Map back to entity_ids using property from projection
+                    // Return entities in subgraph
                     WITH collect(nodeId) AS subgraphNodeIds
-                    CALL gds.graph.nodeProperty.stream('entity-graph', 'entity_id')
-                    YIELD nodeId AS resultNodeId, propertyValue AS entity_id
-                    WHERE resultNodeId IN subgraphNodeIds
-                    RETURN collect(entity_id) AS entity_ids
+                    MATCH (e:Entity)
+                    WHERE id(e) IN subgraphNodeIds
+                    RETURN collect(e.entity_id) AS entity_ids
                 """, terminal_ids=terminal_ids, delta=self.config['delta'])
                 
                 record = result.single()
@@ -267,7 +234,6 @@ class GraphExpander:
                 subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
             
             # Get relations for the subgraph
-            print(f"  Fetching relations for {len(subgraph_entity_ids)} entities...")
             relations = self._get_subgraph_relations(subgraph_entity_ids)
             
             return subgraph_entity_ids, relations
