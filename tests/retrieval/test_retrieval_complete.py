@@ -518,7 +518,7 @@ class TestRealIntegration:
             normalized_entities_path='data/interim/entities/normalized_entities_with_ids.json',
             embedding_model=real_embedder,
             threshold=0.75,
-            top_k=10
+            top_k=3
         )
         
         entities = [
@@ -589,17 +589,17 @@ class TestRealIntegration:
             
             print(f"\n✅ REAL GraphExpander Test:")
             print(f"   Input entities: {len(entities_to_expand)}")
-            print(f"   Expanded to: {len(subgraph.entity_ids)} entities")
+            print(f"   Expanded to: {len(subgraph.entities)} entities")
             print(f"   Relations found: {len(subgraph.relations)}")
             
             # Validation: PCST should expand but stay bounded
-            assert len(subgraph.entity_ids) >= len(entities_to_expand), "Should at least have input entities"
-            assert len(subgraph.entity_ids) <= 50, "PCST should limit expansion (hub node control)"
+            assert len(subgraph.entities) >= len(entities_to_expand), "Should at least have input entities"
+            assert len(subgraph.entities) <= 50, "PCST should limit expansion (hub node control)"
             
             # Show sample expanded entities
-            if subgraph.entity_ids:
+            if subgraph.entities:
                 print(f"   Sample expanded entities:")
-                for eid in list(subgraph.entity_ids)[:5]:
+                for eid in list(subgraph.entities)[:5]:
                     print(f"     - {eid}")
             
             # Show sample relations
