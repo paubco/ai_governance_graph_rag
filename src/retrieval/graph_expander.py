@@ -144,6 +144,11 @@ class GraphExpander:
         # Stage 1: Get k-NN candidates via FAISS
         candidate_ids = self._get_faiss_candidates(resolved_entities)
         
+        # If no valid candidates, return empty subgraph
+        if not candidate_ids:
+            print("⚠️  No valid entities found in index")
+            return Subgraph(entities=[], relations=[])
+        
         # Stage 2: Run PCST to find minimal connecting subgraph
         if len(resolved_entities) == 1:
             # Single entity: no paths to find, just return candidates
@@ -171,6 +176,11 @@ class GraphExpander:
         candidates = set()
         
         for entity in resolved_entities:
+            # Skip entities not in FAISS index
+            if entity.entity_id not in self.entity_id_map:
+                print(f"⚠️  Skipping entity not in index: {entity.entity_id}")
+                continue
+            
             # Add the entity itself
             candidates.add(entity.entity_id)
             
