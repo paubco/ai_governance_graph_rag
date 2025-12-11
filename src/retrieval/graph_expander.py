@@ -114,6 +114,7 @@ class GraphExpander:
                         'Entity',
                         {
                             RELATION: {
+                                orientation: 'UNDIRECTED',
                                 properties: ['confidence']
                             }
                         }
@@ -130,6 +131,12 @@ class GraphExpander:
         
         Returns:
             Subgraph with entities and relations from PCST
+        
+        Note:
+            Graph has 16K components (65% in main component). PCST may fail
+            if query entities are in disconnected components. This is a known
+            limitation due to missing hierarchical relations (e.g., law articles
+            not linked to parent regulations). Falls back to k-NN candidates.
         """
         if not resolved_entities:
             return Subgraph(entities=[], relations=[])
