@@ -23,6 +23,7 @@ import numpy as np
 from .config import (
     ResolvedEntity,
     ExtractedEntity,
+    QueryFilters,
     ENTITY_RESOLUTION_CONFIG,
 )
 
@@ -43,7 +44,7 @@ class EntityResolver:
         normalized_entities_path: Path,
         embedding_model,
         threshold: float = 0.75,  # From ENTITY_RESOLUTION_CONFIG
-        top_k: int = 10,          # From ENTITY_RESOLUTION_CONFIG
+        top_k: int = 3,           # Limit fuzzy matches to avoid explosion
     ):
         """
         Initialize entity resolver.
@@ -77,26 +78,54 @@ class EntityResolver:
             self.entity_ids = {v: k for k, v in entity_id_list.items()}
         
         # Load normalized entities for metadata
-        with open(normalized_entities_path, 'r', encoding='utf-8') as f:
-            entities_list = json.load(f)
+        entities_list = []
+        try:
+            with open(normalized_entities_path, 'r', encoding='utf-8') as f:
+                entities_list = json.load(f)
             # Build lookup: entity_id → entity metadata
             self.entities_by_id = {e['entity_id']: e for e in entities_list}
+        except MemoryError:
+            print("⚠️  Entity file too large for memory, using minimal mode")
+            # Fallback: build minimal entities from IDs only
+            self.entities_by_id = {}
+            for entity_id in (self.entity_ids.values() if isinstance(self.entity_ids, dict) 
+                             else [self.entity_ids[i] for i in range(len(self.entity_ids))]):
+                self.entities_by_id[entity_id] = {
+                    'entity_id': entity_id,
+                    'name': entity_id,  # Use ID as name
+                    'type': 'Unknown'   # Type unknown in minimal mode
+                }
+                entities_list.append(self.entities_by_id[entity_id])
+        except Exception as e:
+            print(f"⚠️  Error loading entities: {e}")
+            self.entities_by_id = {}
         
         # Build exact match lookup: lowercase name → entity_id
         self.name_to_id = self._build_name_lookup(entities_list)
     
-    def resolve(self, entities: List[ExtractedEntity]) -> List[ResolvedEntity]:
+    def resolve(
+        self, 
+        entities: List[ExtractedEntity], 
+        filters: QueryFilters = None,
+        top_k: int = None
+    ) -> List[ResolvedEntity]:
         """
         Resolve extracted entities to canonical entity IDs.
         
         Tries exact match first, then falls back to fuzzy matching.
+        Returns top_k matches per entity to limit subgraph explosion.
         
         Args:
             entities: List of ExtractedEntity objects from query parsing.
+            filters: Optional QueryFilters for future use (not currently applied).
+            top_k: Override default top_k for this query (default: use constructor value).
             
         Returns:
             List of ResolvedEntity objects (may be empty).
         """
+        # Use override or default
+        k = top_k if top_k is not None else self.top_k
+        
         resolved = []
         
         for entity in entities:
@@ -106,10 +135,11 @@ class EntityResolver:
                 resolved.append(exact_match)
                 continue
             
-            # Fall back to fuzzy match
-            fuzzy_matches = self._fuzzy_match(entity.name, entity.type)
+            # Fall back to fuzzy match (limited to top_k)
+            fuzzy_matches = self._fuzzy_match(entity.name, entity.type, top_k=k)
             resolved.extend(fuzzy_matches)
         
+        print(f"  Resolved {len(entities)} mentions → {len(resolved)} entities (top_k={k})")
         return resolved
     
     def _exact_match(self, mention: str) -> Optional[ResolvedEntity]:
@@ -138,17 +168,21 @@ class EntityResolver:
         
         return None
     
-    def _fuzzy_match(self, mention: str, entity_type: str = None) -> List[ResolvedEntity]:
+    def _fuzzy_match(self, mention: str, entity_type: str = None, top_k: int = None) -> List[ResolvedEntity]:
         """
         Attempt fuzzy match via FAISS similarity search.
         
         Args:
             mention: Entity mention string.
             entity_type: Optional entity type for filtering (future use).
+            top_k: Number of candidates to retrieve (uses self.top_k if None).
             
         Returns:
             List of ResolvedEntity objects above threshold.
         """
+        # Use provided top_k or default
+        k = top_k if top_k is not None else self.top_k
+        
         # Embed the mention
         mention_embedding = self.embedding_model.embed_single(mention)  # FIXED: embed_single not embed
         
@@ -159,7 +193,7 @@ class EntityResolver:
         # FAISS search
         distances, indices = self.faiss_index.search(
             mention_embedding.astype('float32'),
-            self.top_k
+            k
         )
         
         # Convert distances to cosine similarities

@@ -135,19 +135,24 @@ class GraphExpander:
             return Subgraph(entities=[], relations=[])
         
         # Stage 1: Get k-NN candidates via FAISS
+        print(f"  Finding FAISS candidates for {len(resolved_entities)} entities...")
         candidate_ids = self._get_faiss_candidates(resolved_entities)
+        print(f"  → {len(candidate_ids)} candidates")
         
         # Stage 2: Run PCST to find minimal connecting subgraph
         if len(resolved_entities) == 1:
             # Single entity: no paths to find, just return candidates
             subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
             relations = []
+            print(f"  Single entity: using top-{len(subgraph_entity_ids)} candidates")
         else:
             # Multiple entities: find connecting paths
+            print(f"  Running PCST to connect {len(resolved_entities)} entities...")
             subgraph_entity_ids, relations = self._run_pcst(
                 terminal_ids=[e.entity_id for e in resolved_entities],
                 candidate_ids=candidate_ids
             )
+            print(f"  → Expanded to {len(subgraph_entity_ids)} entities, {len(relations)} relations")
         
         return Subgraph(
             entities=subgraph_entity_ids,
@@ -234,6 +239,7 @@ class GraphExpander:
                 subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
             
             # Get relations for the subgraph
+            print(f"  Fetching relations for {len(subgraph_entity_ids)} entities...")
             relations = self._get_subgraph_relations(subgraph_entity_ids)
             
             return subgraph_entity_ids, relations

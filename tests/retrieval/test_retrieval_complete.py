@@ -518,7 +518,7 @@ class TestRealIntegration:
             normalized_entities_path='data/interim/entities/normalized_entities_with_ids.json',
             embedding_model=real_embedder,
             threshold=0.75,
-            top_k=10
+            top_k=3
         )
         
         entities = [
@@ -538,11 +538,44 @@ class TestRealIntegration:
         assert all(e.confidence >= 0.75 for e in resolved if e.match_type == 'fuzzy')
     
     def test_real_graph_expander(self, real_embedder, real_data_available, neo4j_available):
-        """Test GraphExpander with real Neo4j PCST."""
+        """Test GraphExpander with real Neo4j PCST using actual resolved entities."""
         from src.retrieval.graph_expander import GraphExpander
+        from src.retrieval.entity_resolver import EntityResolver
+        from src.retrieval.config import QueryFilters
         
         uri, user, password = neo4j_available
         
+        # First: Resolve entities to get real IDs from the dataset
+        resolver = EntityResolver(
+            faiss_index_path='data/processed/faiss/entity_embeddings.index',
+            entity_ids_path='data/processed/faiss/entity_id_map.json',
+            normalized_entities_path='data/interim/entities/normalized_entities_with_ids.json',
+            embedding_model=real_embedder,
+            top_k=3  # Limit to 3 matches per entity
+        )
+        
+        # Use real extracted entities (from query parser test pattern)
+        extracted = [
+            ('EU AI Act', 'Regulatory Concept'),
+            ('facial recognition', 'Technical Term')
+        ]
+        
+        filters = QueryFilters(
+            jurisdiction_hints=['EU'],
+            doc_type_hints=['regulation']
+        )
+        
+        # Resolve to get real entity IDs from the 55K entity dataset
+        resolved = resolver.resolve(extracted, filters)
+        
+        # Take top 2 for graph expansion
+        entities_to_expand = resolved[:2]
+        
+        print(f"\n✅ Using real entities for expansion:")
+        for e in entities_to_expand:
+            print(f"   - {e.name} ({e.entity_id}): {e.match_type}, confidence={e.confidence:.3f}")
+        
+        # Now test GraphExpander with real entities
         expander = GraphExpander(
             neo4j_uri=uri,
             neo4j_user=user,
@@ -552,25 +585,28 @@ class TestRealIntegration:
         )
         
         try:
-            # Use resolved entities from previous test
-            entities = [
-                ResolvedEntity('ent_12345', 'EU AI Act', 'Regulation', 0.95, 'exact'),
-                ResolvedEntity('ent_67890', 'facial recognition', 'Technology', 0.87, 'fuzzy')
-            ]
-            
-            # Note: entity IDs above are placeholders - will be skipped if not found
-            # This tests the PCST logic without requiring specific entities
-            
-            subgraph = expander.expand(entities)
+            subgraph = expander.expand(entities_to_expand)
             
             print(f"\n✅ REAL GraphExpander Test:")
-            print(f"   Input entities: 2")
-            print(f"   Expanded entities: {len(subgraph.entities)}")
+            print(f"   Input entities: {len(entities_to_expand)}")
+            print(f"   Expanded to: {len(subgraph.entity_ids)} entities")
             print(f"   Relations found: {len(subgraph.relations)}")
+            
+            # Validation: PCST should expand but stay bounded
+            assert len(subgraph.entity_ids) >= len(entities_to_expand), "Should at least have input entities"
+            assert len(subgraph.entity_ids) <= 50, "PCST should limit expansion (hub node control)"
+            
+            # Show sample expanded entities
+            if subgraph.entity_ids:
+                print(f"   Sample expanded entities:")
+                for eid in list(subgraph.entity_ids)[:5]:
+                    print(f"     - {eid}")
+            
+            # Show sample relations
             if subgraph.relations:
                 print(f"   Sample relations:")
                 for rel in subgraph.relations[:3]:
-                    print(f"     {rel.source_name} --{rel.predicate}--> {rel.target_name}")
+                    print(f"     - {rel['subject_id']} --{rel['predicate']}--> {rel['object_id']}")
             
             assert isinstance(subgraph, Subgraph)
         

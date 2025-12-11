@@ -181,7 +181,7 @@ class RetrievalResult:
 
 # PCST Graph Expansion
 PCST_CONFIG = {
-    'k_candidates': 10,        # Top-K similar entities per seed (FAISS)
+    'k_candidates': 5,         # Top-K similar entities per seed (FAISS) - reduced for performance
     'delta': 0.5,              # Neo4j PCST prize-cost balance parameter
     'prize_strategy': 'uniform',  # 'uniform' or 'frequency' (start simple)
     'cost_strategy': 'uniform',   # 'uniform', 'frequency', or 'similarity'
@@ -260,3 +260,80 @@ def parse_doc_types(query: str) -> List[str]:
         doc_types.append('paper')
     
     return doc_types
+
+
+# ============================================================================
+# RANKING CONFIGURATION
+# ============================================================================
+
+RANKING_CONFIG = {
+    'provenance_bonus': 0.3,      # Chunk contains PCST relation (highest priority)
+    'path_a_bonus': 0.2,           # Chunk from entity expansion
+    'path_b_baseline': 0.0,        # Path B starts at FAISS score only
+    'jurisdiction_boost': 0.1,     # Matches jurisdiction filter (soft preference)
+    'doc_type_boost': 0.15,        # Matches doc_type filter (soft preference)
+    'final_top_k': 20,             # Final number of chunks to return
+}
+
+
+# ============================================================================
+# RETRIEVAL CONFIGURATION
+# ============================================================================
+
+RETRIEVAL_CONFIG = {
+    'path_b_top_k': 15,            # FAISS semantic search top-K
+    'entity_resolution_top_k': 3,  # Max entities per extracted mention (avoid explosion)
+    'pcst_max_entities': 50,       # PCST expansion limit (hub node control)
+}
+
+
+# ============================================================================
+# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
+# ============================================================================
+
+ANSWER_GENERATION_CONFIG = {
+    # LLM provider and model
+    'provider': 'anthropic',           # 'anthropic' or 'together'
+    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
+    
+    # Token budgets (for 200k context)
+    'max_input_tokens': 15000,         # Total input budget
+    'token_budget': {
+        'system_prompt': 1000,
+        'graph_structure': 500,
+        'entity_context': 500,
+        'source_chunks': 10000,        # Most of budget goes here
+        'instructions': 500,
+        'buffer': 1000,
+    },
+    
+    # Generation parameters
+    'max_output_tokens': 2000,         # Answer length limit
+    'temperature': 0.3,                 # Low temp for factual accuracy
+    'top_p': 0.9,
+    
+    # Formatting
+    'max_chunks_to_format': 40,        # Max chunks even if more retrieved
+    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
+}
+
+
+# Alternative: Mistral configuration (8k context)
+ANSWER_GENERATION_CONFIG_MISTRAL = {
+    'provider': 'together',
+    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
+    'max_input_tokens': 6000,
+    'token_budget': {
+        'system_prompt': 500,
+        'graph_structure': 300,
+        'entity_context': 200,
+        'source_chunks': 2000,
+        'instructions': 200,
+        'buffer': 500,
+    },
+    'max_output_tokens': 1500,
+    'temperature': 0.3,
+    'top_p': 0.9,
+    'max_chunks_to_format': 10,
+    'truncate_chunk_chars': 400,
+}
