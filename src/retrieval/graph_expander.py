@@ -204,6 +204,28 @@ class GraphExpander:
             (subgraph_entity_ids, relations)
         """
         with self.driver.session() as session:
+            # Ensure projection exists in this session
+            result = session.run("""
+                CALL gds.graph.exists('entity-graph')
+                YIELD exists
+                RETURN exists
+            """)
+            projection_exists = result.single()['exists']
+            
+            if not projection_exists:
+                print("  Creating GDS projection...")
+                session.run("""
+                    CALL gds.graph.project(
+                        'entity-graph',
+                        'Entity',
+                        {
+                            RELATION: {
+                                properties: ['weight']
+                            }
+                        }
+                    )
+                """)
+            
             # Try to run PCST
             try:
                 result = session.run("""
