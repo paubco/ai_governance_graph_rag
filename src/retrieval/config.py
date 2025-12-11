@@ -181,7 +181,7 @@ class RetrievalResult:
 
 # PCST Graph Expansion
 PCST_CONFIG = {
-    'k_candidates': 5,         # Top-K similar entities per seed (FAISS) - reduced for performance
+    'k_candidates': 10,        # Top-K similar entities per seed (FAISS) - increased for path coverage
     'delta': 0.5,              # Neo4j PCST prize-cost balance parameter
     'prize_strategy': 'uniform',  # 'uniform' or 'frequency' (start simple)
     'cost_strategy': 'uniform',   # 'uniform', 'frequency', or 'similarity'
