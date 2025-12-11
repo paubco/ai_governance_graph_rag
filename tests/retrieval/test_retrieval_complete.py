@@ -518,7 +518,7 @@ class TestRealIntegration:
             normalized_entities_path='data/interim/entities/normalized_entities_with_ids.json',
             embedding_model=real_embedder,
             threshold=0.75,
-            top_k=3
+            top_k=10
         )
         
         entities = [
@@ -541,7 +541,7 @@ class TestRealIntegration:
         """Test GraphExpander with real Neo4j PCST using actual resolved entities."""
         from src.retrieval.graph_expander import GraphExpander
         from src.retrieval.entity_resolver import EntityResolver
-        from src.retrieval.config import QueryFilters
+        from src.retrieval.config import QueryFilters, ExtractedEntity
         
         uri, user, password = neo4j_available
         
@@ -556,8 +556,8 @@ class TestRealIntegration:
         
         # Use real extracted entities (from query parser test pattern)
         extracted = [
-            ('EU AI Act', 'Regulatory Concept'),
-            ('facial recognition', 'Technical Term')
+            ExtractedEntity('EU AI Act', 'Regulatory Concept'),
+            ExtractedEntity('facial recognition', 'Technical Term')
         ]
         
         filters = QueryFilters(
