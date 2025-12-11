@@ -111,7 +111,11 @@ class GraphExpander:
                 session.run("""
                     CALL gds.graph.project(
                         'entity-graph',
-                        'Entity',
+                        {
+                            Entity: {
+                                properties: ['entity_id']
+                            }
+                        },
                         'RELATION'
                     )
                 """)
@@ -217,7 +221,11 @@ class GraphExpander:
                 session.run("""
                     CALL gds.graph.project(
                         'entity-graph',
-                        'Entity',
+                        {
+                            Entity: {
+                                properties: ['entity_id']
+                            }
+                        },
                         'RELATION'
                     )
                 """)
@@ -225,10 +233,11 @@ class GraphExpander:
             # Try to run PCST
             try:
                 result = session.run("""
-                    // Get internal node IDs for terminals
-                    MATCH (n:Entity)
-                    WHERE n.entity_id IN $terminal_ids
-                    WITH collect(id(n)) AS terminalNodeIds
+                    // Get GDS internal node IDs for terminals from entity_id property
+                    CALL gds.graph.nodeProperty.stream('entity-graph', 'entity_id')
+                    YIELD nodeId, propertyValue
+                    WHERE propertyValue IN $terminal_ids
+                    WITH collect(nodeId) AS terminalNodeIds
                     
                     // Run PCST
                     CALL gds.beta.steinerTree.stream('entity-graph', {
@@ -238,11 +247,12 @@ class GraphExpander:
                     })
                     YIELD nodeId
                     
-                    // Return entities in subgraph
+                    // Map back to entity_ids using property from projection
                     WITH collect(nodeId) AS subgraphNodeIds
-                    MATCH (e:Entity)
-                    WHERE id(e) IN subgraphNodeIds
-                    RETURN collect(e.entity_id) AS entity_ids
+                    CALL gds.graph.nodeProperty.stream('entity-graph', 'entity_id')
+                    YIELD nodeId AS resultNodeId, propertyValue AS entity_id
+                    WHERE resultNodeId IN subgraphNodeIds
+                    RETURN collect(entity_id) AS entity_ids
                 """, terminal_ids=terminal_ids, delta=self.config['delta'])
                 
                 record = result.single()
