@@ -314,9 +314,13 @@ class TestGraphExpander:
         mock_driver.session.return_value.__enter__.return_value = mock_session
         mock_driver_class.return_value = mock_driver
         
-        # Mock GDS projection exists
+        # Mock GDS projection exists (for __init__)
         gds_result = MagicMock()
         gds_result.single.return_value = {'exists': True}
+        
+        # Mock GDS projection exists again (for _run_pcst check)
+        gds_result_2 = MagicMock()
+        gds_result_2.single.return_value = {'exists': True}
         
         # Mock PCST result
         pcst_result = MagicMock()
@@ -333,7 +337,7 @@ class TestGraphExpander:
             'chunk_ids': ['chunk_042']
         }])
         
-        mock_session.run.side_effect = [gds_result, pcst_result, rel_result]
+        mock_session.run.side_effect = [gds_result, gds_result_2, pcst_result, rel_result]
         
         mock_index = MagicMock()
         mock_index.search.return_value = (np.array([[0.1, 0.2]]), np.array([[1, 2]]))

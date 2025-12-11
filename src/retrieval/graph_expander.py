@@ -112,11 +112,7 @@ class GraphExpander:
                     CALL gds.graph.project(
                         'entity-graph',
                         'Entity',
-                        {
-                            RELATION: {
-                                properties: ['weight']
-                            }
-                        }
+                        'RELATION'
                     )
                 """)
                 print("✓ GDS projection created")
@@ -205,12 +201,16 @@ class GraphExpander:
         """
         with self.driver.session() as session:
             # Ensure projection exists in this session
-            result = session.run("""
-                CALL gds.graph.exists('entity-graph')
-                YIELD exists
-                RETURN exists
-            """)
-            projection_exists = result.single()['exists']
+            try:
+                result = session.run("""
+                    CALL gds.graph.exists('entity-graph')
+                    YIELD exists
+                    RETURN exists
+                """)
+                record = result.single()
+                projection_exists = record['exists'] if record else False
+            except Exception:
+                projection_exists = False
             
             if not projection_exists:
                 print("  Creating GDS projection...")
@@ -218,11 +218,7 @@ class GraphExpander:
                     CALL gds.graph.project(
                         'entity-graph',
                         'Entity',
-                        {
-                            RELATION: {
-                                properties: ['weight']
-                            }
-                        }
+                        'RELATION'
                     )
                 """)
             
