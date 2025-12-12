@@ -139,6 +139,7 @@ class Chunk:
     text: str
     doc_id: str
     doc_type: str  # 'regulation' or 'paper'
+    score: float = 0.5  # ADD THIS LINE
     jurisdiction: Optional[str] = None  # For regulations
     metadata: dict = field(default_factory=dict)
 
