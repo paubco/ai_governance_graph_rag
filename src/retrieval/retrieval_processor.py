@@ -186,8 +186,8 @@ class RetrievalProcessor:
             )
             
             # Create empty subgraph
-            from .config import Subgraph
-            subgraph = Subgraph(entities=[], relations=[])
+            from .config import GraphSubgraph
+            subgraph = GraphSubgraph(entities=[], relations=[])
             
         else:
             # Phase 3.3.2a: Graph Expansion (PCST)

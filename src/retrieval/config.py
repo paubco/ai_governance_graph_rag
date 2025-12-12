@@ -6,7 +6,7 @@ Purpose: Data classes and configuration for Phase 3 retrieval pipeline
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-07
+Modified: 2025-12-12
 
 References:
     - PHASE_3_DESIGN.md § 5 (Implementation)
@@ -111,11 +111,12 @@ class Relation:
     predicate: str
     target_id: str
     target_name: str
+    confidence: float = 0.0
     chunk_ids: List[str] = field(default_factory=list)  # Where this relation was extracted
 
 
 @dataclass
-class Subgraph:
+class GraphSubgraph:
     """
     Output of PCST graph expansion.
     
@@ -155,10 +156,11 @@ class RankedChunk:
     chunk_id: str
     text: str
     score: float
-    source_path: Literal["graphrag_relation", "graphrag_entity", "naive"]
-    entities: List[str] = field(default_factory=list)  # Which entities led here
+    retrieval_method: Literal["graphrag", "naive"]
+    doc_id: str = ""
     doc_type: str = ""
     jurisdiction: Optional[str] = None
+    entities: List[str] = field(default_factory=list)  # Which entities led here
     metadata: dict = field(default_factory=dict)
 
 
@@ -170,9 +172,10 @@ class RetrievalResult:
     Contains both chunks and subgraph for prompt assembly.
     Subgraph relations will be formatted as GRAPH STRUCTURE section.
     """
-    chunks: List[RankedChunk]
-    subgraph: Subgraph  # Pass through for prompt builder
     query: str
+    resolved_entities: List[str]
+    subgraph: GraphSubgraph  # FIXED: Changed from Subgraph to GraphSubgraph
+    chunks: List[RankedChunk]
 
 
 # ============================================================================
@@ -193,6 +196,8 @@ RETRIEVAL_CONFIG = {
     'path_a_all_entities': True,    # Get all chunks from PCST entities (not top-K)
     'path_b_top_k': 15,              # Semantic search chunk limit
     'chunk_token_limit': 8000,       # Approximate token budget for context
+    'entity_resolution_top_k': 3,    # Max entities per extracted mention (avoid explosion)
+    'pcst_max_entities': 50,         # PCST expansion limit (hub node control)
 }
 
 # Ranking & Scoring
@@ -201,6 +206,7 @@ RANKING_CONFIG = {
     'path_a_bonus': 0.2,          # Chunks from entity expansion (medium)
     'path_b_baseline': 0.0,       # Semantic search chunks (baseline)
     'jurisdiction_boost': 0.1,    # Bonus if chunk matches jurisdiction hint
+    'doc_type_boost': 0.15,       # Matches doc_type filter (soft preference)
     'final_top_k': 20,            # Final chunks for LLM context
 }
 
@@ -208,6 +214,54 @@ RANKING_CONFIG = {
 ENTITY_RESOLUTION_CONFIG = {
     'fuzzy_threshold': 0.75,      # Cosine similarity threshold
     'top_k_per_entity': 10,       # Candidates per query entity
+}
+
+
+# ============================================================================
+# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
+# ============================================================================
+
+ANSWER_GENERATION_CONFIG = {
+    # LLM provider and model
+    'provider': 'anthropic',           # 'anthropic' or 'together'
+    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
+    
+    # Generation parameters
+    'max_output_tokens': 2000,         # Answer length limit
+    'temperature': 0.0,                # Deterministic for evaluation
+    'top_p': 1.0,
+    
+    # Formatting
+    'max_chunks_to_format': 20,        # Max chunks even if more retrieved
+    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
+    
+    # Token budget breakdown (for Claude's 200K context)
+    'token_budget': {
+        'graph_structure': 500,        # Relations formatted as bullets
+        'entity_context': 500,         # Key entity list
+        'source_chunks': 10000,        # ~40 chunks at 250 tokens each
+    }
+}
+
+
+# Alternative: Mistral configuration (8k context)
+ANSWER_GENERATION_CONFIG_MISTRAL = {
+    'provider': 'together',
+    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
+    'max_input_tokens': 6000,
+    'token_budget': {
+        'system_prompt': 500,
+        'graph_structure': 300,
+        'entity_context': 200,
+        'source_chunks': 2000,
+        'instructions': 200,
+        'buffer': 500,
+    },
+    'max_output_tokens': 1500,
+    'temperature': 0.3,
+    'top_p': 0.9,
+    'max_chunks_to_format': 10,
+    'truncate_chunk_chars': 400,
 }
 
 
@@ -260,80 +314,3 @@ def parse_doc_types(query: str) -> List[str]:
         doc_types.append('paper')
     
     return doc_types
-
-
-# ============================================================================
-# RANKING CONFIGURATION
-# ============================================================================
-
-RANKING_CONFIG = {
-    'provenance_bonus': 0.3,      # Chunk contains PCST relation (highest priority)
-    'path_a_bonus': 0.2,           # Chunk from entity expansion
-    'path_b_baseline': 0.0,        # Path B starts at FAISS score only
-    'jurisdiction_boost': 0.1,     # Matches jurisdiction filter (soft preference)
-    'doc_type_boost': 0.15,        # Matches doc_type filter (soft preference)
-    'final_top_k': 20,             # Final number of chunks to return
-}
-
-
-# ============================================================================
-# RETRIEVAL CONFIGURATION
-# ============================================================================
-
-RETRIEVAL_CONFIG = {
-    'path_b_top_k': 15,            # FAISS semantic search top-K
-    'entity_resolution_top_k': 3,  # Max entities per extracted mention (avoid explosion)
-    'pcst_max_entities': 50,       # PCST expansion limit (hub node control)
-}
-
-
-# ============================================================================
-# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
-# ============================================================================
-
-ANSWER_GENERATION_CONFIG = {
-    # LLM provider and model
-    'provider': 'anthropic',           # 'anthropic' or 'together'
-    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
-    
-    # Token budgets (for 200k context)
-    'max_input_tokens': 15000,         # Total input budget
-    'token_budget': {
-        'system_prompt': 1000,
-        'graph_structure': 500,
-        'entity_context': 500,
-        'source_chunks': 10000,        # Most of budget goes here
-        'instructions': 500,
-        'buffer': 1000,
-    },
-    
-    # Generation parameters
-    'max_output_tokens': 2000,         # Answer length limit
-    'temperature': 0.3,                 # Low temp for factual accuracy
-    'top_p': 0.9,
-    
-    # Formatting
-    'max_chunks_to_format': 40,        # Max chunks even if more retrieved
-    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
-}
-
-
-# Alternative: Mistral configuration (8k context)
-ANSWER_GENERATION_CONFIG_MISTRAL = {
-    'provider': 'together',
-    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
-    'max_input_tokens': 6000,
-    'token_budget': {
-        'system_prompt': 500,
-        'graph_structure': 300,
-        'entity_context': 200,
-        'source_chunks': 2000,
-        'instructions': 200,
-        'buffer': 500,
-    },
-    'max_output_tokens': 1500,
-    'temperature': 0.3,
-    'top_p': 0.9,
-    'max_chunks_to_format': 10,
-    'truncate_chunk_chars': 400,
-}

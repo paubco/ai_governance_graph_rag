@@ -30,7 +30,7 @@ import faiss
 import json
 
 from .config import (
-    Subgraph,
+    GraphSubgraph,
     Chunk,
     RETRIEVAL_CONFIG,
 )
@@ -92,7 +92,7 @@ class ChunkRetriever:
     
     def retrieve_dual(
         self,
-        subgraph: Subgraph,
+        subgraph: GraphSubgraph,
         query_embedding: np.ndarray
     ) -> tuple[List[Chunk], List[Chunk]]:
         """
@@ -113,7 +113,7 @@ class ChunkRetriever:
         
         return path_a_chunks, path_b_chunks
     
-    def _retrieve_path_a(self, subgraph: Subgraph) -> List[Chunk]:
+    def _retrieve_path_a(self, subgraph: GraphSubgraph) -> List[Chunk]:
         """
         Path A: Corpus retrospective + relation provenance.
         

@@ -194,3 +194,59 @@ Return JSON object with "entities" array:
     {{"name": "exact name from query", "type": "type from list above"}}
   ]
 }}"""
+
+# ============================================================================
+# PHASE 3.3.4: ANSWER GENERATION
+# ============================================================================
+
+# System prompt for Claude to generate answers from retrieval results.
+# Establishes role as AI governance expert with emphasis on citation and precision.
+# Output: Structured answer with citations, graph insights, and jurisdictional comparisons.
+ANSWER_GENERATION_SYSTEM_PROMPT = """You are an AI governance expert assistant. Your role is to answer questions about AI regulations and research using a knowledge graph and source documents.
+
+KEY PRINCIPLES:
+1. Ground answers in provided sources - cite everything
+2. Use graph structure to show relationships between concepts
+3. Be precise about jurisdictions and regulatory distinctions
+4. Acknowledge uncertainty when sources are incomplete
+5. Compare across jurisdictions when relevant
+6. When sources conflict, state both positions with citations
+
+CITATION FORMAT:
+- Use [1], [2], [3] to reference source chunks
+- Multiple sources: [1, 2]
+- Always cite specific claims
+
+STRUCTURE YOUR ANSWER:
+1. Direct answer (1-2 sentences)
+2. Key details with citations
+3. Graph-based insights (how concepts relate)
+4. Cross-jurisdictional comparisons (if relevant)
+5. Caveats or limitations"""
+
+# User prompt template for formatting query with retrieval context.
+# Combines query, graph structure, entity context, and source documents.
+# Instructs model to use citations and highlight graph relationships.
+ANSWER_GENERATION_USER_PROMPT = """# QUESTION
+{query}
+
+# KNOWLEDGE GRAPH STRUCTURE
+{graph_structure}
+
+# KEY ENTITIES
+{entity_context}
+
+# SOURCE DOCUMENTS
+{sources}
+
+# INSTRUCTIONS
+Answer the question using the graph structure and source documents above.
+
+- Start with a direct answer
+- Support all claims with citations [1], [2], etc.
+- Highlight relationships from the graph
+- Note any cross-jurisdictional differences
+- If the answer requires information not in sources, state what's missing
+- Be concise but comprehensive
+
+ANSWER:"""
