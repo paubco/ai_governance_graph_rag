@@ -108,8 +108,9 @@ def load_pipeline():
     logger.info("Loading pipeline components...")
     
     # Data paths
-    data_dir = PROJECT_ROOT / 'data' / 'processed'
-    faiss_dir = data_dir / 'faiss'
+    data_dir = PROJECT_ROOT / 'data'
+    faiss_dir = data_dir / 'processed' / 'faiss'
+    interim_dir = data_dir / 'interim' / 'entities'
     
     # Load embedding model
     embedding_model = BGEEmbedder()
@@ -118,12 +119,12 @@ def load_pipeline():
     processor = RetrievalProcessor(
         embedding_model=embedding_model,
         # Phase 3.3.1 paths
-        faiss_entity_index_path=faiss_dir / 'entities.faiss',
-        entity_ids_path=faiss_dir / 'entity_ids.json',
-        normalized_entities_path=data_dir / 'entities_normalized.json',
+        faiss_entity_index_path=faiss_dir / 'entity_embeddings.index',
+        entity_ids_path=faiss_dir / 'entity_id_map.json',
+        normalized_entities_path=interim_dir / 'normalized_entities_with_ids.json',
         # Phase 3.3.2 paths
-        faiss_chunk_index_path=faiss_dir / 'chunks.faiss',
-        chunk_ids_path=faiss_dir / 'chunk_ids.json',
+        faiss_chunk_index_path=faiss_dir / 'chunk_embeddings.index',
+        chunk_ids_path=faiss_dir / 'chunk_id_map.json',
         # Neo4j connection
         neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
         neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
