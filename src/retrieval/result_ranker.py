@@ -13,19 +13,40 @@ References:
     - PHASE_3_DESIGN.md § 5.3 (Ranking strategy)
 
 Ranking Strategy:
-    Base score: Semantic similarity (from FAISS or entity resolution)
+    GraphRAG chunks: Entity-match base score (0.5-1.0) + bonuses
+    Naive chunks: FAISS similarity (0-1.0) + bonuses
     
     Bonuses:
-    - Provenance bonus (+0.3): Chunk contains PCST relation (highest priority)
-    - Path A bonus (+0.2): Chunk from entity expansion (medium priority)
-    - Jurisdiction boost (+0.1): Chunk matches jurisdiction hint (soft filter)
+    - Provenance bonus (+0.3): Chunk contains PCST relation
+    - GraphRAG bonus (+0.2): Chunk from entity expansion
+    - Jurisdiction boost (+0.1): Matches query jurisdiction
     
-    Final: Top-K chunks by score
+    Examples of final scores:
+    
+    Scenario 1: High-quality GraphRAG chunk with provenance
+      Base: 0.8 (4 entity matches)
+      + Provenance: 0.3
+      = 1.1 (beats most naive chunks)
+    
+    Scenario 2: Perfect semantic match (naive)
+      Base: 0.95 (FAISS similarity)
+      + Jurisdiction: 0.1
+      = 1.05 (beats low-quality graphrag)
+    
+    Scenario 3: Mediocre GraphRAG chunk
+      Base: 0.6 (2 entity matches)
+      + GraphRAG bonus: 0.2
+      = 0.8 (loses to strong naive chunks)
+    
+    Scenario 4: Off-topic naive chunk
+      Base: 0.3 (low FAISS similarity)
+      = 0.3 (loses to everything)
 """
 
 import numpy as np
-from typing import List, Set
+from typing import List, Set, Dict, Optional
 from collections import defaultdict
+from dataclasses import dataclass
 
 from .config import (
     Chunk,
@@ -35,6 +56,21 @@ from .config import (
     RetrievalResult,
     RANKING_CONFIG,
 )
+
+
+# ============================================================================
+# DEBUG INFO
+# ============================================================================
+
+@dataclass
+class ScoringDebugInfo:
+    """Debug information for scoring decisions."""
+    chunk_id: str
+    original_score: float
+    method: str  # 'graphrag' or 'naive'
+    bonuses_applied: Dict[str, float]
+    final_score: float
+    rank: int
 
 
 # ============================================================================
@@ -59,41 +95,56 @@ class ResultRanker:
             config: Ranking configuration (uses RANKING_CONFIG if None).
         """
         self.config = config or RANKING_CONFIG
+        self.debug_info: List[ScoringDebugInfo] = []
     
     def rank(
         self,
-        path_a_chunks: List[Chunk],
-        path_b_chunks: List[Chunk],
+        graphrag_chunks: List[Chunk],
+        naive_chunks: List[Chunk],
         subgraph: GraphSubgraph,
         filters: QueryFilters,
-        query: str
+        query: str,
+        debug: bool = False
     ) -> RetrievalResult:
         """
         Merge, deduplicate, and rank chunks.
         
         Args:
-            path_a_chunks: Chunks from GraphRAG path.
-            path_b_chunks: Chunks from semantic search.
+            graphrag_chunks: Chunks from entity-centric GraphRAG path.
+            naive_chunks: Chunks from semantic search.
             subgraph: PCST subgraph (for relation provenance).
             filters: Query filters (for jurisdiction boosting).
             query: Original query string.
+            debug: If True, collect detailed scoring information.
         
         Returns:
             RetrievalResult with top-K ranked chunks.
         """
+        self.debug_info = [] if debug else None
+        
         # Get relation provenance chunk IDs
         relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
         
-        # Score Path A chunks
+        # Score GraphRAG chunks
         scored_chunks = {}
-        for chunk in path_a_chunks:
-            score, retrieval_method = self._score_chunk_path_a(
+        for chunk in graphrag_chunks:
+            score, retrieval_method, bonuses = self._score_graphrag_chunk(
                 chunk, 
                 relation_chunk_ids,
                 filters
             )
             
-            # If chunk already seen (from Path A), keep higher score
+            if debug:
+                self.debug_info.append(ScoringDebugInfo(
+                    chunk_id=chunk.chunk_id,
+                    original_score=chunk.score,
+                    method='graphrag',
+                    bonuses_applied=bonuses,
+                    final_score=score,
+                    rank=0  # Will be updated after sorting
+                ))
+            
+            # If chunk already seen, keep higher score
             if chunk.chunk_id in scored_chunks:
                 if score > scored_chunks[chunk.chunk_id]['score']:
                     scored_chunks[chunk.chunk_id] = {
@@ -108,11 +159,21 @@ class ResultRanker:
                     'retrieval_method': retrieval_method
                 }
         
-        # Score Path B chunks
-        for chunk in path_b_chunks:
-            score, retrieval_method = self._score_chunk_path_b(chunk, filters)
+        # Score Naive chunks
+        for chunk in naive_chunks:
+            score, retrieval_method, bonuses = self._score_naive_chunk(chunk, filters)
             
-            # If chunk already seen from Path A, only update if Path B score is higher
+            if debug:
+                self.debug_info.append(ScoringDebugInfo(
+                    chunk_id=chunk.chunk_id,
+                    original_score=chunk.score,
+                    method='naive',
+                    bonuses_applied=bonuses,
+                    final_score=score,
+                    rank=0
+                ))
+            
+            # If chunk already seen from GraphRAG, only update if Naive score is higher
             if chunk.chunk_id in scored_chunks:
                 if score > scored_chunks[chunk.chunk_id]['score']:
                     scored_chunks[chunk.chunk_id]['score'] = score
@@ -145,6 +206,12 @@ class ResultRanker:
         ranked_chunks.sort(key=lambda c: c.score, reverse=True)
         top_k = ranked_chunks[:self.config['final_top_k']]
         
+        # Update ranks in debug info
+        if debug:
+            chunk_ranks = {c.chunk_id: i+1 for i, c in enumerate(ranked_chunks)}
+            for info in self.debug_info:
+                info.rank = chunk_ranks.get(info.chunk_id, 999)
+        
         # Extract resolved entity names for result
         resolved_entity_names = list(subgraph.entities) if subgraph.entities else []
         
@@ -162,63 +229,72 @@ class ResultRanker:
             chunk_ids.update(rel.chunk_ids)
         return chunk_ids
     
-    def _score_chunk_path_a(
+    def _score_graphrag_chunk(
         self,
         chunk: Chunk,
         relation_chunk_ids: Set[str],
         filters: QueryFilters
-    ) -> tuple[float, str]:
+    ) -> tuple[float, str, Dict[str, float]]:
         """
-        Score chunk from Path A.
+        Score chunk from GraphRAG path.
+        
+        Preserves original chunk score and adds bonuses.
         
         Returns:
-            (score, retrieval_method)
+            (final_score, retrieval_method, bonuses_dict)
         """
-        # Base score: 0.5 (entity expansion baseline)
-        score = 0.5
+        bonuses = {}
         
-        # Check if chunk contains PCST relation (highest priority)
+        # Start with chunk's original score (from entity resolution)
+        score = chunk.score
+        
+        # Add provenance bonus if chunk contains PCST relation
         if chunk.chunk_id in relation_chunk_ids:
-            score += self.config['provenance_bonus']
-            retrieval_method = 'graphrag'  # Provenance bonus
+            bonuses['provenance'] = self.config['provenance_bonus']
+            score += bonuses['provenance']
+            retrieval_method = 'graphrag'
         else:
-            score += self.config['path_a_bonus']
-            retrieval_method = 'graphrag'  # Entity expansion
+            bonuses['graphrag_baseline'] = self.config['path_a_bonus']
+            score += bonuses['graphrag_baseline']
+            retrieval_method = 'graphrag'
         
         # Jurisdiction boost (soft filter)
         if filters.jurisdiction_hints and chunk.jurisdiction:
             if chunk.jurisdiction in filters.jurisdiction_hints:
-                score += self.config['jurisdiction_boost']
+                bonuses['jurisdiction'] = self.config['jurisdiction_boost']
+                score += bonuses['jurisdiction']
         
-        return score, retrieval_method
+        return score, retrieval_method, bonuses
     
-    def _score_chunk_path_b(
+    def _score_naive_chunk(
         self,
         chunk: Chunk,
         filters: QueryFilters
-    ) -> tuple[float, str]:
+    ) -> tuple[float, str, Dict[str, float]]:
         """
-        Score chunk from Path B.
+        Score chunk from Naive RAG path.
         
-        Uses FAISS rank as base score (normalized).
+        Preserves original FAISS similarity score.
         
         Returns:
-            (score, retrieval_method)
+            (final_score, retrieval_method, bonuses_dict)
         """
-        # Base score from FAISS rank (inverse rank, normalized to 0-0.5 range)
-        # This ensures even rank 0 (best) starts at 0.5, below provenance bonus
-        faiss_rank = chunk.metadata.get('faiss_rank', 0)
-        max_rank = self.config['final_top_k']
-        base_score = 0.5 * (1.0 - (faiss_rank / max_rank))
+        bonuses = {}
         
-        score = base_score + self.config['path_b_baseline']
+        # Start with chunk's original FAISS score
+        score = chunk.score
         
         # Jurisdiction boost
         if filters.jurisdiction_hints and chunk.jurisdiction:
             if chunk.jurisdiction in filters.jurisdiction_hints:
-                score += self.config['jurisdiction_boost']
+                bonuses['jurisdiction'] = self.config['jurisdiction_boost']
+                score += bonuses['jurisdiction']
         
-        return score, 'naive'
+        return score, 'naive', bonuses
+    
+    def get_debug_info(self) -> Optional[List[ScoringDebugInfo]]:
+        """Return collected debug information."""
+        return self.debug_info
     
     def format_for_prompt(self, result: RetrievalResult) -> dict:
         """

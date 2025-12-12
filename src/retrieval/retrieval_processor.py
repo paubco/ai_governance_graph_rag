@@ -197,12 +197,12 @@ class RetrievalProcessor:
             parsed_query = self.query_parser.parse(query)
             
             # Path B: semantic search
-            path_b_chunks = self.chunk_retriever._retrieve_path_b(
+            naive_chunks = self.chunk_retriever._retrieve_path_b(
                 parsed_query.query_embedding
             )
             
             # No Path A chunks
-            path_a_chunks = []
+            graphrag_chunks = []
             
             # Empty subgraph
             subgraph = GraphSubgraph(entities=[], relations=[])
@@ -221,18 +221,18 @@ class RetrievalProcessor:
                 # No entities found - cannot do GraphRAG
                 print("WARNING: No entities resolved, returning empty result")
                 subgraph = GraphSubgraph(entities=[], relations=[])
-                path_a_chunks = []
-                path_b_chunks = []
+                graphrag_chunks = []
+                naive_chunks = []
                 resolved_entity_names = []
             else:
                 # Phase 3.3.2a: Graph Expansion (PCST)
                 subgraph = self.graph_expander.expand(understanding.resolved_entities)
                 
                 # Phase 3.3.2b: Path A only (corpus retrospective)
-                path_a_chunks = self.chunk_retriever._retrieve_path_a(subgraph)
+                graphrag_chunks = self.chunk_retriever._retrieve_path_a(subgraph)
                 
                 # No Path B chunks
-                path_b_chunks = []
+                naive_chunks = []
                 
                 # Extract entity names for result
                 resolved_entity_names = [e.name for e in understanding.resolved_entities]
@@ -247,8 +247,8 @@ class RetrievalProcessor:
             if not understanding.resolved_entities:
                 # No entities found - fall back to Path B only
                 print("WARNING: No entities resolved, using semantic search only")
-                path_a_chunks = []
-                path_b_chunks = self.chunk_retriever._retrieve_path_b(
+                graphrag_chunks = []
+                naive_chunks = self.chunk_retriever._retrieve_path_b(
                     understanding.parsed_query.query_embedding
                 )
                 subgraph = GraphSubgraph(entities=[], relations=[])
@@ -258,7 +258,7 @@ class RetrievalProcessor:
                 subgraph = self.graph_expander.expand(understanding.resolved_entities)
                 
                 # Phase 3.3.2b: Dual-Path Retrieval
-                path_a_chunks, path_b_chunks = self.chunk_retriever.retrieve_dual(
+                graphrag_chunks, naive_chunks = self.chunk_retriever.retrieve_dual(
                     subgraph=subgraph,
                     query_embedding=understanding.parsed_query.query_embedding
                 )
@@ -274,8 +274,8 @@ class RetrievalProcessor:
             filters = understanding.parsed_query.filters
         
         result = self.result_ranker.rank(
-            path_a_chunks=path_a_chunks,
-            path_b_chunks=path_b_chunks,
+            graphrag_chunks=graphrag_chunks,
+            naive_chunks=naive_chunks,
             subgraph=subgraph,
             filters=filters,
             query=query

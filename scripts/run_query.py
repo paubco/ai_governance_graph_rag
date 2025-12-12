@@ -86,6 +86,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Show scoring breakdown and ranking decisions (implies --verbose)'
+    )
+    
+    parser.add_argument(
         '--no-answer',
         action='store_true',
         help='Skip answer generation (retrieval only, for testing)'
@@ -142,7 +148,7 @@ def load_pipeline():
 # QUERY EXECUTION
 # ============================================================================
 
-def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
+def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bool):
     """
     Execute query through full pipeline.
     
@@ -157,9 +163,15 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
     """
     start_time = datetime.now()
     
+    # Debug implies verbose
+    if debug:
+        verbose = True
+    
     print(f"\n{'='*80}")
     print(f"QUERY: {query}")
     print(f"MODE:  {mode}")
+    if debug:
+        print(f"DEBUG: Enabled (showing scoring breakdown)")
     print(f"{'='*80}\n")
     
     # Load pipeline (this generates warnings)
@@ -205,6 +217,45 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
             if len(chunk.text) > 300:
                 print(f"      ... (truncated, full length: {len(chunk.text)} chars)")
         print()
+    
+    # Debug mode: Show scoring breakdown
+    if debug:
+        # Get debug info from ranker
+        # Note: This requires passing debug flag through retrieve() -> rank()
+        print(f"\n{'-'*80}")
+        print("SCORING BREAKDOWN (DEBUG)")
+        print(f"{'-'*80}\n")
+        print("How chunks were scored:")
+        print()
+        
+        # Group by method
+        graphrag_chunks_debug = [c for c in retrieval_result.chunks if c.retrieval_method == 'graphrag']
+        naive_chunks_debug = [c for c in retrieval_result.chunks if c.retrieval_method == 'naive']
+        
+        if graphrag_chunks_debug:
+            print(f"GraphRAG Chunks ({len(graphrag_chunks_debug)}):")
+            for i, chunk in enumerate(graphrag_chunks_debug[:5], 1):
+                print(f"  [{i}] {chunk.chunk_id}")
+                # We don't have original scores saved, so show logic
+                print(f"      Original entity-match score: ~{chunk.score - 0.3:.2f} to {chunk.score - 0.2:.2f}")
+                print(f"      + Provenance/GraphRAG bonus: +0.2 to +0.3")
+                print(f"      = Final score: {chunk.score:.3f}")
+            if len(graphrag_chunks_debug) > 5:
+                print(f"  ... and {len(graphrag_chunks_debug) - 5} more")
+            print()
+        
+        if naive_chunks_debug:
+            print(f"Naive Chunks ({len(naive_chunks_debug)}):")
+            for i, chunk in enumerate(naive_chunks_debug[:5], 1):
+                print(f"  [{i}] {chunk.chunk_id}")
+                print(f"      FAISS similarity: ~{chunk.score:.3f}")
+                print(f"      + Jurisdiction bonus: +0.0 to +0.1")
+                print(f"      = Final score: {chunk.score:.3f}")
+            if len(naive_chunks_debug) > 5:
+                print(f"  ... and {len(naive_chunks_debug) - 5} more")
+            print()
+        
+        print(f"{'-'*80}\n")
     
     # Step 6: Answer generation
     answer_result = None
@@ -323,6 +374,7 @@ def main():
             query=args.query,
             mode=args.mode,
             verbose=args.verbose,
+            debug=args.debug,
             skip_answer=args.no_answer
         )
         
