@@ -166,10 +166,10 @@ class ChunkRetriever:
             
             chunks = []
             for record in result:
-                # Score based on number of entities matched (simple heuristic)
-                # More entity matches = higher relevance
+                # Score based on number of entities matched
+                # Lower base (0.40-0.60) so coverage bonus is more meaningful
                 num_entities = len(record['entities'])
-                base_score = min(0.5 + (num_entities * 0.1), 1.0)
+                base_score = min(0.40 + (num_entities * 0.05), 0.60)
                 
                 chunk = Chunk(
                     chunk_id=record['chunk_id'],

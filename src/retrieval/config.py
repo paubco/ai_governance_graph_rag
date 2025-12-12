@@ -11,6 +11,7 @@ Modified: 2025-12-12
 References:
     - PHASE_3_DESIGN.md § 5 (Implementation)
     - PHASE_3.3.2_OPEN_QUESTIONS.md (Graph expansion design decisions)
+    - RAKG paper § 4.2 (Entity Coverage metric)
 """
 
 from dataclasses import dataclass, field
@@ -28,8 +29,8 @@ class RetrievalMode(Enum):
     """
     Retrieval strategy modes for ablation studies.
     
-    NAIVE: Path B only (semantic FAISS search)
-    GRAPHRAG: Path A only (entity-centric with PCST)
+    NAIVE: Semantic FAISS search only
+    GRAPHRAG: Entity-centric with PCST only
     DUAL: Both paths merged (default)
     """
     NAIVE = "naive"
@@ -79,7 +80,7 @@ class ParsedQuery:
     raw_query: str
     extracted_entities: List[ExtractedEntity]
     filters: QueryFilters
-    query_embedding: np.ndarray  # For Path B semantic search
+    query_embedding: np.ndarray  # For semantic search
 
 
 @dataclass
@@ -139,7 +140,7 @@ class Chunk:
     text: str
     doc_id: str
     doc_type: str  # 'regulation' or 'paper'
-    score: float = 0.5  # ADD THIS LINE
+    score: float = 0.5  # Base score from entity matches or FAISS
     jurisdiction: Optional[str] = None  # For regulations
     metadata: dict = field(default_factory=dict)
 
@@ -152,7 +153,7 @@ class RankedChunk:
     Used for:
     - Final top-K selection
     - Prompt assembly
-    - Ablation analysis (source_path tracking)
+    - Ablation analysis (retrieval_method tracking)
     """
     chunk_id: str
     text: str
@@ -175,7 +176,7 @@ class RetrievalResult:
     """
     query: str
     resolved_entities: List[str]
-    subgraph: GraphSubgraph  # FIXED: Changed from Subgraph to GraphSubgraph
+    subgraph: GraphSubgraph
     chunks: List[RankedChunk]
 
 
@@ -201,15 +202,36 @@ RETRIEVAL_CONFIG = {
     'pcst_max_entities': 50,         # PCST expansion limit (hub node control)
 }
 
-# Ranking & Scoring
+# Ranking & Scoring (Entity Coverage-Based)
 RANKING_CONFIG = {
-    'provenance_bonus': 0.3,      # Chunks containing PCST relations (highest)
-    'path_a_bonus': 0.2,          # Chunks from entity expansion (medium)
-    'path_b_baseline': 0.0,       # Semantic search chunks (baseline)
-    'jurisdiction_boost': 0.1,    # Bonus if chunk matches jurisdiction hint
-    'doc_type_boost': 0.15,       # Matches doc_type filter (soft preference)
-    'final_top_k': 20,            # Final chunks for LLM context
+    # GraphRAG scoring components
+    'entity_coverage_bonus': 0.40,    # Max bonus for 100% entity coverage
+    'provenance_bonus': 0.15,         # Flat bonus if chunk contains PCST relation
+    
+    # Naive scoring: Pure FAISS similarity (no bonuses)
+    
+    # Final selection
+    'final_top_k': 20,                # Final chunks for LLM context
 }
+
+# RANKING RATIONALE (Entity Coverage):
+# 
+# GraphRAG chunks scored by entity coverage:
+#   score = base_score + (entities_in_chunk / total_resolved * 0.40) + provenance_bonus
+# 
+# This penalizes chunks mentioning random entities without full context.
+# 
+# Examples with 4 resolved entities [A, B, C, D]:
+# 
+#   Chunk with [A]:          base 0.45 + (1/4 * 0.40) = 0.55
+#   Chunk with [A, B]:       base 0.50 + (2/4 * 0.40) = 0.70
+#   Chunk with [A,B,C,D]:    base 0.60 + (4/4 * 0.40) = 1.00
+#   Above + PCST relation:   base 0.60 + 0.40 + 0.15  = 1.15
+# 
+# Naive chunks: Pure FAISS similarity (0.0-1.0), no bonuses
+# 
+# Creates fair competition where both paths can reach similar max scores.
+# Based on RAKG's Entity Coverage (EC) metric from paper § 4.2.
 
 # Entity Resolution (from Phase 3.3.1)
 ENTITY_RESOLUTION_CONFIG = {

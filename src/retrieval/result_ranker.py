@@ -10,37 +10,39 @@ Modified: 2025-12-12
 
 References:
     - RAGulating (Agarwal et al., 2025) - Provenance tracking
+    - RAKG (Zhang et al., 2025) - Entity Coverage metric
     - PHASE_3_DESIGN.md § 5.3 (Ranking strategy)
 
-Ranking Strategy:
-    GraphRAG chunks: Entity-match base score (0.5-1.0) + bonuses
-    Naive chunks: FAISS similarity (0-1.0) + bonuses
+Ranking Strategy (Entity Coverage-Based):
     
-    Bonuses:
-    - Provenance bonus (+0.3): Chunk contains PCST relation
-    - GraphRAG bonus (+0.2): Chunk from entity expansion
-    - Jurisdiction boost (+0.1): Matches query jurisdiction
+    GraphRAG scoring:
+        score = base_score + (entity_coverage * max_coverage_bonus) + provenance_bonus
+        
+        where entity_coverage = entities_in_chunk / total_resolved_entities
     
-    Examples of final scores:
+    Naive scoring:
+        score = faiss_similarity  # NO bonuses (pure semantic)
     
-    Scenario 1: High-quality GraphRAG chunk with provenance
-      Base: 0.8 (4 entity matches)
-      + Provenance: 0.3
-      = 1.1 (beats most naive chunks)
+    Examples (4 entities resolved):
+    
+    Scenario 1: Full context GraphRAG with provenance
+      Base: 0.40
+      Coverage: 4/4 = 1.0 → +0.40
+      Provenance: +0.15
+      = 0.95 (strong but not unbeatable)
     
     Scenario 2: Perfect semantic match (naive)
-      Base: 0.95 (FAISS similarity)
-      + Jurisdiction: 0.1
-      = 1.05 (beats low-quality graphrag)
+      FAISS: 0.98
+      = 0.98 (beats partial GraphRAG)
     
-    Scenario 3: Mediocre GraphRAG chunk
-      Base: 0.6 (2 entity matches)
-      + GraphRAG bonus: 0.2
-      = 0.8 (loses to strong naive chunks)
+    Scenario 3: Partial context GraphRAG
+      Base: 0.40
+      Coverage: 1/4 = 0.25 → +0.10
+      = 0.50 (loses to good naive)
     
-    Scenario 4: Off-topic naive chunk
-      Base: 0.3 (low FAISS similarity)
-      = 0.3 (loses to everything)
+    Scenario 4: Mediocre naive
+      FAISS: 0.45
+      = 0.45 (loses to everything)
 """
 
 import numpy as np
@@ -66,9 +68,11 @@ from .config import (
 class ScoringDebugInfo:
     """Debug information for scoring decisions."""
     chunk_id: str
-    original_score: float
     method: str  # 'graphrag' or 'naive'
-    bonuses_applied: Dict[str, float]
+    base_score: float
+    entity_coverage: Optional[float]  # Only for graphrag
+    coverage_bonus: float
+    provenance_bonus: float
     final_score: float
     rank: int
 
@@ -79,12 +83,10 @@ class ScoringDebugInfo:
 
 class ResultRanker:
     """
-    Merge and rank chunks from dual-path retrieval.
+    Merge and rank chunks using entity coverage.
     
-    Handles:
-    - Deduplication (same chunk from both paths)
-    - Scoring with provenance bonus
-    - Top-K selection
+    Key principle: GraphRAG chunks rewarded for discussing MORE resolved entities.
+    This penalizes chunks mentioning random entities without full context.
     """
     
     def __init__(self, config: dict = None):
@@ -107,13 +109,13 @@ class ResultRanker:
         debug: bool = False
     ) -> RetrievalResult:
         """
-        Merge, deduplicate, and rank chunks.
+        Merge, deduplicate, and rank chunks with entity coverage.
         
         Args:
             graphrag_chunks: Chunks from entity-centric GraphRAG path.
             naive_chunks: Chunks from semantic search.
-            subgraph: PCST subgraph (for relation provenance).
-            filters: Query filters (for jurisdiction boosting).
+            subgraph: PCST subgraph (for relation provenance and entity count).
+            filters: Query filters (reserved for future use).
             query: Original query string.
             debug: If True, collect detailed scoring information.
         
@@ -125,21 +127,27 @@ class ResultRanker:
         # Get relation provenance chunk IDs
         relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
         
+        # Total resolved entities (for coverage calculation)
+        total_entities = len(subgraph.entities)
+        
         # Score GraphRAG chunks
         scored_chunks = {}
         for chunk in graphrag_chunks:
-            score, retrieval_method, bonuses = self._score_graphrag_chunk(
+            score, retrieval_method, debug_data = self._score_graphrag_chunk(
                 chunk, 
                 relation_chunk_ids,
+                total_entities,
                 filters
             )
             
             if debug:
                 self.debug_info.append(ScoringDebugInfo(
                     chunk_id=chunk.chunk_id,
-                    original_score=chunk.score,
                     method='graphrag',
-                    bonuses_applied=bonuses,
+                    base_score=debug_data['base_score'],
+                    entity_coverage=debug_data['entity_coverage'],
+                    coverage_bonus=debug_data['coverage_bonus'],
+                    provenance_bonus=debug_data['provenance_bonus'],
                     final_score=score,
                     rank=0  # Will be updated after sorting
                 ))
@@ -161,14 +169,16 @@ class ResultRanker:
         
         # Score Naive chunks
         for chunk in naive_chunks:
-            score, retrieval_method, bonuses = self._score_naive_chunk(chunk, filters)
+            score, retrieval_method, debug_data = self._score_naive_chunk(chunk, filters)
             
             if debug:
                 self.debug_info.append(ScoringDebugInfo(
                     chunk_id=chunk.chunk_id,
-                    original_score=chunk.score,
                     method='naive',
-                    bonuses_applied=bonuses,
+                    base_score=debug_data['base_score'],
+                    entity_coverage=None,  # Naive doesn't use coverage
+                    coverage_bonus=0.0,
+                    provenance_bonus=0.0,
                     final_score=score,
                     rank=0
                 ))
@@ -233,64 +243,72 @@ class ResultRanker:
         self,
         chunk: Chunk,
         relation_chunk_ids: Set[str],
+        total_entities: int,
         filters: QueryFilters
-    ) -> tuple[float, str, Dict[str, float]]:
+    ) -> tuple[float, str, Dict]:
         """
-        Score chunk from GraphRAG path.
+        Score GraphRAG chunk using entity coverage.
         
-        Preserves original chunk score and adds bonuses.
+        Formula:
+            score = base_score + (entity_coverage * max_coverage_bonus) + provenance_bonus
+        
+        Args:
+            chunk: Chunk to score
+            relation_chunk_ids: Chunks containing PCST relations
+            total_entities: Total resolved entities (for coverage calculation)
+            filters: Query filters (reserved for future)
         
         Returns:
-            (final_score, retrieval_method, bonuses_dict)
+            (final_score, retrieval_method, debug_data)
         """
-        bonuses = {}
+        debug_data = {}
         
-        # Start with chunk's original score (from entity resolution)
-        score = chunk.score
+        # Base score from chunk (entity match quality)
+        base_score = chunk.score
+        debug_data['base_score'] = base_score
         
-        # Add provenance bonus if chunk contains PCST relation
+        # Entity coverage bonus
+        entities_in_chunk = chunk.metadata.get('entities', [])
+        entity_coverage = len(entities_in_chunk) / max(total_entities, 1)  # Avoid div by 0
+        coverage_bonus = entity_coverage * self.config['entity_coverage_bonus']
+        
+        debug_data['entity_coverage'] = entity_coverage
+        debug_data['coverage_bonus'] = coverage_bonus
+        
+        # Provenance bonus (flat)
+        provenance_bonus = 0.0
         if chunk.chunk_id in relation_chunk_ids:
-            bonuses['provenance'] = self.config['provenance_bonus']
-            score += bonuses['provenance']
-            retrieval_method = 'graphrag'
-        else:
-            bonuses['graphrag_baseline'] = self.config['path_a_bonus']
-            score += bonuses['graphrag_baseline']
-            retrieval_method = 'graphrag'
+            provenance_bonus = self.config['provenance_bonus']
         
-        # Jurisdiction boost (soft filter)
-        if filters.jurisdiction_hints and chunk.jurisdiction:
-            if chunk.jurisdiction in filters.jurisdiction_hints:
-                bonuses['jurisdiction'] = self.config['jurisdiction_boost']
-                score += bonuses['jurisdiction']
+        debug_data['provenance_bonus'] = provenance_bonus
         
-        return score, retrieval_method, bonuses
+        # Final score
+        final_score = base_score + coverage_bonus + provenance_bonus
+        
+        return final_score, 'graphrag', debug_data
     
     def _score_naive_chunk(
         self,
         chunk: Chunk,
         filters: QueryFilters
-    ) -> tuple[float, str, Dict[str, float]]:
+    ) -> tuple[float, str, Dict]:
         """
-        Score chunk from Naive RAG path.
+        Score Naive chunk (pure FAISS similarity, NO bonuses).
         
-        Preserves original FAISS similarity score.
+        Args:
+            chunk: Chunk to score
+            filters: Query filters (reserved for future)
         
         Returns:
-            (final_score, retrieval_method, bonuses_dict)
+            (final_score, retrieval_method, debug_data)
         """
-        bonuses = {}
+        debug_data = {}
         
-        # Start with chunk's original FAISS score
+        # Naive = pure semantic similarity
         score = chunk.score
+        debug_data['base_score'] = score
         
-        # Jurisdiction boost
-        if filters.jurisdiction_hints and chunk.jurisdiction:
-            if chunk.jurisdiction in filters.jurisdiction_hints:
-                bonuses['jurisdiction'] = self.config['jurisdiction_boost']
-                score += bonuses['jurisdiction']
-        
-        return score, 'naive', bonuses
+        return score, 'naive', debug_data
     
     def get_debug_info(self) -> Optional[List[ScoringDebugInfo]]:
         """Return collected debug information."""
