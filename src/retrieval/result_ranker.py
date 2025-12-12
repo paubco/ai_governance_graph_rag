@@ -6,7 +6,7 @@ Purpose: Merge and rank chunks from dual-path retrieval
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-07
+Modified: 2025-12-12
 
 References:
     - RAGulating (Agarwal et al., 2025) - Provenance tracking
@@ -56,7 +56,7 @@ class ResultRanker:
         Initialize ranker.
         
         Args:
-            config: Ranking configuration (uses RANKING_CONFIG if None)
+            config: Ranking configuration (uses RANKING_CONFIG if None).
         """
         self.config = config or RANKING_CONFIG
     
@@ -72,14 +72,14 @@ class ResultRanker:
         Merge, deduplicate, and rank chunks.
         
         Args:
-            path_a_chunks: Chunks from GraphRAG path
-            path_b_chunks: Chunks from semantic search
-            subgraph: PCST subgraph (for relation provenance)
-            filters: Query filters (for jurisdiction boosting)
-            query: Original query string
+            path_a_chunks: Chunks from GraphRAG path.
+            path_b_chunks: Chunks from semantic search.
+            subgraph: PCST subgraph (for relation provenance).
+            filters: Query filters (for jurisdiction boosting).
+            query: Original query string.
         
         Returns:
-            RetrievalResult with top-K ranked chunks
+            RetrievalResult with top-K ranked chunks.
         """
         # Get relation provenance chunk IDs
         relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
@@ -87,7 +87,7 @@ class ResultRanker:
         # Score Path A chunks
         scored_chunks = {}
         for chunk in path_a_chunks:
-            score, source_path = self._score_chunk_path_a(
+            score, retrieval_method = self._score_chunk_path_a(
                 chunk, 
                 relation_chunk_ids,
                 filters
@@ -99,29 +99,29 @@ class ResultRanker:
                     scored_chunks[chunk.chunk_id] = {
                         'chunk': chunk,
                         'score': score,
-                        'source_path': source_path
+                        'retrieval_method': retrieval_method
                     }
             else:
                 scored_chunks[chunk.chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'source_path': source_path
+                    'retrieval_method': retrieval_method
                 }
         
         # Score Path B chunks
         for chunk in path_b_chunks:
-            score, source_path = self._score_chunk_path_b(chunk, filters)
+            score, retrieval_method = self._score_chunk_path_b(chunk, filters)
             
             # If chunk already seen from Path A, only update if Path B score is higher
             if chunk.chunk_id in scored_chunks:
                 if score > scored_chunks[chunk.chunk_id]['score']:
                     scored_chunks[chunk.chunk_id]['score'] = score
-                    scored_chunks[chunk.chunk_id]['source_path'] = 'naive'
+                    scored_chunks[chunk.chunk_id]['retrieval_method'] = 'naive'
             else:
                 scored_chunks[chunk.chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'source_path': source_path
+                    'retrieval_method': retrieval_method
                 }
         
         # Convert to RankedChunk objects
@@ -132,10 +132,11 @@ class ResultRanker:
                 chunk_id=chunk.chunk_id,
                 text=chunk.text,
                 score=chunk_data['score'],
-                source_path=chunk_data['source_path'],
-                entities=chunk.metadata.get('entities', []),
+                retrieval_method=chunk_data['retrieval_method'],
+                doc_id=chunk.doc_id,
                 doc_type=chunk.doc_type,
                 jurisdiction=chunk.jurisdiction,
+                entities=chunk.metadata.get('entities', []),
                 metadata=chunk.metadata
             )
             ranked_chunks.append(ranked_chunk)
@@ -144,10 +145,14 @@ class ResultRanker:
         ranked_chunks.sort(key=lambda c: c.score, reverse=True)
         top_k = ranked_chunks[:self.config['final_top_k']]
         
+        # Extract resolved entity names for result
+        resolved_entity_names = list(subgraph.entities) if subgraph.entities else []
+        
         return RetrievalResult(
-            chunks=top_k,
+            query=query,
+            resolved_entities=resolved_entity_names,
             subgraph=subgraph,
-            query=query
+            chunks=top_k
         )
     
     def _get_relation_chunk_ids(self, subgraph: GraphSubgraph) -> Set[str]:
@@ -167,7 +172,7 @@ class ResultRanker:
         Score chunk from Path A.
         
         Returns:
-            (score, source_path)
+            (score, retrieval_method)
         """
         # Base score: 0.5 (entity expansion baseline)
         score = 0.5
@@ -175,17 +180,17 @@ class ResultRanker:
         # Check if chunk contains PCST relation (highest priority)
         if chunk.chunk_id in relation_chunk_ids:
             score += self.config['provenance_bonus']
-            source_path = 'graphrag_relation'
+            retrieval_method = 'graphrag'  # Provenance bonus
         else:
             score += self.config['path_a_bonus']
-            source_path = 'graphrag_entity'
+            retrieval_method = 'graphrag'  # Entity expansion
         
         # Jurisdiction boost (soft filter)
         if filters.jurisdiction_hints and chunk.jurisdiction:
             if chunk.jurisdiction in filters.jurisdiction_hints:
                 score += self.config['jurisdiction_boost']
         
-        return score, source_path
+        return score, retrieval_method
     
     def _score_chunk_path_b(
         self,
@@ -198,7 +203,7 @@ class ResultRanker:
         Uses FAISS rank as base score (normalized).
         
         Returns:
-            (score, source_path)
+            (score, retrieval_method)
         """
         # Base score from FAISS rank (inverse rank, normalized to 0-0.5 range)
         # This ensures even rank 0 (best) starts at 0.5, below provenance bonus
