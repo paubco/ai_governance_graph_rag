@@ -162,62 +162,103 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
     print(f"MODE:  {mode}")
     print(f"{'='*80}\n")
     
-    # Load pipeline
+    # Load pipeline (this generates warnings)
     processor, generator = load_pipeline()
+    
+    # Reprint query after warnings
+    print(f"\n{'='*80}")
+    print(f"QUERY: {query}")
+    print(f"MODE:  {mode}")
+    print(f"{'='*80}\n")
     
     # Convert mode string to enum
     retrieval_mode = RetrievalMode[mode.upper()]
     
     # Step 1-5: Retrieval
-    print("🔍 Running retrieval pipeline...")
+    print("Running retrieval pipeline...")
     retrieval_result = processor.retrieve(query, mode=retrieval_mode)
     
     # Display retrieval results
-    print(f"\n✅ Retrieval complete:")
-    print(f"   • Resolved entities: {len(retrieval_result.resolved_entities)}")
-    print(f"   • Subgraph entities: {len(retrieval_result.subgraph.entities)}")
-    print(f"   • Subgraph relations: {len(retrieval_result.subgraph.relations)}")
-    print(f"   • Chunks retrieved: {len(retrieval_result.chunks)}")
+    print(f"\n{'-'*80}")
+    print("RETRIEVAL COMPLETE")
+    print(f"{'-'*80}")
+    print(f"Resolved entities: {len(retrieval_result.resolved_entities)}")
+    print(f"Subgraph: {len(retrieval_result.subgraph.entities)} entities, {len(retrieval_result.subgraph.relations)} relations")
+    print(f"Retrieved chunks: {len(retrieval_result.chunks)}")
+    print(f"{'-'*80}\n")
     
     if verbose:
-        print(f"\n📋 Resolved Entities:")
-        for entity in retrieval_result.resolved_entities[:10]:
-            print(f"   • {entity}")
+        print(f"RESOLVED ENTITIES (top 10):")
+        for i, entity in enumerate(retrieval_result.resolved_entities[:10], 1):
+            print(f"  {i}. {entity}")
         
-        print(f"\n🔗 Sample Relations:")
-        for rel in retrieval_result.subgraph.relations[:5]:
-            print(f"   • {rel.source_name} --{rel.predicate}--> {rel.target_name}")
+        print(f"\nSUBGRAPH RELATIONS (top 10):")
+        for i, rel in enumerate(retrieval_result.subgraph.relations[:10], 1):
+            print(f"  {i}. {rel.source_name} --{rel.predicate}--> {rel.target_name}")
         
-        print(f"\n📄 Top Chunks:")
-        for i, chunk in enumerate(retrieval_result.chunks[:3], 1):
-            print(f"   [{i}] {chunk.doc_id} (score: {chunk.score:.3f}, method: {chunk.retrieval_method})")
-            print(f"       {chunk.text[:150]}...")
+        print(f"\nRETRIEVED CHUNKS (all {len(retrieval_result.chunks)}):")
+        for i, chunk in enumerate(retrieval_result.chunks, 1):
+            print(f"\n  [{i}] Chunk ID: {chunk.chunk_id}")
+            print(f"      Doc: {chunk.doc_id} ({chunk.doc_type})")
+            print(f"      Score: {chunk.score:.3f}, Method: {chunk.retrieval_method}")
+            print(f"      Text: {chunk.text[:300]}...")
+            if len(chunk.text) > 300:
+                print(f"      ... (truncated, full length: {len(chunk.text)} chars)")
+        print()
     
     # Step 6: Answer generation
     answer_result = None
     if not skip_answer:
-        print(f"\n💬 Generating answer...")
+        print(f"\n{'-'*80}")
+        print("GENERATING ANSWER")
+        print(f"{'-'*80}")
         
         # Estimate cost first
         estimate = generator.estimate_cost_for_query(retrieval_result)
-        print(f"   • Estimated cost: ${estimate['estimated_cost_usd']:.4f}")
-        print(f"   • Chunks that fit: {estimate['chunks_that_fit']}/{estimate['total_chunks_available']}")
+        print(f"Estimated cost: ${estimate['estimated_cost_usd']:.4f}")
+        print(f"Chunks that fit in context: {estimate['chunks_that_fit']}/{estimate['total_chunks_available']}")
+        print()
         
         # Generate answer
         answer_result = generator.generate(retrieval_result)
         
-        print(f"\n✅ Answer generated:")
-        print(f"   • Input tokens: {answer_result.input_tokens}")
-        print(f"   • Output tokens: {answer_result.output_tokens}")
-        print(f"   • Actual cost: ${answer_result.cost_usd:.4f}")
-        print(f"\n{'─'*80}")
+        print(f"ANSWER GENERATED")
+        print(f"  Input tokens: {answer_result.input_tokens}")
+        print(f"  Output tokens: {answer_result.output_tokens}")
+        print(f"  Actual cost: ${answer_result.cost_usd:.4f}")
+        print(f"\n{'='*80}")
+        print("ANSWER")
+        print(f"{'='*80}")
         print(answer_result.answer)
-        print(f"{'─'*80}")
+        print(f"{'='*80}\n")
+        
+        # Citation mapping
+        print(f"\n{'-'*80}")
+        print("CITATION MAPPING")
+        print(f"{'-'*80}")
+        print("Citations in answer → Retrieved chunks:\n")
+        
+        import re
+        citations = re.findall(r'\[(\d+)\]', answer_result.answer)
+        cited_nums = sorted(set(int(c) for c in citations))
+        
+        for num in cited_nums:
+            if num <= len(retrieval_result.chunks):
+                chunk = retrieval_result.chunks[num - 1]
+                print(f"[{num}] → Chunk {chunk.chunk_id}")
+                print(f"     Score: {chunk.score:.3f}, Method: {chunk.retrieval_method}")
+                print(f"     Doc: {chunk.doc_id} ({chunk.doc_type})")
+                print(f"     Text: {chunk.text[:200]}...")
+                print()
+            else:
+                print(f"[{num}] → WARNING: Citation out of range (only {len(retrieval_result.chunks)} chunks)")
+                print()
+        print(f"{'-'*80}\n")
     
     end_time = datetime.now()
     elapsed = (end_time - start_time).total_seconds()
     
-    print(f"\n⏱️  Total time: {elapsed:.2f}s")
+    print(f"\nTotal time: {elapsed:.2f}s")
     
     # Build results dict
     results = {
@@ -293,16 +334,16 @@ def main():
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)
             
-            print(f"\n💾 Results saved to: {output_path}")
+            print(f"\nResults saved to: {output_path}")
         
         print(f"\n{'='*80}\n")
         
     except KeyboardInterrupt:
-        print("\n\n⚠️  Interrupted by user")
+        print("\n\nInterrupted by user")
         sys.exit(1)
     except Exception as e:
         logger.error("Pipeline failed: %s", str(e), exc_info=True)
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 

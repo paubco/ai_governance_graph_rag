@@ -191,7 +191,7 @@ class RetrievalProcessor:
         # Mode-specific execution
         if mode == RetrievalMode.NAIVE:
             # Path B only: semantic search, no entity resolution
-            print("🔍 Mode: NAIVE (semantic search only)")
+            print("Mode: NAIVE (semantic search only)")
             
             # Parse query for embedding only (skip entity extraction)
             parsed_query = self.query_parser.parse(query)
@@ -212,14 +212,14 @@ class RetrievalProcessor:
         
         elif mode == RetrievalMode.GRAPHRAG:
             # Path A only: entity resolution + PCST, no semantic search
-            print("🔍 Mode: GRAPHRAG (entity-centric only)")
+            print("Mode: GRAPHRAG (entity-centric only)")
             
             # Phase 3.3.1: Query Understanding
             understanding = self.understand_query(query)
             
             if not understanding.resolved_entities:
                 # No entities found - cannot do GraphRAG
-                print("⚠️  No entities resolved, returning empty result")
+                print("WARNING: No entities resolved, returning empty result")
                 subgraph = GraphSubgraph(entities=[], relations=[])
                 path_a_chunks = []
                 path_b_chunks = []
@@ -239,14 +239,14 @@ class RetrievalProcessor:
         
         else:  # RetrievalMode.DUAL (default)
             # Both paths: full pipeline
-            print("🔍 Mode: DUAL (GraphRAG + semantic)")
+            print("Mode: DUAL (GraphRAG + semantic)")
             
             # Phase 3.3.1: Query Understanding
             understanding = self.understand_query(query)
             
             if not understanding.resolved_entities:
                 # No entities found - fall back to Path B only
-                print("⚠️  No entities resolved, using semantic search only")
+                print("WARNING: No entities resolved, using semantic search only")
                 path_a_chunks = []
                 path_b_chunks = self.chunk_retriever._retrieve_path_b(
                     understanding.parsed_query.query_embedding
