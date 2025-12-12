@@ -35,7 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.config import RetrievalMode
-from src.utils.embeddings import EmbeddingModel
+from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -112,7 +112,7 @@ def load_pipeline():
     faiss_dir = data_dir / 'faiss'
     
     # Load embedding model
-    embedding_model = EmbeddingModel()
+    embedding_model = BGEEmbedder()
     
     # Retrieval processor
     processor = RetrievalProcessor(
