@@ -109,7 +109,7 @@ def load_pipeline():
     Load FAISS indices and pipeline components.
     
     Returns:
-        Tuple of (RetrievalProcessor, AnswerGenerator)
+        Tuple of (RetrievalProcessor, AnswerGenerator, entity_lookup)
     """
     logger.info("Loading pipeline components...")
     
@@ -121,13 +121,22 @@ def load_pipeline():
     # Load embedding model
     embedding_model = BGEEmbedder()
     
+    # Load entity name lookup (for debug display)
+    entity_lookup = {}
+    normalized_entities_path = interim_dir / 'normalized_entities_with_ids.json'
+    if normalized_entities_path.exists():
+        with open(normalized_entities_path, 'r') as f:
+            entities_data = json.load(f)
+            for entity in entities_data:
+                entity_lookup[entity['entity_id']] = entity['name']
+    
     # Retrieval processor
     processor = RetrievalProcessor(
         embedding_model=embedding_model,
         # Phase 3.3.1 paths
         faiss_entity_index_path=faiss_dir / 'entity_embeddings.index',
         entity_ids_path=faiss_dir / 'entity_id_map.json',
-        normalized_entities_path=interim_dir / 'normalized_entities_with_ids.json',
+        normalized_entities_path=normalized_entities_path,
         # Phase 3.3.2 paths
         faiss_chunk_index_path=faiss_dir / 'chunk_embeddings.index',
         chunk_ids_path=faiss_dir / 'chunk_id_map.json',
@@ -141,7 +150,7 @@ def load_pipeline():
     generator = AnswerGenerator()
     
     logger.info("Pipeline loaded successfully")
-    return processor, generator
+    return processor, generator, entity_lookup
 
 
 # ============================================================================
@@ -156,6 +165,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
         query: Query string.
         mode: Retrieval mode (dual, graphrag, naive).
         verbose: Show detailed output.
+        debug: Show scoring breakdown.
         skip_answer: Skip answer generation.
         
     Returns:
@@ -175,7 +185,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     print(f"{'='*80}\n")
     
     # Load pipeline (this generates warnings)
-    processor, generator = load_pipeline()
+    processor, generator, entity_lookup = load_pipeline()
     
     # Reprint query after warnings
     print(f"\n{'='*80}")
@@ -197,12 +207,19 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     print(f"Resolved entities: {len(retrieval_result.resolved_entities)}")
     print(f"Subgraph: {len(retrieval_result.subgraph.entities)} entities, {len(retrieval_result.subgraph.relations)} relations")
     print(f"Retrieved chunks: {len(retrieval_result.chunks)}")
+    
+    # Show method breakdown
+    graphrag_count = sum(1 for c in retrieval_result.chunks if c.retrieval_method == 'graphrag')
+    naive_count = sum(1 for c in retrieval_result.chunks if c.retrieval_method == 'naive')
+    print(f"  GraphRAG: {graphrag_count}")
+    print(f"  Naive: {naive_count}")
     print(f"{'-'*80}\n")
     
     if verbose:
         print(f"RESOLVED ENTITIES (top 10):")
         for i, entity in enumerate(retrieval_result.resolved_entities[:10], 1):
-            print(f"  {i}. {entity}")
+            entity_name = entity_lookup.get(entity, 'unknown')
+            print(f"  {i}. {entity_name} ({entity[:16]}...)")
         
         print(f"\nSUBGRAPH RELATIONS (top 10):")
         for i, rel in enumerate(retrieval_result.subgraph.relations[:10], 1):
@@ -220,40 +237,72 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     
     # Debug mode: Show scoring breakdown
     if debug:
-        # Get debug info from ranker
-        # Note: This requires passing debug flag through retrieve() -> rank()
         print(f"\n{'-'*80}")
         print("SCORING BREAKDOWN (DEBUG)")
         print(f"{'-'*80}\n")
-        print("How chunks were scored:")
-        print()
         
-        # Group by method
-        graphrag_chunks_debug = [c for c in retrieval_result.chunks if c.retrieval_method == 'graphrag']
-        naive_chunks_debug = [c for c in retrieval_result.chunks if c.retrieval_method == 'naive']
+        # Get debug info from ranker (if available)
+        debug_info = getattr(processor.result_ranker, 'debug_info', None)
         
-        if graphrag_chunks_debug:
-            print(f"GraphRAG Chunks ({len(graphrag_chunks_debug)}):")
-            for i, chunk in enumerate(graphrag_chunks_debug[:5], 1):
-                print(f"  [{i}] {chunk.chunk_id}")
-                # We don't have original scores saved, so show logic
-                print(f"      Original entity-match score: ~{chunk.score - 0.3:.2f} to {chunk.score - 0.2:.2f}")
-                print(f"      + Provenance/GraphRAG bonus: +0.2 to +0.3")
-                print(f"      = Final score: {chunk.score:.3f}")
-            if len(graphrag_chunks_debug) > 5:
-                print(f"  ... and {len(graphrag_chunks_debug) - 5} more")
+        if not debug_info:
+            print("Debug info not available from ranker")
+            print("(Ensure ranker.rank() was called with debug=True)")
+        else:
+            # Group by method
+            graphrag_info = [d for d in debug_info if d.method == 'graphrag']
+            naive_info = [d for d in debug_info if d.method == 'naive']
+            
+            # Sort by rank
+            graphrag_info.sort(key=lambda x: x.rank)
+            naive_info.sort(key=lambda x: x.rank)
+            
+            total_resolved = len(retrieval_result.resolved_entities)
+            
+            print(f"Total resolved entities: {total_resolved}")
+            print(f"GraphRAG chunks: {len(graphrag_info)}")
+            print(f"Naive chunks: {len(naive_info)}")
             print()
-        
-        if naive_chunks_debug:
-            print(f"Naive Chunks ({len(naive_chunks_debug)}):")
-            for i, chunk in enumerate(naive_chunks_debug[:5], 1):
-                print(f"  [{i}] {chunk.chunk_id}")
-                print(f"      FAISS similarity: ~{chunk.score:.3f}")
-                print(f"      + Jurisdiction bonus: +0.0 to +0.1")
-                print(f"      = Final score: {chunk.score:.3f}")
-            if len(naive_chunks_debug) > 5:
-                print(f"  ... and {len(naive_chunks_debug) - 5} more")
-            print()
+            
+            if graphrag_info:
+                print("Top GraphRAG Chunks (Entity Coverage Scoring):")
+                for info in graphrag_info[:5]:
+                    chunk = next((c for c in retrieval_result.chunks if c.chunk_id == info.chunk_id), None)
+                    if chunk:
+                        entities_in_chunk = len(chunk.entities) if chunk.entities else 0
+                        coverage = info.entity_coverage if info.entity_coverage else 0.0
+                        
+                        print(f"  [{info.rank}] {info.chunk_id}")
+                        print(f"      Base score: {info.base_score:.3f}")
+                        print(f"      Entity coverage: {entities_in_chunk}/{total_resolved} = {coverage:.2f}")
+                        print(f"      + Coverage bonus: +{info.coverage_bonus:.3f}")
+                        if info.provenance_bonus > 0:
+                            print(f"      + Provenance bonus: +{info.provenance_bonus:.3f}")
+                        print(f"      = Final score: {info.final_score:.3f}")
+                        print()
+            
+            if naive_info:
+                print("Top Naive Chunks (Pure Semantic):")
+                for info in naive_info[:5]:
+                    print(f"  [{info.rank}] {info.chunk_id}")
+                    print(f"      FAISS similarity: {info.base_score:.3f}")
+                    print(f"      = Final score: {info.final_score:.3f}")
+                    print()
+            
+            # Show competition summary
+            if graphrag_info and naive_info:
+                top_graphrag = graphrag_info[0].final_score
+                top_naive = naive_info[0].final_score
+                
+                print("Competition Summary:")
+                print(f"  Best GraphRAG: {top_graphrag:.3f}")
+                print(f"  Best Naive: {top_naive:.3f}")
+                if top_naive > top_graphrag:
+                    print(f"  Winner: Naive (semantic similarity dominated)")
+                elif top_graphrag > top_naive:
+                    print(f"  Winner: GraphRAG (entity context dominated)")
+                else:
+                    print(f"  Tie!")
+                print()
         
         print(f"{'-'*80}\n")
     
