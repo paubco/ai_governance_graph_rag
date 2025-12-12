@@ -6,12 +6,13 @@ Purpose: Orchestrate full Phase 3 retrieval pipeline (3.3.1 + 3.3.2)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-07
+Modified: 2025-12-12
 
 References:
     - PHASE_3_DESIGN.md § 4-5 (Query Understanding + Context Retrieval)
     - ARCHITECTURE.md § 3.3 (Phase 3 pipeline overview)
     - PHASE_3.3.2_IMPLEMENTATION.md (PCST-based expansion)
+    - PHASE_3_DESIGN.md § 6 (Evaluation - ablation studies)
 
 Pipeline:
     1. Query Understanding (3.3.1)
@@ -22,13 +23,18 @@ Pipeline:
         - Graph expansion (PCST optimization)
         - Dual-path retrieval (GraphRAG + Naive RAG)
         - Ranking (provenance bonus)
+
+Modes (for ablation studies):
+    - NAIVE: Path B only (semantic FAISS search)
+    - GRAPHRAG: Path A only (entity-centric + PCST)
+    - DUAL: Both paths merged (default)
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .config import ParsedQuery, ResolvedEntity, RetrievalResult
+from .config import ParsedQuery, ResolvedEntity, RetrievalResult, RetrievalMode
 from .query_parser import QueryParser
 from .entity_resolver import EntityResolver
 from .graph_expander import GraphExpander
@@ -77,17 +83,17 @@ class RetrievalProcessor:
         Initialize retrieval processor.
         
         Args:
-            embedding_model: BGE-M3 embedding model with embed_single() method
-            faiss_entity_index_path: Path to FAISS entity index
-            entity_ids_path: Path to entity ID mapping JSON
-            normalized_entities_path: Path to normalized entities JSON
-            faiss_chunk_index_path: Path to FAISS chunk index
-            chunk_ids_path: Path to chunk ID mapping JSON
-            neo4j_uri: Neo4j connection string
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
-            fuzzy_threshold: Entity fuzzy matching threshold
-            entity_top_k: Candidates per entity for fuzzy matching
+            embedding_model: BGE-M3 embedding model with embed_single() method.
+            faiss_entity_index_path: Path to FAISS entity index.
+            entity_ids_path: Path to entity ID mapping JSON.
+            normalized_entities_path: Path to normalized entities JSON.
+            faiss_chunk_index_path: Path to FAISS chunk index.
+            chunk_ids_path: Path to chunk ID mapping JSON.
+            neo4j_uri: Neo4j connection string.
+            neo4j_user: Neo4j username.
+            neo4j_password: Neo4j password.
+            fuzzy_threshold: Entity fuzzy matching threshold.
+            entity_top_k: Candidates per entity for fuzzy matching.
         """
         # Phase 3.3.1: Query Understanding
         self.query_parser = QueryParser(embedding_model)
@@ -129,10 +135,10 @@ class RetrievalProcessor:
         2. Resolve entities → canonical entity IDs
         
         Args:
-            query: Natural language query string
+            query: Natural language query string.
             
         Returns:
-            QueryUnderstanding with parsed query and resolved entities
+            QueryUnderstanding with parsed query and resolved entities.
         """
         # Step 1: Parse query
         parsed_query = self.query_parser.parse(query)
@@ -147,7 +153,11 @@ class RetrievalProcessor:
             resolved_entities=resolved_entities,
         )
     
-    def retrieve(self, query: str) -> RetrievalResult:
+    def retrieve(
+        self,
+        query: str,
+        mode: RetrievalMode = RetrievalMode.DUAL
+    ) -> RetrievalResult:
         """
         Full Phase 3 pipeline: Understanding + Context Retrieval.
         
@@ -169,58 +179,126 @@ class RetrievalProcessor:
             - Top-K selection
         
         Args:
-            query: Natural language query string
+            query: Natural language query string.
+            mode: Retrieval mode (NAIVE, GRAPHRAG, or DUAL).
             
         Returns:
-            RetrievalResult with ranked chunks and subgraph
+            RetrievalResult with ranked chunks and subgraph.
         """
-        # Phase 3.3.1: Query Understanding
-        understanding = self.understand_query(query)
+        # Import here to avoid circular dependency
+        from .config import GraphSubgraph
         
-        if not understanding.resolved_entities:
-            # No entities found - fall back to Path B only
-            print("⚠️  No entities resolved, using semantic search only")
-            path_a_chunks = []
+        # Mode-specific execution
+        if mode == RetrievalMode.NAIVE:
+            # Path B only: semantic search, no entity resolution
+            print("🔍 Mode: NAIVE (semantic search only)")
+            
+            # Parse query for embedding only (skip entity extraction)
+            parsed_query = self.query_parser.parse(query)
+            
+            # Path B: semantic search
             path_b_chunks = self.chunk_retriever._retrieve_path_b(
-                understanding.parsed_query.query_embedding
+                parsed_query.query_embedding
             )
             
-            # Create empty subgraph
-            from .config import GraphSubgraph
+            # No Path A chunks
+            path_a_chunks = []
+            
+            # Empty subgraph
             subgraph = GraphSubgraph(entities=[], relations=[])
             
-        else:
-            # Phase 3.3.2a: Graph Expansion (PCST)
-            subgraph = self.graph_expander.expand(understanding.resolved_entities)
-            
-            # Phase 3.3.2b: Dual-Path Retrieval
-            path_a_chunks, path_b_chunks = self.chunk_retriever.retrieve_dual(
-                subgraph=subgraph,
-                query_embedding=understanding.parsed_query.query_embedding
-            )
+            # Empty resolved entities for result
+            resolved_entity_names = []
         
-        # Phase 3.3.2c: Ranking
+        elif mode == RetrievalMode.GRAPHRAG:
+            # Path A only: entity resolution + PCST, no semantic search
+            print("🔍 Mode: GRAPHRAG (entity-centric only)")
+            
+            # Phase 3.3.1: Query Understanding
+            understanding = self.understand_query(query)
+            
+            if not understanding.resolved_entities:
+                # No entities found - cannot do GraphRAG
+                print("⚠️  No entities resolved, returning empty result")
+                subgraph = GraphSubgraph(entities=[], relations=[])
+                path_a_chunks = []
+                path_b_chunks = []
+                resolved_entity_names = []
+            else:
+                # Phase 3.3.2a: Graph Expansion (PCST)
+                subgraph = self.graph_expander.expand(understanding.resolved_entities)
+                
+                # Phase 3.3.2b: Path A only (corpus retrospective)
+                path_a_chunks = self.chunk_retriever._retrieve_path_a(subgraph)
+                
+                # No Path B chunks
+                path_b_chunks = []
+                
+                # Extract entity names for result
+                resolved_entity_names = [e.name for e in understanding.resolved_entities]
+        
+        else:  # RetrievalMode.DUAL (default)
+            # Both paths: full pipeline
+            print("🔍 Mode: DUAL (GraphRAG + semantic)")
+            
+            # Phase 3.3.1: Query Understanding
+            understanding = self.understand_query(query)
+            
+            if not understanding.resolved_entities:
+                # No entities found - fall back to Path B only
+                print("⚠️  No entities resolved, using semantic search only")
+                path_a_chunks = []
+                path_b_chunks = self.chunk_retriever._retrieve_path_b(
+                    understanding.parsed_query.query_embedding
+                )
+                subgraph = GraphSubgraph(entities=[], relations=[])
+                resolved_entity_names = []
+            else:
+                # Phase 3.3.2a: Graph Expansion (PCST)
+                subgraph = self.graph_expander.expand(understanding.resolved_entities)
+                
+                # Phase 3.3.2b: Dual-Path Retrieval
+                path_a_chunks, path_b_chunks = self.chunk_retriever.retrieve_dual(
+                    subgraph=subgraph,
+                    query_embedding=understanding.parsed_query.query_embedding
+                )
+                
+                # Extract entity names for result
+                resolved_entity_names = [e.name for e in understanding.resolved_entities]
+        
+        # Phase 3.3.2c: Ranking (common for all modes)
+        # For NAIVE mode, use parsed_query.filters if available
+        if mode == RetrievalMode.NAIVE:
+            filters = parsed_query.filters
+        else:
+            filters = understanding.parsed_query.filters
+        
         result = self.result_ranker.rank(
             path_a_chunks=path_a_chunks,
             path_b_chunks=path_b_chunks,
             subgraph=subgraph,
-            filters=understanding.parsed_query.filters,
+            filters=filters,
             query=query
         )
         
         return result
     
-    def batch_retrieve(self, queries: List[str]) -> List[RetrievalResult]:
+    def batch_retrieve(
+        self,
+        queries: List[str],
+        mode: RetrievalMode = RetrievalMode.DUAL
+    ) -> List[RetrievalResult]:
         """
         Process multiple queries through full pipeline.
         
         Args:
-            queries: List of query strings
+            queries: List of query strings.
+            mode: Retrieval mode to use for all queries.
             
         Returns:
-            List of RetrievalResult objects
+            List of RetrievalResult objects.
         """
-        return [self.retrieve(q) for q in queries]
+        return [self.retrieve(q, mode=mode) for q in queries]
     
     def close(self):
         """Close all connections."""
