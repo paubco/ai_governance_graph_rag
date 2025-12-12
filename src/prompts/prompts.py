@@ -19,31 +19,24 @@ Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguati
 # Used by RAKGEntityExtractor to discover entities with LLM-determined types.
 # Instructs model to extract all significant entities including academic citations.
 # Output: JSON list of entities with name, type, and description fields.
-ENTITY_EXTRACTION_PROMPT = """You are an entity extraction assistant for AI governance and regulatory compliance documents.
+QUERY_ENTITY_EXTRACTION_PROMPT = """Extract entities explicitly mentioned in the user's query.
 
-Text: {text}
+Query: {query}
 
-Instructions:
-1. Extract ALL significant entities from the text
-2. For each entity provide:
-   - name: Exact name as written in the text
-   - type: The category this entity belongs to (you decide based on context)
-   - description: Brief contextual description (1-2 sentences)
+RULES:
+- Extract ONLY entities that appear verbatim or paraphrased in the query text
+- DO NOT infer related concepts, background knowledge, or implicit connections
+- DO NOT expand acronyms unless query contains both forms
+- Assign types from this list: {entity_types}
 
-3. Focus on entities useful for understanding regulatory compliance and AI governance
-4. Include academic citations as entities with author and year (e.g., "Smith et al. (2020)", "Jones and Lee (2019)")
-5. Preserve exact formatting and capitalization
-
-Output ONLY valid JSON (no other text, no markdown):
+Output JSON only (no markdown, no explanation):
 {{
   "entities": [
-    {{"name": "...", "type": "...", "description": "..."}},
-    ...
+    {{"name": "entity as written in query", "type": "type from list"}}
   ]
 }}
 
-JSON output:"""
-
+JSON:"""
 
 # ============================================================================
 # PHASE 1C: ENTITY DISAMBIGUATION
@@ -182,18 +175,29 @@ JSON:"""
 # Unlike Phase 1B which uses free-form types, this enforces predefined entity types
 # from the knowledge graph schema for consistent matching and resolution.
 # Output: JSON array of entities with name and type (type must be from allowed list).
-QUERY_ENTITY_EXTRACTION_PROMPT = """Extract entities from the query and return as JSON.
+QUERY_ENTITY_EXTRACTION_PROMPT = """Extract ONLY entities explicitly mentioned in the query text.
 
 Query: {query}
 
-Entity types: {entity_types}
+CRITICAL RULES:
+1. Extract ONLY entities that appear literally in the query above
+2. DO NOT generate related concepts or infer additional entities
+3. DO NOT add context or background knowledge
+4. If query says "algorithmic fairness", extract "algorithmic fairness" (not "bias", "data", "blockchain")
+5. Use types from this list: {entity_types}
 
-Return JSON object with "entities" array:
+Return JSON (no other text):
 {{
   "entities": [
-    {{"name": "exact name from query", "type": "type from list above"}}
+    {{"name": "exact phrase from query", "type": "type from list"}}
   ]
-}}"""
+}}
+
+Examples:
+Query: "What is the EU AI Act?" → [{{"name": "EU AI Act", "type": "Regulation"}}]
+Query: "Compare GDPR and CCPA" → [{{"name": "GDPR", "type": "Regulation"}}, {{"name": "CCPA", "type": "Regulation"}}]
+
+JSON:"""
 
 # ============================================================================
 # PHASE 3.3.4: ANSWER GENERATION
