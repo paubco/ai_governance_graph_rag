@@ -31,11 +31,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Third-party
+from neo4j import GraphDatabase
+
 # Local imports
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.config import RetrievalMode
-from src.utils.neo4j_connector import Neo4jConnector
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -103,29 +105,41 @@ def load_pipeline():
     Load Neo4j connection, FAISS index, and pipeline components.
     
     Returns:
-        Tuple of (RetrievalProcessor, AnswerGenerator, Neo4jConnector)
+        Tuple of (RetrievalProcessor, AnswerGenerator, neo4j_driver)
     """
     logger.info("Loading pipeline components...")
     
     # Neo4j connection
-    neo4j = Neo4jConnector(
+    neo4j_driver = GraphDatabase.driver(
         uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-        user=os.getenv('NEO4J_USER', 'neo4j'),
-        password=os.getenv('NEO4J_PASSWORD')
+        auth=(
+            os.getenv('NEO4J_USER', 'neo4j'),
+            os.getenv('NEO4J_PASSWORD')
+        )
     )
+    
+    # Verify connection
+    try:
+        with neo4j_driver.session() as session:
+            result = session.run("RETURN 1 AS test")
+            result.single()
+        logger.info("Neo4j connection successful")
+    except Exception as e:
+        logger.error("Neo4j connection failed: %s", str(e))
+        raise
     
     # Retrieval processor
     processor = RetrievalProcessor(
-        neo4j_connector=neo4j,
-        faiss_index_path=PROJECT_ROOT / 'data' / 'faiss' / 'entity_index',
-        entity_metadata_path=PROJECT_ROOT / 'data' / 'faiss' / 'entity_metadata.json'
+        neo4j_driver=neo4j_driver,
+        faiss_index_path=PROJECT_ROOT / 'data' / 'processed' / 'faiss' / 'entities.faiss',
+        entity_metadata_path=PROJECT_ROOT / 'data' / 'processed' / 'faiss' / 'entity_ids.json'
     )
     
     # Answer generator
     generator = AnswerGenerator()
     
     logger.info("Pipeline loaded successfully")
-    return processor, generator, neo4j
+    return processor, generator, neo4j_driver
 
 
 # ============================================================================
@@ -153,7 +167,7 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
     print(f"{'='*80}\n")
     
     # Load pipeline
-    processor, generator, neo4j = load_pipeline()
+    processor, generator, neo4j_driver = load_pipeline()
     
     try:
         # Convert mode string to enum
@@ -259,7 +273,8 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
         return results
         
     finally:
-        neo4j.close()
+        neo4j_driver.close()
+        logger.info("Neo4j driver closed")
 
 
 # ============================================================================
