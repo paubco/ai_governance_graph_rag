@@ -30,7 +30,7 @@ from collections import defaultdict
 from .config import (
     Chunk,
     RankedChunk,
-    Subgraph,
+    GraphSubgraph,
     QueryFilters,
     RetrievalResult,
     RANKING_CONFIG,
@@ -64,7 +64,7 @@ class ResultRanker:
         self,
         path_a_chunks: List[Chunk],
         path_b_chunks: List[Chunk],
-        subgraph: Subgraph,
+        subgraph: GraphSubgraph,
         filters: QueryFilters,
         query: str
     ) -> RetrievalResult:
@@ -150,7 +150,7 @@ class ResultRanker:
             query=query
         )
     
-    def _get_relation_chunk_ids(self, subgraph: Subgraph) -> Set[str]:
+    def _get_relation_chunk_ids(self, subgraph: GraphSubgraph) -> Set[str]:
         """Extract chunk IDs from PCST relations (provenance)."""
         chunk_ids = set()
         for rel in subgraph.relations:

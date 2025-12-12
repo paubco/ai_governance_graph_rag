@@ -29,7 +29,7 @@ import faiss
 
 from .config import (
     ResolvedEntity,
-    Subgraph,
+    GraphSubgraph,
     Relation,
     PCST_CONFIG,
 )
@@ -122,7 +122,7 @@ class GraphExpander:
                 """)
                 print("✓ GDS projection created")
     
-    def expand(self, resolved_entities: List[ResolvedEntity]) -> Subgraph:
+    def expand(self, resolved_entities: List[ResolvedEntity]) -> GraphSubgraph:
         """
         Main expansion method.
         
@@ -130,7 +130,7 @@ class GraphExpander:
             resolved_entities: Entities resolved from query (Phase 3.3.1)
         
         Returns:
-            Subgraph with entities and relations from PCST
+            GraphSubgraph with entities and relations from PCST
         
         Note:
             Graph has 16K components (65% in main component). PCST may fail
@@ -139,7 +139,7 @@ class GraphExpander:
             not linked to parent regulations). Falls back to k-NN candidates.
         """
         if not resolved_entities:
-            return Subgraph(entities=[], relations=[])
+            return GraphSubgraph(entities=[], relations=[])
         
         # Stage 1: Get k-NN candidates via FAISS
         candidate_ids = self._get_faiss_candidates(resolved_entities)
@@ -147,7 +147,7 @@ class GraphExpander:
         # If no valid candidates, return empty subgraph
         if not candidate_ids:
             print("⚠️  No valid entities found in index")
-            return Subgraph(entities=[], relations=[])
+            return GraphSubgraph(entities=[], relations=[])
         
         # Stage 2: Run PCST to find minimal connecting subgraph
         if len(resolved_entities) == 1:
@@ -161,7 +161,7 @@ class GraphExpander:
                 candidate_ids=candidate_ids
             )
         
-        return Subgraph(
+        return GraphSubgraph(
             entities=subgraph_entity_ids,
             relations=relations
         )
