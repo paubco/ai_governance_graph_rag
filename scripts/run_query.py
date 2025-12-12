@@ -31,13 +31,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Third-party
-from neo4j import GraphDatabase
-
 # Local imports
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.config import RetrievalMode
+from src.utils.embeddings import EmbeddingModel
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -102,44 +100,41 @@ Examples:
 
 def load_pipeline():
     """
-    Load Neo4j connection, FAISS index, and pipeline components.
+    Load FAISS indices and pipeline components.
     
     Returns:
-        Tuple of (RetrievalProcessor, AnswerGenerator, neo4j_driver)
+        Tuple of (RetrievalProcessor, AnswerGenerator)
     """
     logger.info("Loading pipeline components...")
     
-    # Neo4j connection
-    neo4j_driver = GraphDatabase.driver(
-        uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-        auth=(
-            os.getenv('NEO4J_USER', 'neo4j'),
-            os.getenv('NEO4J_PASSWORD')
-        )
-    )
+    # Data paths
+    data_dir = PROJECT_ROOT / 'data' / 'processed'
+    faiss_dir = data_dir / 'faiss'
     
-    # Verify connection
-    try:
-        with neo4j_driver.session() as session:
-            result = session.run("RETURN 1 AS test")
-            result.single()
-        logger.info("Neo4j connection successful")
-    except Exception as e:
-        logger.error("Neo4j connection failed: %s", str(e))
-        raise
+    # Load embedding model
+    embedding_model = EmbeddingModel()
     
     # Retrieval processor
     processor = RetrievalProcessor(
-        neo4j_driver=neo4j_driver,
-        faiss_index_path=PROJECT_ROOT / 'data' / 'processed' / 'faiss' / 'entities.faiss',
-        entity_metadata_path=PROJECT_ROOT / 'data' / 'processed' / 'faiss' / 'entity_ids.json'
+        embedding_model=embedding_model,
+        # Phase 3.3.1 paths
+        faiss_entity_index_path=faiss_dir / 'entities.faiss',
+        entity_ids_path=faiss_dir / 'entity_ids.json',
+        normalized_entities_path=data_dir / 'entities_normalized.json',
+        # Phase 3.3.2 paths
+        faiss_chunk_index_path=faiss_dir / 'chunks.faiss',
+        chunk_ids_path=faiss_dir / 'chunk_ids.json',
+        # Neo4j connection
+        neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
+        neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
+        neo4j_password=os.getenv('NEO4J_PASSWORD')
     )
     
     # Answer generator
     generator = AnswerGenerator()
     
     logger.info("Pipeline loaded successfully")
-    return processor, generator, neo4j_driver
+    return processor, generator
 
 
 # ============================================================================
@@ -167,114 +162,109 @@ def run_query(query: str, mode: str, verbose: bool, skip_answer: bool):
     print(f"{'='*80}\n")
     
     # Load pipeline
-    processor, generator, neo4j_driver = load_pipeline()
+    processor, generator = load_pipeline()
     
-    try:
-        # Convert mode string to enum
-        retrieval_mode = RetrievalMode[mode.upper()]
+    # Convert mode string to enum
+    retrieval_mode = RetrievalMode[mode.upper()]
+    
+    # Step 1-5: Retrieval
+    print("🔍 Running retrieval pipeline...")
+    retrieval_result = processor.retrieve(query, mode=retrieval_mode)
+    
+    # Display retrieval results
+    print(f"\n✅ Retrieval complete:")
+    print(f"   • Resolved entities: {len(retrieval_result.resolved_entities)}")
+    print(f"   • Subgraph entities: {len(retrieval_result.subgraph.entities)}")
+    print(f"   • Subgraph relations: {len(retrieval_result.subgraph.relations)}")
+    print(f"   • Chunks retrieved: {len(retrieval_result.chunks)}")
+    
+    if verbose:
+        print(f"\n📋 Resolved Entities:")
+        for entity in retrieval_result.resolved_entities[:10]:
+            print(f"   • {entity}")
         
-        # Step 1-5: Retrieval
-        print("🔍 Running retrieval pipeline...")
-        retrieval_result = processor.retrieve(query, mode=retrieval_mode)
+        print(f"\n🔗 Sample Relations:")
+        for rel in retrieval_result.subgraph.relations[:5]:
+            print(f"   • {rel.source_name} --{rel.predicate}--> {rel.target_name}")
         
-        # Display retrieval results
-        print(f"\n✅ Retrieval complete:")
-        print(f"   • Resolved entities: {len(retrieval_result.resolved_entities)}")
-        print(f"   • Subgraph entities: {len(retrieval_result.subgraph.entities)}")
-        print(f"   • Subgraph relations: {len(retrieval_result.subgraph.relations)}")
-        print(f"   • Chunks retrieved: {len(retrieval_result.chunks)}")
+        print(f"\n📄 Top Chunks:")
+        for i, chunk in enumerate(retrieval_result.chunks[:3], 1):
+            print(f"   [{i}] {chunk.doc_id} (score: {chunk.score:.3f}, method: {chunk.retrieval_method})")
+            print(f"       {chunk.text[:150]}...")
+    
+    # Step 6: Answer generation
+    answer_result = None
+    if not skip_answer:
+        print(f"\n💬 Generating answer...")
         
-        if verbose:
-            print(f"\n📋 Resolved Entities:")
-            for entity in retrieval_result.resolved_entities[:10]:
-                print(f"   • {entity}")
-            
-            print(f"\n🔗 Sample Relations:")
-            for rel in retrieval_result.subgraph.relations[:5]:
-                print(f"   • {rel.source_name} --{rel.predicate}--> {rel.target_name}")
-            
-            print(f"\n📄 Top Chunks:")
-            for i, chunk in enumerate(retrieval_result.chunks[:3], 1):
-                print(f"   [{i}] {chunk.doc_id} (score: {chunk.score:.3f}, method: {chunk.retrieval_method})")
-                print(f"       {chunk.text[:150]}...")
+        # Estimate cost first
+        estimate = generator.estimate_cost_for_query(retrieval_result)
+        print(f"   • Estimated cost: ${estimate['estimated_cost_usd']:.4f}")
+        print(f"   • Chunks that fit: {estimate['chunks_that_fit']}/{estimate['total_chunks_available']}")
         
-        # Step 6: Answer generation
-        answer_result = None
-        if not skip_answer:
-            print(f"\n💬 Generating answer...")
-            
-            # Estimate cost first
-            estimate = generator.estimate_cost_for_query(retrieval_result)
-            print(f"   • Estimated cost: ${estimate['estimated_cost_usd']:.4f}")
-            print(f"   • Chunks that fit: {estimate['chunks_that_fit']}/{estimate['total_chunks_available']}")
-            
-            # Generate answer
-            answer_result = generator.generate(retrieval_result)
-            
-            print(f"\n✅ Answer generated:")
-            print(f"   • Input tokens: {answer_result.input_tokens}")
-            print(f"   • Output tokens: {answer_result.output_tokens}")
-            print(f"   • Actual cost: ${answer_result.cost_usd:.4f}")
-            print(f"\n{'─'*80}")
-            print(answer_result.answer)
-            print(f"{'─'*80}")
+        # Generate answer
+        answer_result = generator.generate(retrieval_result)
         
-        end_time = datetime.now()
-        elapsed = (end_time - start_time).total_seconds()
-        
-        print(f"\n⏱️  Total time: {elapsed:.2f}s")
-        
-        # Build results dict
-        results = {
-            'query': query,
-            'mode': mode,
-            'timestamp': start_time.isoformat(),
-            'elapsed_seconds': elapsed,
-            'retrieval': {
-                'resolved_entities': retrieval_result.resolved_entities,
-                'subgraph': {
-                    'entity_count': len(retrieval_result.subgraph.entities),
-                    'relation_count': len(retrieval_result.subgraph.relations),
-                    'entities': retrieval_result.subgraph.entities,
-                    'relations': [
-                        {
-                            'source': rel.source_name,
-                            'predicate': rel.predicate,
-                            'target': rel.target_name,
-                            'confidence': rel.confidence,
-                        }
-                        for rel in retrieval_result.subgraph.relations
-                    ]
-                },
-                'chunks': [
+        print(f"\n✅ Answer generated:")
+        print(f"   • Input tokens: {answer_result.input_tokens}")
+        print(f"   • Output tokens: {answer_result.output_tokens}")
+        print(f"   • Actual cost: ${answer_result.cost_usd:.4f}")
+        print(f"\n{'─'*80}")
+        print(answer_result.answer)
+        print(f"{'─'*80}")
+    
+    end_time = datetime.now()
+    elapsed = (end_time - start_time).total_seconds()
+    
+    print(f"\n⏱️  Total time: {elapsed:.2f}s")
+    
+    # Build results dict
+    results = {
+        'query': query,
+        'mode': mode,
+        'timestamp': start_time.isoformat(),
+        'elapsed_seconds': elapsed,
+        'retrieval': {
+            'resolved_entities': retrieval_result.resolved_entities,
+            'subgraph': {
+                'entity_count': len(retrieval_result.subgraph.entities),
+                'relation_count': len(retrieval_result.subgraph.relations),
+                'entities': retrieval_result.subgraph.entities,
+                'relations': [
                     {
-                        'chunk_id': chunk.chunk_id,
-                        'doc_id': chunk.doc_id,
-                        'doc_type': chunk.doc_type,
-                        'score': chunk.score,
-                        'retrieval_method': chunk.retrieval_method,
-                        'text': chunk.text[:500]  # Truncate for JSON
+                        'source': rel.source_name,
+                        'predicate': rel.predicate,
+                        'target': rel.target_name,
+                        'confidence': rel.confidence,
                     }
-                    for chunk in retrieval_result.chunks
+                    for rel in retrieval_result.subgraph.relations
                 ]
-            }
+            },
+            'chunks': [
+                {
+                    'chunk_id': chunk.chunk_id,
+                    'doc_id': chunk.doc_id,
+                    'doc_type': chunk.doc_type,
+                    'score': chunk.score,
+                    'retrieval_method': chunk.retrieval_method,
+                    'text': chunk.text[:500]  # Truncate for JSON
+                }
+                for chunk in retrieval_result.chunks
+            ]
         }
-        
-        if answer_result:
-            results['answer'] = {
-                'text': answer_result.answer,
-                'input_tokens': answer_result.input_tokens,
-                'output_tokens': answer_result.output_tokens,
-                'cost_usd': answer_result.cost_usd,
-                'model': answer_result.model,
-                'chunks_used': answer_result.retrieval_chunks_used,
-            }
-        
-        return results
-        
-    finally:
-        neo4j_driver.close()
-        logger.info("Neo4j driver closed")
+    }
+    
+    if answer_result:
+        results['answer'] = {
+            'text': answer_result.answer,
+            'input_tokens': answer_result.input_tokens,
+            'output_tokens': answer_result.output_tokens,
+            'cost_usd': answer_result.cost_usd,
+            'model': answer_result.model,
+            'chunks_used': answer_result.retrieval_chunks_used,
+        }
+    
+    return results
 
 
 # ============================================================================
