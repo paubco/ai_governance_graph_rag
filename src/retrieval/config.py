@@ -4,12 +4,15 @@ Module: config.py
 Package: src.retrieval
 Purpose: Data classes and configuration for Phase 3 retrieval pipeline
 
-MODIFIED: Added extracted_entities and resolved_entities to RetrievalResult
-          for evaluation/testing visibility.
+MODIFIED: Extended RetrievalResult with entity metadata for evaluation/testing
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-14 (evaluation extension)
+Modified: 2025-12-14 (evaluation extension + config merge)
+
+References:
+    - PHASE_3_DESIGN.md § 5 (Implementation)
+    - PHASE_3.3.2_OPEN_QUESTIONS.md (Graph expansion design decisions)
 """
 
 from dataclasses import dataclass, field
@@ -132,13 +135,17 @@ class Subgraph:
 
 @dataclass
 class Chunk:
-    """Text chunk from Neo4j."""
+    """
+    Text chunk from Neo4j.
+    
+    MODIFIED: Added score field (default 0.5) for base scoring before ranking.
+    """
     chunk_id: str
     text: str
     doc_id: str
     doc_type: str  # 'regulation' or 'paper'
     jurisdiction: Optional[str] = None  # For regulations
-    score: float = 0.5  # ADD THIS - default score
+    score: float = 0.5  # Base score (FAISS similarity or entity match score)
     metadata: dict = field(default_factory=dict)
 
 
@@ -178,34 +185,8 @@ class RetrievalResult:
     subgraph: Subgraph
     
     # Evaluation metadata (added for Phase 3 testing)
-    extracted_entities: List[ExtractedEntity]  # Raw LLM extraction from query
-    resolved_entities: List[ResolvedEntity]     # After FAISS disambiguation
-
-# ============================================================================
-# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
-# ============================================================================
-
-ANSWER_GENERATION_CONFIG = {
-    # LLM provider and model
-    'provider': 'anthropic',           # 'anthropic' or 'together'
-    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
-    
-    # Generation parameters
-    'max_output_tokens': 2000,         # Answer length limit
-    'temperature': 0.0,                # Deterministic for evaluation
-    'top_p': 1.0,
-    
-    # Formatting
-    'max_chunks_to_format': 20,        # Max chunks even if more retrieved
-    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
-    
-    # Token budget breakdown (for Claude's 200K context)
-    'token_budget': {
-        'graph_structure': 500,        # Relations formatted as bullets
-        'entity_context': 500,         # Key entity list
-        'source_chunks': 10000,        # ~40 chunks at 250 tokens each
-    }
-}
+    extracted_entities: List[ExtractedEntity] = field(default_factory=list)  # Raw LLM extraction
+    resolved_entities: List[ResolvedEntity] = field(default_factory=list)    # After FAISS disambiguation
 
 
 # ============================================================================
@@ -214,26 +195,30 @@ ANSWER_GENERATION_CONFIG = {
 
 # PCST Graph Expansion
 PCST_CONFIG = {
-    'k_candidates': 10,        # Top-K similar entities per seed (FAISS)
+    'k_candidates': 5,         # Top-K similar entities per seed (FAISS) - reduced for performance
     'delta': 0.5,              # Neo4j PCST prize-cost balance parameter
     'prize_strategy': 'uniform',  # 'uniform' or 'frequency' (start simple)
     'cost_strategy': 'uniform',   # 'uniform', 'frequency', or 'similarity'
     'max_entities': 50,        # Global cap on expanded entities
 }
 
-# Chunk Retrieval
+# Chunk Retrieval (MERGED from both sections)
 RETRIEVAL_CONFIG = {
     'path_a_all_entities': True,    # Get all chunks from PCST entities (not top-K)
     'path_b_top_k': 15,              # Semantic search chunk limit
     'chunk_token_limit': 8000,       # Approximate token budget for context
+    'entity_resolution_top_k': 3,    # Max entities per extracted mention
+    'pcst_max_entities': 50,         # PCST expansion limit (hub node control)
 }
 
-# Ranking & Scoring
+# Ranking & Scoring (MERGED + FIXED with entity_coverage_bonus)
 RANKING_CONFIG = {
     'provenance_bonus': 0.3,      # Chunks containing PCST relations (highest)
     'path_a_bonus': 0.2,          # Chunks from entity expansion (medium)
     'path_b_baseline': 0.0,       # Semantic search chunks (baseline)
     'jurisdiction_boost': 0.1,    # Bonus if chunk matches jurisdiction hint
+    'doc_type_boost': 0.15,       # Bonus if chunk matches doc_type hint
+    'entity_coverage_bonus': 0.2, # FIXED: Bonus based on entity coverage
     'final_top_k': 20,            # Final chunks for LLM context
 }
 
@@ -241,6 +226,53 @@ RANKING_CONFIG = {
 ENTITY_RESOLUTION_CONFIG = {
     'fuzzy_threshold': 0.75,      # Cosine similarity threshold
     'top_k_per_entity': 10,       # Candidates per query entity
+}
+
+# Answer Generation Configuration (Phase 3.3.4)
+ANSWER_GENERATION_CONFIG = {
+    # LLM provider and model
+    'provider': 'anthropic',           # 'anthropic' or 'together'
+    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
+    
+    # Token budgets (for 200k context)
+    'max_input_tokens': 15000,         # Total input budget
+    'token_budget': {
+        'system_prompt': 1000,
+        'graph_structure': 500,
+        'entity_context': 500,
+        'source_chunks': 10000,        # Most of budget goes here
+        'instructions': 500,
+        'buffer': 1000,
+    },
+    
+    # Generation parameters
+    'max_output_tokens': 2000,         # Answer length limit
+    'temperature': 0.0,                # Deterministic for evaluation (was 0.3)
+    'top_p': 0.9,
+    
+    # Formatting
+    'max_chunks_to_format': 40,        # Max chunks even if more retrieved
+    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
+}
+
+# Alternative: Mistral configuration (8k context)
+ANSWER_GENERATION_CONFIG_MISTRAL = {
+    'provider': 'together',
+    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
+    'max_input_tokens': 6000,
+    'token_budget': {
+        'system_prompt': 500,
+        'graph_structure': 300,
+        'entity_context': 200,
+        'source_chunks': 2000,
+        'instructions': 200,
+        'buffer': 500,
+    },
+    'max_output_tokens': 1500,
+    'temperature': 0.0,  # Deterministic for evaluation (was 0.3)
+    'top_p': 0.9,
+    'max_chunks_to_format': 10,
+    'truncate_chunk_chars': 400,
 }
 
 
