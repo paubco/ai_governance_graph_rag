@@ -183,8 +183,8 @@ class RetrievalProcessor:
         if not understanding.resolved_entities:
             # No entities found - fall back to Path B only
             print("⚠️  No entities resolved, using semantic search only")
-            path_a_chunks = []
-            path_b_chunks = self.chunk_retriever._retrieve_path_b(
+            graphrag_chunks = []
+            naive_chunks = self.chunk_retriever._retrieve_path_b(
                 understanding.parsed_query.query_embedding
             )
             
@@ -197,15 +197,15 @@ class RetrievalProcessor:
             subgraph = self.graph_expander.expand(understanding.resolved_entities)
             
             # Phase 3.3.2b: Dual-Path Retrieval
-            path_a_chunks, path_b_chunks = self.chunk_retriever.retrieve_dual(
+            graphrag_chunks, naive_chunks = self.chunk_retriever.retrieve_dual(
                 subgraph=subgraph,
                 query_embedding=understanding.parsed_query.query_embedding
             )
         
         # Phase 3.3.2c: Ranking
         result = self.result_ranker.rank(
-            path_a_chunks=path_a_chunks,
-            path_b_chunks=path_b_chunks,
+            graphrag_chunks=graphrag_chunks,
+            naive_chunks=naive_chunks,
             subgraph=subgraph,
             filters=understanding.parsed_query.filters,
             query=query
