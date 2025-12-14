@@ -12,6 +12,20 @@ Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguati
 """
 
 # ============================================================================
+# PHASE 0: ENTITY EXTRACTION
+# ============================================================================
+
+# Prompt used for selecting the rellevant papers froms scopus
+# Not used in the actual pipeline but for manual dowload of the csv and pdfs 
+SCOPUS_SEARCH_QUERY = """
+
+TITLE ( ( "AI" OR "artificial intelligence" ) 
+      AND ( "governance" OR "regulation" OR "risk management" OR "policy" ) )  
+      AND ( DOCTYPE ( ar ) OR DOCTYPE ( cp ) ) 
+      AND PUBYEAR = 2023 
+      AND ( LIMIT-TO ( OA , "all" ) )
+"""
+# ============================================================================
 # PHASE 1B: ENTITY EXTRACTION
 # ============================================================================
 
