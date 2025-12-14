@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from .config import (
     Chunk,
     RankedChunk,
-    GraphSubgraph,
+    Subgraph,
     QueryFilters,
     RetrievalResult,
     RANKING_CONFIG,
@@ -103,7 +103,7 @@ class ResultRanker:
         self,
         graphrag_chunks: List[Chunk],
         naive_chunks: List[Chunk],
-        subgraph: GraphSubgraph,
+        subgraph: Subgraph,
         filters: QueryFilters,
         query: str,
         debug: bool = False
@@ -232,7 +232,7 @@ class ResultRanker:
             chunks=top_k
         )
     
-    def _get_relation_chunk_ids(self, subgraph: GraphSubgraph) -> Set[str]:
+    def _get_relation_chunk_ids(self, subgraph: Subgraph) -> Set[str]:
         """Extract chunk IDs from PCST relations (provenance)."""
         chunk_ids = set()
         for rel in subgraph.relations:
