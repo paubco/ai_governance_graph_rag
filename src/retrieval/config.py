@@ -163,6 +163,7 @@ class RankedChunk:
     text: str
     score: float
     source_path: Literal["graphrag_relation", "graphrag_entity", "naive"]
+    retrieval_method: str = ""  # ADD THIS - between source_path and entities
     entities: List[str] = field(default_factory=list)  # Which entities led here
     doc_type: str = ""
     jurisdiction: Optional[str] = None
