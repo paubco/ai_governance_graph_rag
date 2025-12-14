@@ -29,7 +29,7 @@ import faiss
 
 from .config import (
     ResolvedEntity,
-    GraphSubgraph,
+    Subgraph,
     Relation,
     PCST_CONFIG,
 )
