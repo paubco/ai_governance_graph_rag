@@ -13,7 +13,7 @@ from .config import (
     QueryFilters,
     ParsedQuery,
     Relation,
-    GraphSubgraph,
+    Subgraph,  # FIXED: was GraphSubgraph
     Chunk,
     RankedChunk,
     RetrievalResult,
@@ -44,7 +44,7 @@ __all__ = [
     'QueryFilters',
     'ParsedQuery',
     'Relation',
-    'GraphSubgraph',
+    'Subgraph',  # FIXED: was GraphSubgraph
     'Chunk',
     'RankedChunk',
     'RetrievalResult',
