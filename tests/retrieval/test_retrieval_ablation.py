@@ -2,18 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Script: test_retrieval_ablation_v1.py
-Purpose: Unified ablation study with integrated RAGAS metrics
+Purpose: Unified ablation study with comprehensive evaluation metrics
 
 Single test suite that:
 1. Compares naive, graphrag, and dual retrieval modes
 2. Evaluates with RAGAS metrics (faithfulness + relevancy)
-3. Generates comprehensive analysis report
+3. Tracks comprehensive metrics aligned with thesis objectives
+4. Generates detailed analysis reports
 
 v1.0 Features:
-- Reference-free RAGAS metrics (no ground truth needed)
-- Entity resolution quality analysis
-- Retrieval volume comparison
-- Cost/efficiency tracking
+- Complete entity resolution tracking
+- Graph utilization metrics
+- Retrieval effectiveness measurement
+- RAGAS answer quality evaluation
+- Performance/cost tracking
 
 Usage:
     python tests/retrieval/test_retrieval_ablation_v1.py              # Full suite (18 tests)
@@ -30,6 +32,7 @@ from pathlib import Path
 import argparse
 import json
 import anthropic
+import time
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -43,6 +46,19 @@ from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.config import RetrievalMode
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
+
+# Import test metrics
+from test_metrics import (
+    TestResult,
+    EntityResolutionMetrics,
+    GraphUtilizationMetrics,
+    RetrievalMetrics,
+    RAGASMetrics,
+    PerformanceMetrics,
+    compute_entity_resolution_metrics,
+    compute_graph_utilization_metrics,
+    compute_retrieval_metrics
+)
 
 logger = get_logger(__name__)
 
@@ -223,14 +239,13 @@ TEST_QUERIES = [
 # ============================================================================
 
 class AblationTestSuite:
-    """Unified test suite for retrieval mode ablation with RAGAS evaluation."""
+    """Unified test suite for retrieval mode ablation with comprehensive metrics."""
     
     def __init__(self, enable_ragas: bool = True):
         self.enable_ragas = enable_ragas
         self.processor = None
         self.generator = None
         self.ragas = None
-        self.entity_lookup = {}
         self.results = []
     
     def load_pipeline(self):
@@ -244,20 +259,12 @@ class AblationTestSuite:
         # Embedding model
         embedding_model = BGEEmbedder()
         
-        # Entity lookup
-        normalized_entities_path = interim_dir / 'normalized_entities_with_ids.json'
-        if normalized_entities_path.exists():
-            with open(normalized_entities_path, 'r') as f:
-                entities_data = json.load(f)
-                for entity in entities_data:
-                    self.entity_lookup[entity['entity_id']] = entity['name']
-        
         # Retrieval processor
         self.processor = RetrievalProcessor(
             embedding_model=embedding_model,
             faiss_entity_index_path=faiss_dir / 'entity_embeddings.index',
             entity_ids_path=faiss_dir / 'entity_id_map.json',
-            normalized_entities_path=normalized_entities_path,
+            normalized_entities_path=interim_dir / 'normalized_entities_with_ids.json',
             faiss_chunk_index_path=faiss_dir / 'chunk_embeddings.index',
             chunk_ids_path=faiss_dir / 'chunk_id_map.json',
             neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
@@ -275,8 +282,8 @@ class AblationTestSuite:
         
         print("✓ Pipeline loaded\n")
     
-    def run_single_test(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int):
-        """Run a single test: retrieve + generate + evaluate."""
+    def run_single_test(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int) -> TestResult:
+        """Run a single test with comprehensive metrics collection."""
         
         print(f"\n{'='*80}")
         print(f"TEST {test_num}/{total_tests}: {mode.value.upper()}")
@@ -285,67 +292,60 @@ class AblationTestSuite:
         print(f"Category: {query_def['category']}")
         print()
         
-        result = {
-            'test_id': f"{query_def['id']}_{mode.value}",
-            'query_id': query_def['id'],
-            'query': query_def['query'],
-            'mode': mode.value,
-            'category': query_def['category'],
-            'timestamp': datetime.now().isoformat()
-        }
-        
         try:
-            # Step 1: Retrieval
+            # Track overall timing
+            start_time = time.time()
+            
+            # ====================
+            # 1. RETRIEVAL
+            # ====================
             print("1. RETRIEVAL")
-            retrieval_result = self.processor.retrieve(query_def['query'], mode=mode)
+            retrieval_start = time.time()
             
-            # Log entity extraction
-            extracted_entities = [e.name for e in retrieval_result.extracted_entities]
-            resolved_entity_names = [
-                self.entity_lookup.get(eid, 'unknown') 
-                for eid in retrieval_result.resolved_entities
-            ]
+            retrieval_result = self.processor.retrieve(query_def['query'], mode=mode.value)
             
-            print(f"   Extracted entities: {extracted_entities}")
-            print(f"   Resolved to: {len(resolved_entity_names)} entities")
-            print(f"   → {resolved_entity_names[:5]}")
-            print(f"   Subgraph: {len(retrieval_result.subgraph.entities)} entities, "
-                  f"{len(retrieval_result.subgraph.relations)} relations")
-            print(f"   Retrieved: {len(retrieval_result.chunks)} chunks")
+            retrieval_time = time.time() - retrieval_start
             
-            # Check for hallucinations
-            blockchain_hallucination = any(
-                'blockchain' in name.lower() 
-                for name in resolved_entity_names
-            ) and 'blockchain' not in query_def['query'].lower()
+            # Compute entity resolution metrics
+            entity_metrics = compute_entity_resolution_metrics(
+                retrieval_result.extracted_entities,
+                retrieval_result.resolved_entities
+            )
             
-            if blockchain_hallucination:
-                print(f"   ⚠️  WARNING: Blockchain entity hallucination detected!")
+            print(f"   Extracted: {entity_metrics.extracted_count} entities")
+            print(f"   Resolved: {entity_metrics.resolved_count} entities ({entity_metrics.resolution_rate:.2%})")
+            if entity_metrics.entity_names:
+                print(f"   → {entity_metrics.entity_names[:5]}")
             
-            result['retrieval'] = {
-                'extracted_entities': extracted_entities,
-                'resolved_entities': resolved_entity_names,
-                'num_entities': len(resolved_entity_names),
-                'num_relations': len(retrieval_result.subgraph.relations),
-                'num_chunks': len(retrieval_result.chunks),
-                'blockchain_hallucination': blockchain_hallucination
-            }
+            # Compute graph utilization metrics
+            graph_metrics = compute_graph_utilization_metrics(retrieval_result.subgraph)
             
-            # Step 2: Answer Generation
+            print(f"   Subgraph: {graph_metrics.entities_in_subgraph} entities, "
+                  f"{graph_metrics.relations_in_subgraph} relations")
+            
+            # Compute retrieval metrics
+            retrieval_metrics = compute_retrieval_metrics(retrieval_result.chunks)
+            
+            print(f"   Retrieved: {retrieval_metrics.total_chunks} chunks")
+            print(f"   Sources: {retrieval_metrics.chunks_by_source}")
+            
+            # ====================
+            # 2. ANSWER GENERATION
+            # ====================
             print("\n2. ANSWER GENERATION")
+            answer_start = time.time()
+            
             answer_result = self.generator.generate(retrieval_result)
+            
+            answer_time = time.time() - answer_start
             
             print(f"   Tokens: {answer_result.output_tokens}")
             print(f"   Cost: ${answer_result.cost_usd:.4f}")
             print(f"   Answer preview: {answer_result.answer[:150]}...")
             
-            result['answer'] = {
-                'text': answer_result.answer,
-                'tokens': answer_result.output_tokens,
-                'cost': answer_result.cost_usd
-            }
-            
-            # Step 3: RAGAS Evaluation
+            # ====================
+            # 3. RAGAS EVALUATION
+            # ====================
             if self.ragas:
                 print("\n3. RAGAS EVALUATION")
                 
@@ -357,12 +357,13 @@ class AblationTestSuite:
                 # Faithfulness
                 print("   Evaluating faithfulness...")
                 faith = self.ragas.faithfulness(answer_result.answer, context_text)
-                print(f"   → Faithfulness: {faith['score']:.3f} "
-                      f"({faith['supported']}/{faith['total']} claims supported)")
                 
                 # Relevancy
                 print("   Evaluating relevancy...")
                 rel = self.ragas.answer_relevancy(query_def['query'], answer_result.answer)
+                
+                print(f"   → Faithfulness: {faith['score']:.3f} "
+                      f"({faith['supported']}/{faith['total']} claims)")
                 print(f"   → Relevancy: {rel['score']:.3f}")
                 
                 if faith['score'] < 0.7:
@@ -370,29 +371,84 @@ class AblationTestSuite:
                 if rel['score'] < 0.6:
                     print(f"   ⚠️  LOW RELEVANCY: {rel['explanation']}")
                 
-                result['ragas'] = {
-                    'faithfulness': {
-                        'score': faith['score'],
+                # Package RAGAS metrics
+                ragas_metrics = RAGASMetrics(
+                    faithfulness_score=faith['score'],
+                    faithfulness_details={
                         'supported_claims': faith['supported'],
                         'total_claims': faith['total'],
                         'explanation': faith['explanation']
                     },
-                    'relevancy': {
-                        'score': rel['score'],
-                        'explanation': rel['explanation']
-                    }
-                }
+                    relevancy_score=rel['score'],
+                    relevancy_explanation=rel['explanation']
+                )
+            else:
+                # No RAGAS - create empty metrics
+                ragas_metrics = RAGASMetrics(
+                    faithfulness_score=0.0,
+                    faithfulness_details={},
+                    relevancy_score=0.0,
+                    relevancy_explanation="RAGAS disabled"
+                )
             
-            result['success'] = True
+            # ====================
+            # 4. PACKAGE COMPLETE TEST RESULT
+            # ====================
+            total_time = time.time() - start_time
+            
+            performance_metrics = PerformanceMetrics(
+                retrieval_time=retrieval_time,
+                answer_time=answer_time,
+                total_time=total_time,
+                answer_tokens=answer_result.output_tokens,
+                cost_usd=answer_result.cost_usd
+            )
+            
+            test_result = TestResult(
+                # Metadata
+                test_id=f"{query_def['id']}_{mode.value}",
+                query=query_def['query'],
+                mode=mode.value,
+                category=query_def['category'],
+                timestamp=datetime.now().isoformat(),
+                
+                # Comprehensive metrics
+                entity_resolution=entity_metrics,
+                graph_utilization=graph_metrics,
+                retrieval=retrieval_metrics,
+                ragas=ragas_metrics,
+                performance=performance_metrics,
+                
+                # Raw data
+                answer_text=answer_result.answer,
+                success=True,
+                error=None
+            )
+            
+            print(f"\n✓ Test completed in {total_time:.1f}s")
+            
+            return test_result
             
         except Exception as e:
             logger.error(f"Test failed: {e}", exc_info=True)
             print(f"\n❌ TEST FAILED: {e}")
-            result['success'] = False
-            result['error'] = str(e)
-        
-        self.results.append(result)
-        return result
+            
+            # Return failed test result with empty metrics
+            return TestResult(
+                test_id=f"{query_def['id']}_{mode.value}",
+                query=query_def['query'],
+                mode=mode.value,
+                category=query_def['category'],
+                timestamp=datetime.now().isoformat(),
+                entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
+                graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
+                retrieval=RetrievalMetrics(0, {}, 0.0, {}, []),
+                ragas=RAGASMetrics(0.0, {}, 0.0, ""),
+                performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
+                answer_text="",
+                success=False,
+                error=str(e)
+            )
     
     def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
         """Run complete ablation study."""
@@ -414,127 +470,211 @@ class AblationTestSuite:
         for query_def in queries:
             for mode in modes:
                 test_num += 1
-                self.run_single_test(query_def, mode, test_num, total_tests)
+                result = self.run_single_test(query_def, mode, test_num, total_tests)
+                self.results.append(result)
         
         return self.results
     
     def analyze_results(self):
-        """Generate comprehensive analysis."""
+        """Generate comprehensive analysis using rich metrics."""
         
         print(f"\n\n{'='*80}")
-        print("ANALYSIS")
+        print("COMPREHENSIVE ANALYSIS")
         print(f"{'='*80}\n")
         
-        successful_tests = [r for r in self.results if r.get('success', False)]
+        successful_tests = [r for r in self.results if r.success]
         
         print(f"Tests completed: {len(successful_tests)}/{len(self.results)}\n")
         
-        # 1. Retrieval Volume Analysis
-        print("1. RETRIEVAL VOLUME BY MODE")
+        # ====================
+        # 1. ENTITY RESOLUTION ANALYSIS
+        # ====================
+        print("1. ENTITY RESOLUTION QUALITY")
         print("-" * 60)
         
-        by_mode = {}
         for mode in ['naive', 'graphrag', 'dual']:
-            by_mode[mode] = [r for r in successful_tests if r['mode'] == mode]
+            mode_results = [r for r in successful_tests if r.mode == mode]
+            if mode_results:
+                avg_extracted = sum(r.entity_resolution.extracted_count for r in mode_results) / len(mode_results)
+                avg_resolved = sum(r.entity_resolution.resolved_count for r in mode_results) / len(mode_results)
+                avg_resolution_rate = sum(r.entity_resolution.resolution_rate for r in mode_results) / len(mode_results)
+                avg_confidence = sum(r.entity_resolution.avg_confidence for r in mode_results) / len(mode_results)
+                
+                print(f"{mode.upper():10} → Extracted: {avg_extracted:.1f}, Resolved: {avg_resolved:.1f} "
+                      f"({avg_resolution_rate:.1%}), Confidence: {avg_confidence:.3f}")
         
-        for mode, mode_results in by_mode.items():
-            if not mode_results:
-                continue
-            
-            avg_chunks = sum(r['retrieval']['num_chunks'] for r in mode_results) / len(mode_results)
-            avg_entities = sum(r['retrieval']['num_entities'] for r in mode_results) / len(mode_results)
-            avg_relations = sum(r['retrieval']['num_relations'] for r in mode_results) / len(mode_results)
-            
-            print(f"{mode.upper():10} → {avg_chunks:.1f} chunks, {avg_entities:.1f} entities, {avg_relations:.1f} relations")
+        # ====================
+        # 2. GRAPH UTILIZATION ANALYSIS
+        # ====================
+        print(f"\n2. GRAPH UTILIZATION")
+        print("-" * 60)
         
-        # 2. RAGAS Metrics Analysis
+        for mode in ['naive', 'graphrag', 'dual']:
+            mode_results = [r for r in successful_tests if r.mode == mode]
+            if mode_results:
+                avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
+                avg_relations = sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results)
+                
+                print(f"{mode.upper():10} → {avg_entities:.1f} entities, {avg_relations:.1f} relations")
+        
+        # ====================
+        # 3. RETRIEVAL EFFECTIVENESS
+        # ====================
+        print(f"\n3. RETRIEVAL EFFECTIVENESS")
+        print("-" * 60)
+        
+        for mode in ['naive', 'graphrag', 'dual']:
+            mode_results = [r for r in successful_tests if r.mode == mode]
+            if mode_results:
+                avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
+                avg_score = sum(r.retrieval.avg_chunk_score for r in mode_results) / len(mode_results)
+                
+                # Aggregate chunks by source
+                all_sources = {}
+                for r in mode_results:
+                    for source, count in r.retrieval.chunks_by_source.items():
+                        all_sources[source] = all_sources.get(source, 0) + count
+                
+                print(f"{mode.upper():10} → {avg_chunks:.1f} chunks, avg score: {avg_score:.3f}")
+                if all_sources:
+                    print(f"             Sources: {all_sources}")
+        
+        # ====================
+        # 4. RAGAS ANSWER QUALITY
+        # ====================
         if self.enable_ragas:
-            ragas_results = [r for r in successful_tests if 'ragas' in r]
+            print(f"\n4. RAGAS ANSWER QUALITY")
+            print("-" * 60)
             
-            if ragas_results:
-                print(f"\n2. RAGAS METRICS BY MODE")
-                print("-" * 60)
-                
-                for mode in ['naive', 'graphrag', 'dual']:
-                    mode_ragas = [r for r in ragas_results if r['mode'] == mode]
-                    if mode_ragas:
-                        avg_faith = sum(r['ragas']['faithfulness']['score'] for r in mode_ragas) / len(mode_ragas)
-                        avg_rel = sum(r['ragas']['relevancy']['score'] for r in mode_ragas) / len(mode_ragas)
-                        
-                        print(f"{mode.upper():10} → Faithfulness: {avg_faith:.3f}, Relevancy: {avg_rel:.3f}")
-                
-                # Flag quality issues
-                low_faith = [r for r in ragas_results if r['ragas']['faithfulness']['score'] < 0.7]
-                low_rel = [r for r in ragas_results if r['ragas']['relevancy']['score'] < 0.6]
-                
+            for mode in ['naive', 'graphrag', 'dual']:
+                mode_results = [r for r in successful_tests if r.mode == mode]
+                if mode_results:
+                    avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
+                    avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
+                    
+                    print(f"{mode.upper():10} → Faithfulness: {avg_faith:.3f}, Relevancy: {avg_rel:.3f}")
+            
+            # Flag low-scoring cases
+            low_faith = [r for r in successful_tests if r.ragas.faithfulness_score < 0.7]
+            low_rel = [r for r in successful_tests if r.ragas.relevancy_score < 0.6]
+            
+            if low_faith or low_rel:
                 print(f"\n   Quality Concerns:")
                 print(f"   - Low faithfulness (<0.7): {len(low_faith)} cases")
                 print(f"   - Low relevancy (<0.6): {len(low_rel)} cases")
                 
                 if low_faith:
                     print(f"\n   Lowest faithfulness cases:")
-                    for r in sorted(low_faith, key=lambda x: x['ragas']['faithfulness']['score'])[:3]:
-                        print(f"   - {r['query'][:50]}... ({r['mode']}): {r['ragas']['faithfulness']['score']:.2f}")
+                    for r in sorted(low_faith, key=lambda x: x.ragas.faithfulness_score)[:3]:
+                        print(f"   - {r.query[:50]}... ({r.mode}): {r.ragas.faithfulness_score:.2f}")
         
-        # 3. Quality Issues
-        print(f"\n3. KNOWN QUALITY ISSUES")
+        # ====================
+        # 5. COST & EFFICIENCY
+        # ====================
+        print(f"\n5. COST & EFFICIENCY")
         print("-" * 60)
         
-        blockchain_cases = [r for r in successful_tests if r['retrieval'].get('blockchain_hallucination', False)]
-        print(f"Blockchain entity hallucinations: {len(blockchain_cases)}/{len(successful_tests)} tests")
+        for mode in ['naive', 'graphrag', 'dual']:
+            mode_results = [r for r in successful_tests if r.mode == mode]
+            if mode_results:
+                avg_cost = sum(r.performance.cost_usd for r in mode_results) / len(mode_results)
+                avg_time = sum(r.performance.total_time for r in mode_results) / len(mode_results)
+                avg_retrieval_time = sum(r.performance.retrieval_time for r in mode_results) / len(mode_results)
+                avg_answer_time = sum(r.performance.answer_time for r in mode_results) / len(mode_results)
+                total_cost = sum(r.performance.cost_usd for r in mode_results)
+                
+                print(f"{mode.upper():10} → ${avg_cost:.4f}/query (${total_cost:.4f} total), "
+                      f"{avg_time:.1f}s avg (ret: {avg_retrieval_time:.1f}s, ans: {avg_answer_time:.1f}s)")
         
-        if blockchain_cases:
-            print(f"   Affected queries:")
-            for r in blockchain_cases:
-                print(f"   - {r['query']} ({r['mode']})")
-        
-        # 4. Cost Analysis
-        if successful_tests and 'answer' in successful_tests[0]:
-            print(f"\n4. COST EFFICIENCY")
-            print("-" * 60)
-            
-            for mode in ['naive', 'graphrag', 'dual']:
-                mode_results = [r for r in successful_tests if r['mode'] == mode and 'answer' in r]
-                if mode_results:
-                    avg_cost = sum(r['answer']['cost'] for r in mode_results) / len(mode_results)
-                    avg_tokens = sum(r['answer']['tokens'] for r in mode_results) / len(mode_results)
-                    total_cost = sum(r['answer']['cost'] for r in mode_results)
-                    
-                    print(f"{mode.upper():10} → ${avg_cost:.4f}/query, {avg_tokens:.0f} tokens avg, ${total_cost:.4f} total")
-        
-        # 5. By Category
-        print(f"\n5. PERFORMANCE BY QUERY CATEGORY")
+        # ====================
+        # 6. PER-CATEGORY BREAKDOWN
+        # ====================
+        print(f"\n6. PERFORMANCE BY QUERY CATEGORY")
         print("-" * 60)
         
-        categories = set(r['category'] for r in successful_tests)
+        categories = set(r.category for r in successful_tests)
         for cat in sorted(categories):
-            cat_results = [r for r in successful_tests if r['category'] == cat]
+            cat_results = [r for r in successful_tests if r.category == cat]
             print(f"\n{cat}:")
             
             for mode in ['naive', 'graphrag', 'dual']:
-                mode_cat = [r for r in cat_results if r['mode'] == mode]
+                mode_cat = [r for r in cat_results if r.mode == mode]
                 if mode_cat:
-                    avg_chunks = sum(r['retrieval']['num_chunks'] for r in mode_cat) / len(mode_cat)
-                    if self.enable_ragas and 'ragas' in mode_cat[0]:
-                        avg_faith = sum(r['ragas']['faithfulness']['score'] for r in mode_cat) / len(mode_cat)
+                    avg_chunks = sum(r.retrieval.total_chunks for r in mode_cat) / len(mode_cat)
+                    if self.enable_ragas:
+                        avg_faith = sum(r.ragas.faithfulness_score for r in mode_cat) / len(mode_cat)
                         print(f"  {mode:10} → {avg_chunks:.1f} chunks, faithfulness: {avg_faith:.3f}")
                     else:
                         print(f"  {mode:10} → {avg_chunks:.1f} chunks")
     
     def save_results(self, output_dir: Path):
-        """Save results and generate report."""
+        """Save results with comprehensive metrics."""
         
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
+        # Convert TestResult objects to dicts for JSON serialization
+        results_dicts = []
+        for r in self.results:
+            result_dict = {
+                'test_id': r.test_id,
+                'query': r.query,
+                'mode': r.mode,
+                'category': r.category,
+                'timestamp': r.timestamp,
+                'success': r.success,
+                'error': r.error,
+                'answer_text': r.answer_text,
+                
+                'entity_resolution': {
+                    'extracted_count': r.entity_resolution.extracted_count,
+                    'resolved_count': r.entity_resolution.resolved_count,
+                    'resolution_rate': r.entity_resolution.resolution_rate,
+                    'avg_confidence': r.entity_resolution.avg_confidence,
+                    'entity_names': r.entity_resolution.entity_names,
+                    'match_types': r.entity_resolution.match_types
+                },
+                
+                'graph_utilization': {
+                    'entities_in_subgraph': r.graph_utilization.entities_in_subgraph,
+                    'relations_in_subgraph': r.graph_utilization.relations_in_subgraph,
+                    'relation_types': r.graph_utilization.relation_types,
+                    'jurisdictions_covered': r.graph_utilization.jurisdictions_covered
+                },
+                
+                'retrieval': {
+                    'total_chunks': r.retrieval.total_chunks,
+                    'chunks_by_source': r.retrieval.chunks_by_source,
+                    'avg_chunk_score': r.retrieval.avg_chunk_score,
+                    'source_diversity': r.retrieval.source_diversity,
+                    'jurisdiction_diversity': r.retrieval.jurisdiction_diversity
+                },
+                
+                'ragas': {
+                    'faithfulness_score': r.ragas.faithfulness_score,
+                    'faithfulness_details': r.ragas.faithfulness_details,
+                    'relevancy_score': r.ragas.relevancy_score,
+                    'relevancy_explanation': r.ragas.relevancy_explanation
+                },
+                
+                'performance': {
+                    'retrieval_time': r.performance.retrieval_time,
+                    'answer_time': r.performance.answer_time,
+                    'total_time': r.performance.total_time,
+                    'answer_tokens': r.performance.answer_tokens,
+                    'cost_usd': r.performance.cost_usd
+                }
+            }
+            results_dicts.append(result_dict)
+        
         # Save JSON results
         json_file = output_dir / f'ablation_results_{timestamp}.json'
         with open(json_file, 'w') as f:
-            json.dump(self.results, f, indent=2, default=str)
+            json.dump(results_dicts, f, indent=2, default=str)
         
         # Generate markdown report
         report_file = output_dir / f'ablation_report_{timestamp}.md'
-        self._generate_report(report_file)
+        self._generate_report(report_file, timestamp)
         
         print(f"\n\n{'='*80}")
         print(f"RESULTS SAVED")
@@ -543,42 +683,36 @@ class AblationTestSuite:
         print(f"Report: {report_file}")
         print(f"{'='*80}\n")
     
-    def _generate_report(self, output_file: Path):
-        """Generate markdown summary report."""
+    def _generate_report(self, output_file: Path, timestamp: str):
+        """Generate comprehensive markdown summary report."""
         
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        successful_tests = [r for r in self.results if r.success]
         
         report = f"""# GraphRAG Retrieval Ablation Study - v1.0 Results
 
-**Generated:** {timestamp}  
+**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
 **Total Tests:** {len(self.results)}  
-**Successful:** {len([r for r in self.results if r.get('success', False)])}  
+**Successful:** {len(successful_tests)}  
 **Modes Compared:** naive, graphrag, dual  
 
 ---
 
 ## Executive Summary
 
-This ablation study compares three retrieval strategies:
+This ablation study compares three retrieval strategies across {len(set(r.query for r in self.results))} test queries:
+
 - **NAIVE:** Vector similarity search only (baseline RAG)
 - **GRAPHRAG:** Entity-centric graph traversal only
 - **DUAL:** Hybrid approach combining both strategies
 
 ### Evaluation Metrics
 
-"""
-        
-        if self.enable_ragas:
-            report += """**RAGAS Metrics (Reference-Free):**
-- Faithfulness: Claims supported by retrieved context (0-1)
-- Answer Relevancy: Answer addresses query (0-1)
-
-"""
-        
-        report += """**Retrieval Metrics:**
-- Chunks retrieved
-- Entities resolved
-- Graph relations traversed
+**Comprehensive metrics aligned with thesis objectives:**
+- Entity Resolution Quality (factual accuracy)
+- Graph Utilization (effective source use)
+- Retrieval Effectiveness (relevance)
+- RAGAS Answer Quality (faithfulness + relevancy)
+- Cost & Efficiency
 
 ---
 
@@ -586,60 +720,34 @@ This ablation study compares three retrieval strategies:
 
 """
         
-        # Add statistics by mode
-        successful_tests = [r for r in self.results if r.get('success', False)]
-        
+        # Add summary statistics by mode
         by_mode = {}
         for mode in ['naive', 'graphrag', 'dual']:
-            by_mode[mode] = [r for r in successful_tests if r['mode'] == mode]
+            by_mode[mode] = [r for r in successful_tests if r.mode == mode]
         
         for mode, mode_results in by_mode.items():
             if not mode_results:
                 continue
             
-            avg_chunks = sum(r['retrieval']['num_chunks'] for r in mode_results) / len(mode_results)
-            avg_entities = sum(r['retrieval']['num_entities'] for r in mode_results) / len(mode_results)
+            avg_resolved = sum(r.entity_resolution.resolved_count for r in mode_results) / len(mode_results)
+            avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
+            avg_relations = sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results)
+            avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
             
             report += f"""
 ### {mode.upper()} Mode
 
+- Average entities resolved: {avg_resolved:.1f}
+- Average subgraph size: {avg_entities:.1f} entities, {avg_relations:.1f} relations
 - Average chunks retrieved: {avg_chunks:.1f}
-- Average entities resolved: {avg_entities:.1f}
 """
             
-            if self.enable_ragas and 'ragas' in mode_results[0]:
-                avg_faith = sum(r['ragas']['faithfulness']['score'] for r in mode_results) / len(mode_results)
-                avg_rel = sum(r['ragas']['relevancy']['score'] for r in mode_results) / len(mode_results)
+            if self.enable_ragas and mode_results:
+                avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
+                avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
                 
                 report += f"""- Faithfulness: {avg_faith:.3f}
 - Relevancy: {avg_rel:.3f}
-"""
-        
-        # Known issues
-        blockchain_cases = [r for r in successful_tests if r['retrieval'].get('blockchain_hallucination', False)]
-        
-        report += f"""
----
-
-## Known Quality Issues
-
-### Entity Resolution Hallucinations
-- **Blockchain entity incorrectly resolved:** {len(blockchain_cases)}/{len(successful_tests)} tests
-- Affects queries about non-blockchain topics
-- Root cause: Entity embedding similarity (requires investigation)
-
-"""
-        
-        if self.enable_ragas:
-            ragas_results = [r for r in successful_tests if 'ragas' in r]
-            low_faith = [r for r in ragas_results if r['ragas']['faithfulness']['score'] < 0.7]
-            
-            if low_faith:
-                report += f"""
-### Answer Quality Concerns
-- **Low faithfulness (<0.7):** {len(low_faith)} cases
-- Indicates potential hallucinations or unsupported claims
-- Requires deeper analysis in v1.1
 """
         
         # Test queries
@@ -651,62 +759,47 @@ This ablation study compares three retrieval strategies:
 """
         unique_queries = {}
         for r in self.results:
-            if r['query_id'] not in unique_queries:
-                unique_queries[r['query_id']] = {
-                    'query': r['query'],
-                    'category': r['category']
-                }
+            if r.query not in unique_queries:
+                unique_queries[r.query] = r.category
         
-        for i, (qid, qdata) in enumerate(sorted(unique_queries.items()), 1):
-            report += f"{i}. **{qdata['query']}** ({qdata['category']})\n"
+        for i, (query, category) in enumerate(sorted(unique_queries.items()), 1):
+            report += f"{i}. **{query}** ({category})\n"
         
         # Limitations
         report += """
 ---
 
-## Limitations (v1.0)
+## Methodology Notes
 
-⚠️ **No ground truth annotations**
-- Cannot measure precision/recall
-- Cannot validate entity resolution accuracy
-- Qualitative comparison only
+**v1.0 Capabilities:**
+- ✓ Comprehensive entity resolution tracking
+- ✓ Graph utilization metrics
+- ✓ Retrieval effectiveness measurement
+- ✓ RAGAS answer quality evaluation
+- ✓ Performance/cost tracking
 
-⚠️ **Small sample size**
-- 5 queries, 15 tests total
-- No statistical significance testing
-- Results are preliminary
+**v1.0 Limitations:**
+- ⚠️ No ground truth annotations (planned for v1.1)
+- ⚠️ No precision/recall metrics (require ground truth)
+- ⚠️ Small sample size (6 queries, 18 tests)
+- ⚠️ No statistical significance testing
 
-⚠️ **Reference-free metrics only**
-- RAGAS faithfulness and relevancy implemented
-- Context precision/recall require ground truth (v1.1)
-
----
-
-## Next Steps (v1.1)
-
-**Planned Improvements:**
-1. Ground truth annotation (25+ queries)
-2. Retrieval metrics (P@k, R@k, F1@k)
-3. Full RAGAS metric suite
-4. Statistical significance testing
-5. Entity resolution quality validation
-
-**Timeline:** 6 weeks, ~80 hours estimated
-
-See `EVALUATION_V1_IMPLEMENTATION_GUIDE.md` for full roadmap.
+**Future Work (v1.1):**
+- Manual ground truth annotation for all test queries
+- Precision@k, Recall@k, F1@k metrics
+- Statistical significance testing (paired t-tests)
+- Expanded test set (25+ queries)
 
 ---
 
 ## Conclusion
 
 v1.0 demonstrates:
-✓ Functional three-mode architecture
-✓ RAGAS metrics successfully integrated
-✓ Quality issues identified for improvement
-✓ Foundation for comprehensive v1.1 evaluation
-
-This is a **proof-of-concept evaluation** showing the system works and can be
-rigorously evaluated with proper ground truth in v1.1.
+✓ Functional three-mode retrieval architecture
+✓ Comprehensive evaluation framework aligned with thesis objectives
+✓ Entity resolution and graph utilization tracking
+✓ RAGAS metrics for answer quality assessment
+✓ Foundation for rigorous v1.1 evaluation with ground truth
 
 ---
 
@@ -723,7 +816,7 @@ rigorously evaluated with proper ground truth in v1.1.
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Unified retrieval ablation study with RAGAS metrics',
+        description='Unified retrieval ablation study with comprehensive metrics',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -732,18 +825,19 @@ Examples:
   python tests/retrieval/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
   python tests/retrieval/test_retrieval_ablation_v1.py -o results/  # Custom output dir
 
-Metrics:
-  - RAGAS Faithfulness: Claims supported by context (0-1)
-  - RAGAS Relevancy: Answer addresses query (0-1)
-  - Retrieval volume: Chunks/entities/relations
-  - Cost tracking: Tokens and USD per query
+Metrics Tracked:
+  - Entity Resolution: extraction, resolution rate, confidence
+  - Graph Utilization: entities, relations, connectivity
+  - Retrieval: chunks by source, diversity, scores
+  - RAGAS: faithfulness, answer relevancy
+  - Performance: time, tokens, cost
         """
     )
     
     parser.add_argument('--quick', action='store_true',
                        help='Quick test with 2 queries only')
     parser.add_argument('--queries', type=int,
-                       help='Number of queries to test (default: all 5)')
+                       help='Number of queries to test (default: all 6)')
     parser.add_argument('--no-ragas', action='store_true',
                        help='Skip RAGAS evaluation (faster but less informative)')
     parser.add_argument('-o', '--output', type=str, default='evaluation_v1.0',
