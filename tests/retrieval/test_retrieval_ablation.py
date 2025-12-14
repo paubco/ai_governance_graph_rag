@@ -16,9 +16,9 @@ v1.0 Features:
 - Cost/efficiency tracking
 
 Usage:
-    python scripts/test_retrieval_ablation_v1.py              # Full suite (15 tests)
-    python scripts/test_retrieval_ablation_v1.py --quick      # Quick test (2 queries)
-    python scripts/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
+    python tests/retrieval/test_retrieval_ablation_v1.py              # Full suite (18 tests)
+    python tests/retrieval/test_retrieval_ablation_v1.py --quick      # Quick test (2 queries)
+    python tests/retrieval/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-14
@@ -33,8 +33,8 @@ import anthropic
 from datetime import datetime
 from typing import List, Dict, Optional
 
-# Project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Project root (script in tests/retrieval/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -172,35 +172,48 @@ Output JSON only:
 # ============================================================================
 
 TEST_QUERIES = [
+    # SIMPLE FACTUAL - Big entities in corpus
     {
         'id': 'q1',
         'query': 'What is the EU AI Act?',
         'category': 'simple_factual',
-        'description': 'Simple factual question about regulation'
+        'description': 'Major regulation entity - should work well in all modes'
     },
     {
         'id': 'q2',
-        'query': 'EU AI Act requirements',
-        'category': 'simple_topic',
-        'description': 'Topic-based query'
+        'query': 'What are high-risk AI systems?',
+        'category': 'simple_factual',
+        'description': 'Core concept in AI governance'
     },
+    
+    # CROSS-JURISDICTIONAL - Should favor GraphRAG
     {
         'id': 'q3',
-        'query': 'What research supports algorithmic fairness requirements?',
-        'category': 'complex_research',
-        'description': 'Multi-hop: research → requirements'
+        'query': 'Which jurisdictions regulate facial recognition?',
+        'category': 'cross_jurisdictional',
+        'description': 'Multi-jurisdiction entity traversal'
     },
     {
         'id': 'q4',
-        'query': 'Compare GDPR and CCPA transparency requirements',
-        'category': 'complex_cross_jurisdictional',
-        'description': 'Cross-jurisdictional comparison'
+        'query': 'Compare China and US AI governance',
+        'category': 'cross_jurisdictional_comparison',
+        'description': 'Requires connecting entities across jurisdictions'
     },
+    
+    # MULTI-HOP RESEARCH - Academic entities → domain concepts
     {
         'id': 'q5',
-        'query': 'How do different jurisdictions regulate high-risk AI systems?',
-        'category': 'complex_multi_entity',
-        'description': 'Multi-entity query across jurisdictions'
+        'query': 'What academic research discusses algorithmic bias?',
+        'category': 'multi_hop_research',
+        'description': 'Research papers → algorithmic bias concept'
+    },
+    
+    # MOCK FAILURE CASE - Out of domain
+    {
+        'id': 'q6',
+        'query': 'What is Snoopy\'s arch enemy?',
+        'category': 'out_of_domain',
+        'description': 'Should fail gracefully - tests error handling'
     }
 ]
 
@@ -714,10 +727,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scripts/test_retrieval_ablation_v1.py              # Full suite (15 tests)
-  python scripts/test_retrieval_ablation_v1.py --quick      # Quick test (2 queries)
-  python scripts/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
-  python scripts/test_retrieval_ablation_v1.py -o results/  # Custom output dir
+  python tests/retrieval/test_retrieval_ablation_v1.py              # Full suite (18 tests)
+  python tests/retrieval/test_retrieval_ablation_v1.py --quick      # Quick test (2 queries)
+  python tests/retrieval/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
+  python tests/retrieval/test_retrieval_ablation_v1.py -o results/  # Custom output dir
 
 Metrics:
   - RAGAS Faithfulness: Claims supported by context (0-1)
