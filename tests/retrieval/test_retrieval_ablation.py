@@ -48,7 +48,7 @@ from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 
 # Import test metrics
-from src.retrieval.test_metrics import (
+from test_metrics import (
     TestResult,
     EntityResolutionMetrics,
     GraphUtilizationMetrics,
