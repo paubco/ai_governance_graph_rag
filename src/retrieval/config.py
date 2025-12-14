@@ -180,6 +180,51 @@ class RetrievalResult:
     extracted_entities: List[ExtractedEntity]  # Raw LLM extraction from query
     resolved_entities: List[ResolvedEntity]     # After FAISS disambiguation
 
+# ============================================================================
+# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
+# ============================================================================
+
+ANSWER_GENERATION_CONFIG = {
+    # LLM provider and model
+    'provider': 'anthropic',           # 'anthropic' or 'together'
+    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
+    
+    # Generation parameters
+    'max_output_tokens': 2000,         # Answer length limit
+    'temperature': 0.0,                # Deterministic for evaluation
+    'top_p': 1.0,
+    
+    # Formatting
+    'max_chunks_to_format': 20,        # Max chunks even if more retrieved
+    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
+    
+    # Token budget breakdown (for Claude's 200K context)
+    'token_budget': {
+        'graph_structure': 500,        # Relations formatted as bullets
+        'entity_context': 500,         # Key entity list
+        'source_chunks': 10000,        # ~40 chunks at 250 tokens each
+    }
+}
+
+
+# Alternative: Mistral configuration (8k context)
+ANSWER_GENERATION_CONFIG_MISTRAL = {
+    'provider': 'together',
+    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
+    'max_input_tokens': 6000,
+    'token_budget': {
+        'system_prompt': 500,
+        'graph_structure': 300,
+        'entity_context': 200,
+        'source_chunks': 2000,
+        'instructions': 200,
+        'buffer': 500,
+    },
+    'max_output_tokens': 1500,
+    'temperature': 0.3,
+    'top_p': 0.9,
+    'max_chunks_to_format': 10,
+    'truncate_chunk_chars': 400,
 
 # ============================================================================
 # CONFIGURATION CONSTANTS
