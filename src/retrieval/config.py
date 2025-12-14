@@ -207,25 +207,6 @@ ANSWER_GENERATION_CONFIG = {
 }
 
 
-# Alternative: Mistral configuration (8k context)
-ANSWER_GENERATION_CONFIG_MISTRAL = {
-    'provider': 'together',
-    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
-    'max_input_tokens': 6000,
-    'token_budget': {
-        'system_prompt': 500,
-        'graph_structure': 300,
-        'entity_context': 200,
-        'source_chunks': 2000,
-        'instructions': 200,
-        'buffer': 500,
-    },
-    'max_output_tokens': 1500,
-    'temperature': 0.3,
-    'top_p': 0.9,
-    'max_chunks_to_format': 10,
-    'truncate_chunk_chars': 400,
-
 # ============================================================================
 # CONFIGURATION CONSTANTS
 # ============================================================================
