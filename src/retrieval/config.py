@@ -4,14 +4,12 @@ Module: config.py
 Package: src.retrieval
 Purpose: Data classes and configuration for Phase 3 retrieval pipeline
 
+MODIFIED: Added extracted_entities and resolved_entities to RetrievalResult
+          for evaluation/testing visibility.
+
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-12
-
-References:
-    - PHASE_3_DESIGN.md § 5 (Implementation)
-    - PHASE_3.3.2_OPEN_QUESTIONS.md (Graph expansion design decisions)
-    - RAKG paper § 4.2 (Entity Coverage metric)
+Modified: 2025-12-14 (evaluation extension)
 """
 
 from dataclasses import dataclass, field
@@ -29,8 +27,8 @@ class RetrievalMode(Enum):
     """
     Retrieval strategy modes for ablation studies.
     
-    NAIVE: Semantic FAISS search only
-    GRAPHRAG: Entity-centric with PCST only
+    NAIVE: Path B only (semantic FAISS search)
+    GRAPHRAG: Path A only (entity-centric with PCST)
     DUAL: Both paths merged (default)
     """
     NAIVE = "naive"
@@ -80,7 +78,7 @@ class ParsedQuery:
     raw_query: str
     extracted_entities: List[ExtractedEntity]
     filters: QueryFilters
-    query_embedding: np.ndarray  # For semantic search
+    query_embedding: np.ndarray  # For Path B semantic search
 
 
 @dataclass
@@ -112,12 +110,11 @@ class Relation:
     predicate: str
     target_id: str
     target_name: str
-    confidence: float = 0.0
     chunk_ids: List[str] = field(default_factory=list)  # Where this relation was extracted
 
 
 @dataclass
-class GraphSubgraph:
+class Subgraph:
     """
     Output of PCST graph expansion.
     
@@ -140,7 +137,6 @@ class Chunk:
     text: str
     doc_id: str
     doc_type: str  # 'regulation' or 'paper'
-    score: float = 0.5  # Base score from entity matches or FAISS
     jurisdiction: Optional[str] = None  # For regulations
     metadata: dict = field(default_factory=dict)
 
@@ -153,16 +149,15 @@ class RankedChunk:
     Used for:
     - Final top-K selection
     - Prompt assembly
-    - Ablation analysis (retrieval_method tracking)
+    - Ablation analysis (source_path tracking)
     """
     chunk_id: str
     text: str
     score: float
-    retrieval_method: Literal["graphrag", "naive"]
-    doc_id: str = ""
+    source_path: Literal["graphrag_relation", "graphrag_entity", "naive"]
+    entities: List[str] = field(default_factory=list)  # Which entities led here
     doc_type: str = ""
     jurisdiction: Optional[str] = None
-    entities: List[str] = field(default_factory=list)  # Which entities led here
     metadata: dict = field(default_factory=dict)
 
 
@@ -173,11 +168,17 @@ class RetrievalResult:
     
     Contains both chunks and subgraph for prompt assembly.
     Subgraph relations will be formatted as GRAPH STRUCTURE section.
+    
+    MODIFIED: Added extracted_entities and resolved_entities for evaluation/testing.
+    Not used in production prompt assembly, but critical for ablation studies.
     """
     query: str
-    resolved_entities: List[str]
-    subgraph: GraphSubgraph
     chunks: List[RankedChunk]
+    subgraph: Subgraph
+    
+    # Evaluation metadata (added for Phase 3 testing)
+    extracted_entities: List[ExtractedEntity]  # Raw LLM extraction from query
+    resolved_entities: List[ResolvedEntity]     # After FAISS disambiguation
 
 
 # ============================================================================
@@ -186,7 +187,7 @@ class RetrievalResult:
 
 # PCST Graph Expansion
 PCST_CONFIG = {
-    'k_candidates': 10,        # Top-K similar entities per seed (FAISS) - increased for path coverage
+    'k_candidates': 10,        # Top-K similar entities per seed (FAISS)
     'delta': 0.5,              # Neo4j PCST prize-cost balance parameter
     'prize_strategy': 'uniform',  # 'uniform' or 'frequency' (start simple)
     'cost_strategy': 'uniform',   # 'uniform', 'frequency', or 'similarity'
@@ -198,93 +199,21 @@ RETRIEVAL_CONFIG = {
     'path_a_all_entities': True,    # Get all chunks from PCST entities (not top-K)
     'path_b_top_k': 15,              # Semantic search chunk limit
     'chunk_token_limit': 8000,       # Approximate token budget for context
-    'entity_resolution_top_k': 3,    # Max entities per extracted mention (avoid explosion)
-    'pcst_max_entities': 50,         # PCST expansion limit (hub node control)
 }
 
-# Ranking & Scoring (Entity Coverage-Based)
+# Ranking & Scoring
 RANKING_CONFIG = {
-    # GraphRAG scoring components
-    'entity_coverage_bonus': 0.40,    # Max bonus for 100% entity coverage
-    'provenance_bonus': 0.15,         # Flat bonus if chunk contains PCST relation
-    
-    # Naive scoring: Pure FAISS similarity (no bonuses)
-    
-    # Final selection
-    'final_top_k': 20,                # Final chunks for LLM context
+    'provenance_bonus': 0.3,      # Chunks containing PCST relations (highest)
+    'path_a_bonus': 0.2,          # Chunks from entity expansion (medium)
+    'path_b_baseline': 0.0,       # Semantic search chunks (baseline)
+    'jurisdiction_boost': 0.1,    # Bonus if chunk matches jurisdiction hint
+    'final_top_k': 20,            # Final chunks for LLM context
 }
-
-# RANKING RATIONALE (Entity Coverage):
-# 
-# GraphRAG chunks scored by entity coverage:
-#   score = base_score + (entities_in_chunk / total_resolved * 0.40) + provenance_bonus
-# 
-# This penalizes chunks mentioning random entities without full context.
-# 
-# Examples with 4 resolved entities [A, B, C, D]:
-# 
-#   Chunk with [A]:          base 0.45 + (1/4 * 0.40) = 0.55
-#   Chunk with [A, B]:       base 0.50 + (2/4 * 0.40) = 0.70
-#   Chunk with [A,B,C,D]:    base 0.60 + (4/4 * 0.40) = 1.00
-#   Above + PCST relation:   base 0.60 + 0.40 + 0.15  = 1.15
-# 
-# Naive chunks: Pure FAISS similarity (0.0-1.0), no bonuses
-# 
-# Creates fair competition where both paths can reach similar max scores.
-# Based on RAKG's Entity Coverage (EC) metric from paper § 4.2.
 
 # Entity Resolution (from Phase 3.3.1)
 ENTITY_RESOLUTION_CONFIG = {
     'fuzzy_threshold': 0.75,      # Cosine similarity threshold
     'top_k_per_entity': 10,       # Candidates per query entity
-}
-
-
-# ============================================================================
-# ANSWER GENERATION CONFIGURATION (Phase 3.3.4)
-# ============================================================================
-
-ANSWER_GENERATION_CONFIG = {
-    # LLM provider and model
-    'provider': 'anthropic',           # 'anthropic' or 'together'
-    'model': 'claude-3-5-haiku-20241022',  # Claude Haiku (fast + cheap)
-    
-    # Generation parameters
-    'max_output_tokens': 2000,         # Answer length limit
-    'temperature': 0.0,                # Deterministic for evaluation
-    'top_p': 1.0,
-    
-    # Formatting
-    'max_chunks_to_format': 20,        # Max chunks even if more retrieved
-    'truncate_chunk_chars': 1000,      # Max chars per chunk in prompt
-    
-    # Token budget breakdown (for Claude's 200K context)
-    'token_budget': {
-        'graph_structure': 500,        # Relations formatted as bullets
-        'entity_context': 500,         # Key entity list
-        'source_chunks': 10000,        # ~40 chunks at 250 tokens each
-    }
-}
-
-
-# Alternative: Mistral configuration (8k context)
-ANSWER_GENERATION_CONFIG_MISTRAL = {
-    'provider': 'together',
-    'model': 'mistralai/Mistral-7B-Instruct-v0.3',
-    'max_input_tokens': 6000,
-    'token_budget': {
-        'system_prompt': 500,
-        'graph_structure': 300,
-        'entity_context': 200,
-        'source_chunks': 2000,
-        'instructions': 200,
-        'buffer': 500,
-    },
-    'max_output_tokens': 1500,
-    'temperature': 0.3,
-    'top_p': 0.9,
-    'max_chunks_to_format': 10,
-    'truncate_chunk_chars': 400,
 }
 
 
