@@ -162,8 +162,8 @@ class RankedChunk:
     chunk_id: str
     text: str
     score: float
-    source_path: Literal["graphrag_relation", "graphrag_entity", "naive"]
-    retrieval_method: str = ""  # ADD THIS - between source_path and entities
+    source_path: Literal["graphrag_relation", "graphrag_entity", "naive"] = "naive"
+    retrieval_method: str = ""  
     doc_id: str = "" 
     entities: List[str] = field(default_factory=list)  # Which entities led here
     doc_type: str = ""
