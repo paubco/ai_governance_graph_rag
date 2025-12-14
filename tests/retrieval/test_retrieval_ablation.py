@@ -358,6 +358,9 @@ class AblationTestSuite:
                 print("   Evaluating faithfulness...")
                 faith = self.ragas.faithfulness(answer_result.answer, context_text)
                 
+                # Rate limit protection: wait 2s between API calls
+                time.sleep(2)
+                
                 # Relevancy
                 print("   Evaluating relevancy...")
                 rel = self.ragas.answer_relevancy(query_def['query'], answer_result.answer)
