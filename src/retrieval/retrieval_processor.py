@@ -4,11 +4,11 @@ Module: retrieval_processor.py
 Package: src.retrieval
 Purpose: Orchestrate full Phase 3 retrieval pipeline (3.3.1 + 3.3.2)
 
-MODIFIED: Added entity metadata passthrough to RetrievalResult for evaluation
+MODIFIED: Updated to graph/semantic nomenclature (removed Path A/B naming)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-14 (evaluation extension)
+Modified: 2025-12-15 (nomenclature update + bug fix)
 
 References:
     - PHASE_3_DESIGN.md § 4-5 (Query Understanding + Context Retrieval)
@@ -22,7 +22,7 @@ Pipeline:
     
     2. Context Retrieval (3.3.2)
         - Graph expansion (PCST optimization)
-        - Dual-path retrieval (GraphRAG + Naive RAG)
+        - Dual-channel retrieval (Graph + Semantic)
         - Ranking (provenance bonus)
 """
 
@@ -55,7 +55,7 @@ class RetrievalProcessor:
     
     Coordinates:
     - Phase 3.3.1: Query understanding (parse + resolve entities)
-    - Phase 3.3.2: Context retrieval (PCST expansion + dual-path + ranking)
+    - Phase 3.3.2: Context retrieval (PCST expansion + dual-channel + ranking)
     """
     
     def __init__(
@@ -161,9 +161,9 @@ class RetrievalProcessor:
         2. Graph Expansion (3.3.2a)
             - PCST optimization to find minimal connecting subgraph
         
-        3. Dual-Path Retrieval (3.3.2b)
-            - Path A: Corpus retrospective (entity → chunks)
-            - Path B: Semantic FAISS search
+        3. Dual-Channel Retrieval (3.3.2b)
+            - Graph: Corpus retrospective (entity → chunks)
+            - Semantic: FAISS vector similarity search
         
         4. Ranking (3.3.2c)
             - Merge + deduplicate
@@ -172,7 +172,7 @@ class RetrievalProcessor:
         
         Args:
             query: Natural language query string
-            mode: Retrieval mode (for testing) - "naive", "graphrag", or "dual"
+            mode: Retrieval mode (for testing) - "semantic", "graph", or "dual"
             
         Returns:
             RetrievalResult with ranked chunks, subgraph, and entity metadata
@@ -181,10 +181,10 @@ class RetrievalProcessor:
         understanding = self.understand_query(query)
         
         if not understanding.resolved_entities:
-            # No entities found - fall back to Path B only
+            # No entities found - fall back to semantic only
             print("⚠️  No entities resolved, using semantic search only")
-            graphrag_chunks = []
-            naive_chunks = self.chunk_retriever._retrieve_path_b(
+            graph_chunks = []
+            semantic_chunks = self.chunk_retriever._retrieve_semantic(
                 understanding.parsed_query.query_embedding
             )
             
@@ -196,16 +196,16 @@ class RetrievalProcessor:
             # Phase 3.3.2a: Graph Expansion (PCST)
             subgraph = self.graph_expander.expand(understanding.resolved_entities)
             
-            # Phase 3.3.2b: Dual-Path Retrieval
-            graphrag_chunks, naive_chunks = self.chunk_retriever.retrieve_dual(
+            # Phase 3.3.2b: Dual-Channel Retrieval
+            graph_chunks, semantic_chunks = self.chunk_retriever.retrieve_dual(
                 subgraph=subgraph,
                 query_embedding=understanding.parsed_query.query_embedding
             )
         
         # Phase 3.3.2c: Ranking
         result = self.result_ranker.rank(
-            graphrag_chunks=graphrag_chunks,
-            naive_chunks=naive_chunks,
+            graph_chunks=graph_chunks,
+            semantic_chunks=semantic_chunks,
             subgraph=subgraph,
             filters=understanding.parsed_query.filters,
             query=query

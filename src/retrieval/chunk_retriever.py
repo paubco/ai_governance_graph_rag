@@ -2,23 +2,23 @@
 """
 Module: chunk_retriever.py
 Package: src.retrieval
-Purpose: Dual-path chunk retrieval (Path A: GraphRAG, Path B: Naive RAG)
+Purpose: Dual-channel chunk retrieval (Graph + Semantic)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-07
-Modified: 2025-12-12
+Modified: 2025-12-15
 
 References:
     - RAKG (Zhang et al., 2025) - Corpus retrospective retrieval
     - RAGulating (Agarwal et al., 2025) - Provenance tracking
     - PHASE_3_DESIGN.md § 5.2 (Dual-channel architecture)
 
-Retrieval Paths:
-    Path A (GraphRAG): Entity expansion → Corpus retrospective
+Retrieval Channels:
+    Graph Retrieval: Entity expansion → Corpus retrospective
         - Get all chunks mentioning PCST entities (EXTRACTED_FROM)
         - PLUS chunks containing PCST relations (provenance)
     
-    Path B (Naive RAG): Direct semantic search
+    Semantic Retrieval: Direct vector similarity search
         - FAISS similarity search on chunk embeddings
         - Baseline for comparison
 """
@@ -42,11 +42,11 @@ from .config import (
 
 class ChunkRetriever:
     """
-    Dual-path chunk retrieval.
+    Dual-channel chunk retrieval.
     
     Combines:
-    - Path A: Entity-centric retrieval (GraphRAG)
-    - Path B: Semantic search (Naive RAG)
+    - Graph Retrieval: Entity-centric via PCST expansion
+    - Semantic Retrieval: Vector similarity via FAISS
     """
     
     def __init__(
@@ -96,26 +96,26 @@ class ChunkRetriever:
         query_embedding: np.ndarray
     ) -> tuple[List[Chunk], List[Chunk]]:
         """
-        Retrieve chunks via both paths.
+        Retrieve chunks via both channels.
         
         Args:
             subgraph: PCST subgraph from graph expansion.
-            query_embedding: Query embedding for Naive path.
+            query_embedding: Query embedding for semantic retrieval.
         
         Returns:
-            (graphrag_chunks, naive_chunks)
+            (graph_chunks, semantic_chunks)
         """
-        # GraphRAG: Entity-centric retrieval
-        graphrag_chunks = self._retrieve_path_a(subgraph)
+        # Graph Retrieval: Entity-centric corpus retrospective
+        graph_chunks = self._retrieve_graph(subgraph)
         
-        # Naive: Semantic search
-        naive_chunks = self._retrieve_path_b(query_embedding)
+        # Semantic Retrieval: Vector similarity search
+        semantic_chunks = self._retrieve_semantic(query_embedding)
         
-        return graphrag_chunks, naive_chunks
+        return graph_chunks, semantic_chunks
     
-    def _retrieve_path_a(self, subgraph: Subgraph) -> List[Chunk]:
+    def _retrieve_graph(self, subgraph: Subgraph) -> List[Chunk]:
         """
-        GraphRAG Path: Corpus retrospective + relation provenance.
+        Graph Retrieval: Corpus retrospective + relation provenance.
         
         Strategy:
         1. Get all chunks mentioning PCST entities (EXTRACTED_FROM edges)
@@ -187,9 +187,9 @@ class ChunkRetriever:
             
             return chunks
     
-    def _retrieve_path_b(self, query_embedding: np.ndarray) -> List[Chunk]:
+    def _retrieve_semantic(self, query_embedding: np.ndarray) -> List[Chunk]:
         """
-        Naive RAG Path: Direct semantic search via FAISS.
+        Semantic Retrieval: Direct vector similarity search via FAISS.
         
         Args:
             query_embedding: Query embedding (BGE-M3, 1024-dim).
@@ -197,7 +197,7 @@ class ChunkRetriever:
         Returns:
             Top-K most similar chunks.
         """
-        k = self.config['path_b_top_k']
+        k = self.config['semantic_top_k']
         
         # FAISS search
         query_vec = query_embedding.reshape(1, -1)

@@ -2,53 +2,22 @@
 """
 Module: result_ranker.py
 Package: src.retrieval
-Purpose: Merge and rank chunks from dual-path retrieval
+Purpose: Merge, deduplicate, and rank chunks from dual channels
+
+CRITICAL BUG FIX: Now properly sets source_path when creating RankedChunk objects
+MODIFIED: Updated to graph/semantic nomenclature (removed Path A/B naming)
 
 Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-12
+Created: 2025-12-08
+Modified: 2025-12-15 (bug fix + nomenclature update)
 
 References:
-    - RAGulating (Agarwal et al., 2025) - Provenance tracking
-    - RAKG (Zhang et al., 2025) - Entity Coverage metric
     - PHASE_3_DESIGN.md § 5.3 (Ranking strategy)
-
-Ranking Strategy (Entity Coverage-Based):
-    
-    GraphRAG scoring:
-        score = base_score + (entity_coverage * max_coverage_bonus) + provenance_bonus
-        
-        where entity_coverage = entities_in_chunk / total_resolved_entities
-    
-    Naive scoring:
-        score = faiss_similarity  # NO bonuses (pure semantic)
-    
-    Examples (4 entities resolved):
-    
-    Scenario 1: Full context GraphRAG with provenance
-      Base: 0.40
-      Coverage: 4/4 = 1.0 → +0.40
-      Provenance: +0.15
-      = 0.95 (strong but not unbeatable)
-    
-    Scenario 2: Perfect semantic match (naive)
-      FAISS: 0.98
-      = 0.98 (beats partial GraphRAG)
-    
-    Scenario 3: Partial context GraphRAG
-      Base: 0.40
-      Coverage: 1/4 = 0.25 → +0.10
-      = 0.50 (loses to good naive)
-    
-    Scenario 4: Mediocre naive
-      FAISS: 0.45
-      = 0.45 (loses to everything)
+    - RAGulating (Agarwal et al., 2025) - Provenance bonus concept
 """
 
-import numpy as np
 from typing import List, Set, Dict, Optional
-from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .config import (
     Chunk,
@@ -61,16 +30,16 @@ from .config import (
 
 
 # ============================================================================
-# DEBUG INFO
+# SCORING DEBUG INFO (for ablation studies)
 # ============================================================================
 
 @dataclass
 class ScoringDebugInfo:
-    """Debug information for scoring decisions."""
+    """Debug information for scoring transparency."""
     chunk_id: str
-    method: str  # 'graphrag' or 'naive'
+    method: str  # 'graph' or 'semantic'
     base_score: float
-    entity_coverage: Optional[float]  # Only for graphrag
+    entity_coverage: Optional[float]
     coverage_bonus: float
     provenance_bonus: float
     final_score: float
@@ -83,26 +52,23 @@ class ScoringDebugInfo:
 
 class ResultRanker:
     """
-    Merge and rank chunks using entity coverage.
+    Merge and rank chunks from dual retrieval channels.
     
-    Key principle: GraphRAG chunks rewarded for discussing MORE resolved entities.
-    This penalizes chunks mentioning random entities without full context.
+    Scoring strategy:
+    1. Graph chunks: Base score + entity coverage bonus + provenance bonus
+    2. Semantic chunks: FAISS similarity (baseline)
+    3. Deduplication: Keep highest score per chunk
     """
     
-    def __init__(self, config: dict = None):
-        """
-        Initialize ranker.
-        
-        Args:
-            config: Ranking configuration (uses RANKING_CONFIG if None).
-        """
-        self.config = config or RANKING_CONFIG
-        self.debug_info: List[ScoringDebugInfo] = []
+    def __init__(self):
+        """Initialize result ranker with config."""
+        self.config = RANKING_CONFIG
+        self.debug_info: Optional[List[ScoringDebugInfo]] = None
     
     def rank(
         self,
-        graphrag_chunks: List[Chunk],
-        naive_chunks: List[Chunk],
+        graph_chunks: List[Chunk],
+        semantic_chunks: List[Chunk],
         subgraph: Subgraph,
         filters: QueryFilters,
         query: str,
@@ -112,8 +78,8 @@ class ResultRanker:
         Merge, deduplicate, and rank chunks with entity coverage.
         
         Args:
-            graphrag_chunks: Chunks from entity-centric GraphRAG path.
-            naive_chunks: Chunks from semantic search.
+            graph_chunks: Chunks from graph retrieval channel.
+            semantic_chunks: Chunks from semantic search.
             subgraph: PCST subgraph (for relation provenance and entity count).
             filters: Query filters (reserved for future use).
             query: Original query string.
@@ -130,10 +96,10 @@ class ResultRanker:
         # Total resolved entities (for coverage calculation)
         total_entities = len(subgraph.entities)
         
-        # Score GraphRAG chunks
+        # Score Graph chunks
         scored_chunks = {}
-        for chunk in graphrag_chunks:
-            score, retrieval_method, debug_data = self._score_graphrag_chunk(
+        for chunk in graph_chunks:
+            score, retrieval_method, source_path, debug_data = self._score_graph_chunk(
                 chunk, 
                 relation_chunk_ids,
                 total_entities,
@@ -143,7 +109,7 @@ class ResultRanker:
             if debug:
                 self.debug_info.append(ScoringDebugInfo(
                     chunk_id=chunk.chunk_id,
-                    method='graphrag',
+                    method='graph',
                     base_score=debug_data['base_score'],
                     entity_coverage=debug_data['entity_coverage'],
                     coverage_bonus=debug_data['coverage_bonus'],
@@ -158,41 +124,45 @@ class ResultRanker:
                     scored_chunks[chunk.chunk_id] = {
                         'chunk': chunk,
                         'score': score,
-                        'retrieval_method': retrieval_method
+                        'retrieval_method': retrieval_method,
+                        'source_path': source_path  # BUG FIX: Store source_path
                     }
             else:
                 scored_chunks[chunk.chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'retrieval_method': retrieval_method
+                    'retrieval_method': retrieval_method,
+                    'source_path': source_path  # BUG FIX: Store source_path
                 }
         
-        # Score Naive chunks
-        for chunk in naive_chunks:
-            score, retrieval_method, debug_data = self._score_naive_chunk(chunk, filters)
+        # Score Semantic chunks
+        for chunk in semantic_chunks:
+            score, retrieval_method, source_path, debug_data = self._score_semantic_chunk(chunk, filters)
             
             if debug:
                 self.debug_info.append(ScoringDebugInfo(
                     chunk_id=chunk.chunk_id,
-                    method='naive',
+                    method='semantic',
                     base_score=debug_data['base_score'],
-                    entity_coverage=None,  # Naive doesn't use coverage
+                    entity_coverage=None,  # Semantic doesn't use coverage
                     coverage_bonus=0.0,
                     provenance_bonus=0.0,
                     final_score=score,
                     rank=0
                 ))
             
-            # If chunk already seen from GraphRAG, only update if Naive score is higher
+            # If chunk already seen from Graph, only update if Semantic score is higher
             if chunk.chunk_id in scored_chunks:
                 if score > scored_chunks[chunk.chunk_id]['score']:
                     scored_chunks[chunk.chunk_id]['score'] = score
-                    scored_chunks[chunk.chunk_id]['retrieval_method'] = 'naive'
+                    scored_chunks[chunk.chunk_id]['retrieval_method'] = retrieval_method
+                    scored_chunks[chunk.chunk_id]['source_path'] = source_path  # BUG FIX
             else:
                 scored_chunks[chunk.chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'retrieval_method': retrieval_method
+                    'retrieval_method': retrieval_method,
+                    'source_path': source_path  # BUG FIX: Store source_path
                 }
         
         # Convert to RankedChunk objects
@@ -203,6 +173,7 @@ class ResultRanker:
                 chunk_id=chunk.chunk_id,
                 text=chunk.text,
                 score=chunk_data['score'],
+                source_path=chunk_data['source_path'],  # BUG FIX: Actually set source_path!
                 retrieval_method=chunk_data['retrieval_method'],
                 doc_id=chunk.doc_id,
                 doc_type=chunk.doc_type,
@@ -233,117 +204,122 @@ class ResultRanker:
         )
     
     def _get_relation_chunk_ids(self, subgraph: Subgraph) -> Set[str]:
-        """Extract chunk IDs from PCST relations (provenance)."""
+        """Extract chunk IDs from relation provenance."""
         chunk_ids = set()
-        for rel in subgraph.relations:
-            chunk_ids.update(rel.chunk_ids)
+        for relation in subgraph.relations:
+            chunk_ids.update(relation.chunk_ids)
         return chunk_ids
     
-    def _score_graphrag_chunk(
+    def _score_graph_chunk(
         self,
         chunk: Chunk,
         relation_chunk_ids: Set[str],
         total_entities: int,
         filters: QueryFilters
-    ) -> tuple[float, str, Dict]:
+    ) -> tuple[float, str, str, Dict]:
         """
-        Score GraphRAG chunk using entity coverage.
-        
-        Formula:
-            score = base_score + (entity_coverage * max_coverage_bonus) + provenance_bonus
-        
-        Args:
-            chunk: Chunk to score
-            relation_chunk_ids: Chunks containing PCST relations
-            total_entities: Total resolved entities (for coverage calculation)
-            filters: Query filters (reserved for future)
+        Score chunk from graph retrieval.
         
         Returns:
-            (final_score, retrieval_method, debug_data)
+            (final_score, retrieval_method, source_path, debug_data)
         """
-        debug_data = {}
-        
-        # Base score from chunk (entity match quality)
+        # Base score from chunk (entity match score from retriever)
         base_score = chunk.score
-        debug_data['base_score'] = base_score
         
         # Entity coverage bonus
-        entities_in_chunk = chunk.metadata.get('entities', [])
-        entity_coverage = len(entities_in_chunk) / max(total_entities, 1)  # Avoid div by 0
+        num_entities = len(chunk.metadata.get('entities', []))
+        entity_coverage = num_entities / total_entities if total_entities > 0 else 0.0
         coverage_bonus = entity_coverage * self.config['entity_coverage_bonus']
         
-        debug_data['entity_coverage'] = entity_coverage
-        debug_data['coverage_bonus'] = coverage_bonus
+        # Provenance bonus (highest priority)
+        is_provenance = chunk.metadata.get('is_relation_provenance', False)
+        provenance_bonus = self.config['provenance_bonus'] if is_provenance else 0.0
         
-        # Provenance bonus (flat)
-        provenance_bonus = 0.0
-        if chunk.chunk_id in relation_chunk_ids:
-            provenance_bonus = self.config['provenance_bonus']
+        # Graph retrieval bonus (for non-provenance chunks)
+        graph_bonus = 0.0 if is_provenance else self.config['graph_bonus']
         
-        debug_data['provenance_bonus'] = provenance_bonus
+        # Jurisdiction boost (soft hint)
+        jurisdiction_boost = 0.0
+        if filters.jurisdiction_hints and chunk.jurisdiction in filters.jurisdiction_hints:
+            jurisdiction_boost = self.config['jurisdiction_boost']
+        
+        # Doc type boost
+        doc_type_boost = 0.0
+        if filters.doc_type_hints and chunk.doc_type in filters.doc_type_hints:
+            doc_type_boost = self.config['doc_type_boost']
         
         # Final score
-        final_score = base_score + coverage_bonus + provenance_bonus
+        final_score = (
+            base_score +
+            coverage_bonus +
+            provenance_bonus +
+            graph_bonus +
+            jurisdiction_boost +
+            doc_type_boost
+        )
         
-        return final_score, 'graphrag', debug_data
+        # Determine source path and retrieval method
+        if is_provenance:
+            source_path = "graph_relation"
+            retrieval_method = "graph_provenance"
+        else:
+            source_path = "graph_entity"
+            retrieval_method = "graph_entity"
+        
+        debug_data = {
+            'base_score': base_score,
+            'entity_coverage': entity_coverage,
+            'coverage_bonus': coverage_bonus,
+            'provenance_bonus': provenance_bonus,
+            'graph_bonus': graph_bonus,
+            'jurisdiction_boost': jurisdiction_boost,
+            'doc_type_boost': doc_type_boost,
+        }
+        
+        return final_score, retrieval_method, source_path, debug_data
     
-    def _score_naive_chunk(
+    def _score_semantic_chunk(
         self,
         chunk: Chunk,
         filters: QueryFilters
-    ) -> tuple[float, str, Dict]:
+    ) -> tuple[float, str, str, Dict]:
         """
-        Score Naive chunk (pure FAISS similarity, NO bonuses).
-        
-        Args:
-            chunk: Chunk to score
-            filters: Query filters (reserved for future)
+        Score chunk from semantic retrieval.
         
         Returns:
-            (final_score, retrieval_method, debug_data)
+            (final_score, retrieval_method, source_path, debug_data)
         """
-        debug_data = {}
+        # Base score is FAISS similarity
+        base_score = chunk.score
         
-        # Naive = pure semantic similarity
-        score = chunk.score
-        debug_data['base_score'] = score
+        # Semantic baseline (no bonus for being from semantic path)
+        semantic_baseline = self.config['semantic_baseline']
         
-        return score, 'naive', debug_data
-    
-    def get_debug_info(self) -> Optional[List[ScoringDebugInfo]]:
-        """Return collected debug information."""
-        return self.debug_info
-    
-    def format_for_prompt(self, result: RetrievalResult) -> dict:
-        """
-        Format retrieval result for LLM prompt.
+        # Jurisdiction boost
+        jurisdiction_boost = 0.0
+        if filters.jurisdiction_hints and chunk.jurisdiction in filters.jurisdiction_hints:
+            jurisdiction_boost = self.config['jurisdiction_boost']
         
-        Returns structured dict with:
-        - graph_structure: Relations from PCST
-        - entities: Key entities with context
-        - sources: Numbered chunks with citations
-        """
-        # Format relations
-        relations_text = []
-        for rel in result.subgraph.relations:
-            relations_text.append(
-                f"  • {rel.source_name} --{rel.predicate}--> {rel.target_name}"
-            )
+        # Doc type boost
+        doc_type_boost = 0.0
+        if filters.doc_type_hints and chunk.doc_type in filters.doc_type_hints:
+            doc_type_boost = self.config['doc_type_boost']
         
-        # Format sources with citation numbers
-        sources_text = []
-        for i, chunk in enumerate(result.chunks, 1):
-            source_label = f"[{i}]"
-            doc_info = f"{chunk.doc_type}"
-            if chunk.jurisdiction:
-                doc_info += f" ({chunk.jurisdiction})"
-            
-            sources_text.append(
-                f"{source_label} {chunk.text}\n    Source: {doc_info}"
-            )
+        final_score = (
+            base_score +
+            semantic_baseline +
+            jurisdiction_boost +
+            doc_type_boost
+        )
         
-        return {
-            'graph_structure': '\n'.join(relations_text),
-            'sources': '\n\n'.join(sources_text),
-            'query': result.query
+        source_path = "semantic"
+        retrieval_method = "semantic"
+        
+        debug_data = {
+            'base_score': base_score,
+            'semantic_baseline': semantic_baseline,
+            'jurisdiction_boost': jurisdiction_boost,
+            'doc_type_boost': doc_type_boost,
         }
+        
+        return final_score, retrieval_method, source_path, debug_data

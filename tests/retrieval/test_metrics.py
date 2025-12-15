@@ -60,6 +60,33 @@ class GraphUtilizationMetrics:
 
 
 # ============================================================================
+# COVERAGE METRICS (Objective 3: Information Utilization)
+# ============================================================================
+
+@dataclass
+class CoverageMetrics:
+    """
+    Measures how well answer utilized retrieved information.
+    
+    Key questions:
+    - Did answer use entities from the subgraph?
+    - Were graph relations reflected in answer?
+    - How much of retrieved context was utilized?
+    """
+    entities_in_subgraph: int
+    entities_in_answer: int
+    entity_coverage_rate: float       # in_answer / in_subgraph
+    
+    relations_in_subgraph: int
+    relations_mentioned: int
+    relation_coverage_rate: float     # mentioned / in_subgraph
+    
+    # Example entities that appeared in answer
+    covered_entities: List[str] = field(default_factory=list)
+    uncovered_entities: List[str] = field(default_factory=list)
+
+
+# ============================================================================
 # RETRIEVAL METRICS (Objective 2 & 3: Relevance + Source Use)
 # ============================================================================
 
@@ -144,6 +171,7 @@ class TestResult:
     # Metrics (aligned with thesis objectives)
     entity_resolution: EntityResolutionMetrics
     graph_utilization: GraphUtilizationMetrics
+    coverage: CoverageMetrics                   # NEW: Answer utilization
     retrieval: RetrievalMetrics
     ragas: RAGASMetrics
     performance: PerformanceMetrics
@@ -262,4 +290,76 @@ def compute_retrieval_metrics(chunks: List) -> RetrievalMetrics:
         avg_chunk_score=avg_chunk_score,
         source_diversity=source_diversity,
         jurisdiction_diversity=list(jurisdictions)
+    )
+
+
+def compute_coverage_metrics(
+    subgraph,
+    answer_text: str,
+    client=None  # Anthropic client for LLM extraction
+) -> CoverageMetrics:
+    """
+    Compute coverage metrics: how well did answer utilize retrieved information?
+    
+    Args:
+        subgraph: Subgraph object with entities and relations
+        answer_text: Generated answer text
+        client: Optional Anthropic client for entity extraction from answer
+        
+    Returns:
+        CoverageMetrics
+    """
+    # Entities in subgraph (what was available)
+    entities_in_subgraph = len(subgraph.entities)
+    relations_in_subgraph = len(subgraph.relations)
+    
+    # Extract entity names from subgraph for matching
+    # Note: This assumes entity IDs or entity names are available
+    # In production, you'd query Neo4j for entity names from IDs
+    subgraph_entity_names = set()
+    for entity_id in subgraph.entities:
+        # Extract name from entity_id (e.g., "entity_123" -> lookup name)
+        # For now, use simple lowercase matching
+        subgraph_entity_names.add(entity_id.lower())
+    
+    # Simple heuristic: check if entity names appear in answer
+    # (Better approach: use LLM to extract entities from answer)
+    answer_lower = answer_text.lower()
+    
+    covered_entities = []
+    uncovered_entities = []
+    
+    for entity_name in subgraph_entity_names:
+        if entity_name in answer_lower:
+            covered_entities.append(entity_name)
+        else:
+            uncovered_entities.append(entity_name)
+    
+    entities_in_answer = len(covered_entities)
+    entity_coverage_rate = entities_in_answer / entities_in_subgraph if entities_in_subgraph > 0 else 0.0
+    
+    # Relation coverage: check if relation predicates appear in answer
+    relation_predicates = set()
+    relations_mentioned = 0
+    
+    for rel in subgraph.relations:
+        predicate_lower = rel.predicate.lower().replace('_', ' ')
+        if predicate_lower not in relation_predicates:
+            relation_predicates.add(predicate_lower)
+            # Check if both source and target entities appear near this predicate
+            if (rel.source_name.lower() in answer_lower and 
+                rel.target_name.lower() in answer_lower):
+                relations_mentioned += 1
+    
+    relation_coverage_rate = relations_mentioned / relations_in_subgraph if relations_in_subgraph > 0 else 0.0
+    
+    return CoverageMetrics(
+        entities_in_subgraph=entities_in_subgraph,
+        entities_in_answer=entities_in_answer,
+        entity_coverage_rate=entity_coverage_rate,
+        relations_in_subgraph=relations_in_subgraph,
+        relations_mentioned=relations_mentioned,
+        relation_coverage_rate=relation_coverage_rate,
+        covered_entities=covered_entities[:10],  # Limit to 10 examples
+        uncovered_entities=uncovered_entities[:10]
     )

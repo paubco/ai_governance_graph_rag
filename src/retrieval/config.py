@@ -158,11 +158,16 @@ class RankedChunk:
     - Final top-K selection
     - Prompt assembly
     - Ablation analysis (source_path tracking)
+    
+    Source paths:
+    - graph_relation: Retrieved via graph traversal + contains PCST relation (provenance)
+    - graph_entity: Retrieved via graph traversal (entity-centric)
+    - semantic: Retrieved via vector similarity search (FAISS)
     """
     chunk_id: str
     text: str
     score: float
-    source_path: Literal["graphrag_relation", "graphrag_entity", "naive"] = "naive"
+    source_path: Literal["graph_relation", "graph_entity", "semantic"] = "semantic"
     retrieval_method: str = ""  
     doc_id: str = "" 
     entities: List[str] = field(default_factory=list)  # Which entities led here
@@ -206,22 +211,22 @@ PCST_CONFIG = {
 
 # Chunk Retrieval (MERGED from both sections)
 RETRIEVAL_CONFIG = {
-    'path_a_all_entities': True,    # Get all chunks from PCST entities (not top-K)
-    'path_b_top_k': 15,              # Semantic search chunk limit
-    'chunk_token_limit': 8000,       # Approximate token budget for context
-    'entity_resolution_top_k': 3,    # Max entities per extracted mention
-    'pcst_max_entities': 50,         # PCST expansion limit (hub node control)
+    'graph_all_entities': True,      # Get all chunks from PCST entities (not top-K)
+    'semantic_top_k': 15,             # Semantic search chunk limit
+    'chunk_token_limit': 8000,        # Approximate token budget for context
+    'entity_resolution_top_k': 3,     # Max entities per extracted mention
+    'pcst_max_entities': 50,          # PCST expansion limit (hub node control)
 }
 
 # Ranking & Scoring (MERGED + FIXED with entity_coverage_bonus)
 RANKING_CONFIG = {
-    'provenance_bonus': 0.3,      # Chunks containing PCST relations (highest)
-    'path_a_bonus': 0.2,          # Chunks from entity expansion (medium)
-    'path_b_baseline': 0.0,       # Semantic search chunks (baseline)
-    'jurisdiction_boost': 0.1,    # Bonus if chunk matches jurisdiction hint
-    'doc_type_boost': 0.15,       # Bonus if chunk matches doc_type hint
-    'entity_coverage_bonus': 0.2, # FIXED: Bonus based on entity coverage
-    'final_top_k': 20,            # Final chunks for LLM context
+    'provenance_bonus': 0.3,          # Chunks containing PCST relations (highest)
+    'graph_bonus': 0.2,               # Chunks from graph entity expansion (medium)
+    'semantic_baseline': 0.0,         # Semantic search chunks (baseline)
+    'jurisdiction_boost': 0.1,        # Bonus if chunk matches jurisdiction hint
+    'doc_type_boost': 0.15,           # Bonus if chunk matches doc_type hint
+    'entity_coverage_bonus': 0.2,     # FIXED: Bonus based on entity coverage
+    'final_top_k': 20,                # Final chunks for LLM context
 }
 
 # Entity Resolution (from Phase 3.3.1)
