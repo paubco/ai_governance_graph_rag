@@ -1,6 +1,9 @@
 #Checkpoints
 data/checkpoints/*
 
+#claude 
+.claude
+
 # Python
 __pycache__/
 *.py[cod]
@@ -50,7 +53,7 @@ Thumbs.db
 data/
 logs/
 docs/daily_logs/
-docs/standardization_audit.md
+docs/status/
 CLAUDE.MD
 
 # Jupyter Notebook
