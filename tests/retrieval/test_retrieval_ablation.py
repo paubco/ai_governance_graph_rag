@@ -360,7 +360,8 @@ class AblationTestSuite:
             # Compute coverage metrics (how well answer used retrieved info)
             coverage_metrics = compute_coverage_metrics(
                 retrieval_result.subgraph,
-                answer_result.answer
+                answer_result.answer,
+                retrieval_result.resolved_entities  # Pass entity names
             )
             
             print(f"   Coverage: {coverage_metrics.entity_coverage_rate:.1%} entities, "

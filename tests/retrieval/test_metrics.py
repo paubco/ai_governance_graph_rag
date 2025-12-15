@@ -324,6 +324,7 @@ def compute_retrieval_metrics(
 def compute_coverage_metrics(
     subgraph,
     answer_text: str,
+    resolved_entities: List = None,  # NEW: Actual entity names
     client=None  # Anthropic client for LLM extraction
 ) -> CoverageMetrics:
     """
@@ -332,6 +333,7 @@ def compute_coverage_metrics(
     Args:
         subgraph: Subgraph object with entities and relations
         answer_text: Generated answer text
+        resolved_entities: List of ResolvedEntity objects with actual names
         client: Optional Anthropic client for entity extraction from answer
         
     Returns:
@@ -341,14 +343,23 @@ def compute_coverage_metrics(
     entities_in_subgraph = len(subgraph.entities)
     relations_in_subgraph = len(subgraph.relations)
     
+    # Build entity name lookup from resolved_entities
+    entity_names_map = {}
+    if resolved_entities:
+        for entity in resolved_entities:
+            # Map entity_id to name
+            entity_names_map[entity.entity_id] = entity.name
+    
     # Extract entity names from subgraph for matching
-    # Note: This assumes entity IDs or entity names are available
-    # In production, you'd query Neo4j for entity names from IDs
     subgraph_entity_names = set()
     for entity_id in subgraph.entities:
-        # Extract name from entity_id (e.g., "entity_123" -> lookup name)
-        # For now, use simple lowercase matching
-        subgraph_entity_names.add(entity_id.lower())
+        if entity_id in entity_names_map:
+            # Use actual entity name
+            name = entity_names_map[entity_id]
+            subgraph_entity_names.add(name.lower())
+        else:
+            # Fallback: use ID (shouldn't happen with resolved_entities)
+            subgraph_entity_names.add(entity_id.lower())
     
     # Simple heuristic: check if entity names appear in answer
     # (Better approach: use LLM to extract entities from answer)

@@ -112,8 +112,8 @@ class ResultRanker:
                     method='graph',
                     base_score=debug_data['base_score'],
                     entity_coverage=debug_data['entity_coverage'],
-                    coverage_bonus=debug_data['coverage_bonus'],
-                    provenance_bonus=debug_data['provenance_bonus'],
+                    coverage_bonus=debug_data['graph_multiplier'],  # Store multiplier as bonus
+                    provenance_bonus=debug_data['standard_multiplier'],  # Store standard multiplier
                     final_score=score,
                     rank=0  # Will be updated after sorting
                 ))
@@ -144,8 +144,8 @@ class ResultRanker:
                     chunk_id=chunk.chunk_id,
                     method='semantic',
                     base_score=debug_data['base_score'],
-                    entity_coverage=None,  # Semantic doesn't use coverage
-                    coverage_bonus=0.0,
+                    entity_coverage=None,  # Semantic doesn't use entity coverage
+                    coverage_bonus=debug_data['standard_multiplier'],  # Store standard multiplier
                     provenance_bonus=0.0,
                     final_score=score,
                     rank=0
@@ -218,62 +218,54 @@ class ResultRanker:
         filters: QueryFilters
     ) -> tuple[float, str, str, Dict]:
         """
-        Score chunk from graph retrieval.
+        Score chunk from graph retrieval using MULTIPLICATIVE system.
+        
+        Formula: Final = BS × GB × SB
+        - BS (Base Score): entity_coverage = entities_in_chunk / total_entities
+        - GB (Graph Bonus): 1.0 if provenance, 0.85 if entity expansion
+        - SB (Standard Bonus): penalty multipliers for missing filters
         
         Returns:
             (final_score, retrieval_method, source_path, debug_data)
         """
-        # Base score from chunk (entity match score from retriever)
-        base_score = chunk.score
-        
-        # Entity coverage bonus
+        # BASE SCORE: Entity coverage (0-1)
         num_entities = len(chunk.metadata.get('entities', []))
         entity_coverage = num_entities / total_entities if total_entities > 0 else 0.0
-        coverage_bonus = entity_coverage * self.config['entity_coverage_bonus']
+        base_score = entity_coverage
         
-        # Provenance bonus (highest priority)
+        # GRAPH BONUS: Provenance vs entity expansion
         is_provenance = chunk.metadata.get('is_relation_provenance', False)
-        provenance_bonus = self.config['provenance_bonus'] if is_provenance else 0.0
-        
-        # Graph retrieval bonus (for non-provenance chunks)
-        graph_bonus = 0.0 if is_provenance else self.config['graph_bonus']
-        
-        # Jurisdiction boost (soft hint)
-        jurisdiction_boost = 0.0
-        if filters.jurisdiction_hints and chunk.jurisdiction in filters.jurisdiction_hints:
-            jurisdiction_boost = self.config['jurisdiction_boost']
-        
-        # Doc type boost
-        doc_type_boost = 0.0
-        if filters.doc_type_hints and chunk.doc_type in filters.doc_type_hints:
-            doc_type_boost = self.config['doc_type_boost']
-        
-        # Final score
-        final_score = (
-            base_score +
-            coverage_bonus +
-            provenance_bonus +
-            graph_bonus +
-            jurisdiction_boost +
-            doc_type_boost
-        )
-        
-        # Determine source path and retrieval method
         if is_provenance:
+            graph_multiplier = self.config['graph_provenance_multiplier']  # 1.0
             source_path = "graph_relation"
             retrieval_method = "graph_provenance"
         else:
+            graph_multiplier = self.config['graph_entity_multiplier']  # 0.85
             source_path = "graph_entity"
             retrieval_method = "graph_entity"
+        
+        # STANDARD BONUS: Penalty multipliers for missing filters
+        standard_multiplier = 1.0
+        
+        # Jurisdiction penalty (only if filter provided AND chunk doesn't match)
+        if filters.jurisdiction_hints and chunk.jurisdiction not in filters.jurisdiction_hints:
+            standard_multiplier *= self.config['jurisdiction_penalty']  # 0.9
+        
+        # Doc type penalty (only if filter provided AND chunk doesn't match)
+        if filters.doc_type_hints and chunk.doc_type not in filters.doc_type_hints:
+            standard_multiplier *= self.config['doc_type_penalty']  # 0.85
+        
+        # FINAL SCORE: BS × GB × SB (bounded to [0, 1])
+        final_score = base_score * graph_multiplier * standard_multiplier
         
         debug_data = {
             'base_score': base_score,
             'entity_coverage': entity_coverage,
-            'coverage_bonus': coverage_bonus,
-            'provenance_bonus': provenance_bonus,
-            'graph_bonus': graph_bonus,
-            'jurisdiction_boost': jurisdiction_boost,
-            'doc_type_boost': doc_type_boost,
+            'num_entities': num_entities,
+            'total_entities': total_entities,
+            'graph_multiplier': graph_multiplier,
+            'standard_multiplier': standard_multiplier,
+            'is_provenance': is_provenance,
         }
         
         return final_score, retrieval_method, source_path, debug_data
@@ -284,42 +276,38 @@ class ResultRanker:
         filters: QueryFilters
     ) -> tuple[float, str, str, Dict]:
         """
-        Score chunk from semantic retrieval.
+        Score chunk from semantic retrieval using MULTIPLICATIVE system.
+        
+        Formula: Final = BS × SB
+        - BS (Base Score): FAISS cosine similarity (0-1)
+        - SB (Standard Bonus): penalty multipliers for missing filters
         
         Returns:
             (final_score, retrieval_method, source_path, debug_data)
         """
-        # Base score is FAISS similarity
+        # BASE SCORE: FAISS similarity (already 0-1)
         base_score = chunk.score
         
-        # Semantic baseline (no bonus for being from semantic path)
-        semantic_baseline = self.config['semantic_baseline']
+        # STANDARD BONUS: Penalty multipliers for missing filters
+        standard_multiplier = 1.0
         
-        # Jurisdiction boost
-        jurisdiction_boost = 0.0
-        if filters.jurisdiction_hints and chunk.jurisdiction in filters.jurisdiction_hints:
-            jurisdiction_boost = self.config['jurisdiction_boost']
+        # Jurisdiction penalty (only if filter provided AND chunk doesn't match)
+        if filters.jurisdiction_hints and chunk.jurisdiction not in filters.jurisdiction_hints:
+            standard_multiplier *= self.config['jurisdiction_penalty']  # 0.9
         
-        # Doc type boost
-        doc_type_boost = 0.0
-        if filters.doc_type_hints and chunk.doc_type in filters.doc_type_hints:
-            doc_type_boost = self.config['doc_type_boost']
+        # Doc type penalty (only if filter provided AND chunk doesn't match)
+        if filters.doc_type_hints and chunk.doc_type not in filters.doc_type_hints:
+            standard_multiplier *= self.config['doc_type_penalty']  # 0.85
         
-        final_score = (
-            base_score +
-            semantic_baseline +
-            jurisdiction_boost +
-            doc_type_boost
-        )
+        # FINAL SCORE: BS × SB (bounded to [0, 1])
+        final_score = base_score * standard_multiplier
         
         source_path = "semantic"
         retrieval_method = "semantic"
         
         debug_data = {
             'base_score': base_score,
-            'semantic_baseline': semantic_baseline,
-            'jurisdiction_boost': jurisdiction_boost,
-            'doc_type_boost': doc_type_boost,
+            'standard_multiplier': standard_multiplier,
         }
         
         return final_score, retrieval_method, source_path, debug_data

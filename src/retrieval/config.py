@@ -219,15 +219,17 @@ RETRIEVAL_CONFIG = {
     'pcst_max_entities': 50,          # PCST expansion limit (hub node control)
 }
 
-# Ranking & Scoring (MERGED + FIXED with entity_coverage_bonus)
+# Ranking & Scoring (MULTIPLICATIVE SYSTEM - all scores bounded [0,1])
 RANKING_CONFIG = {
-    'provenance_bonus': 0.3,          # Chunks containing PCST relations (highest)
-    'graph_bonus': 0.2,               # Chunks from graph entity expansion (medium)
-    'semantic_baseline': 0.0,         # Semantic search chunks (baseline)
-    'jurisdiction_boost': 0.1,        # Bonus if chunk matches jurisdiction hint
-    'doc_type_boost': 0.15,           # Bonus if chunk matches doc_type hint
-    'entity_coverage_bonus': 0.2,     # FIXED: Bonus based on entity coverage
-    'final_top_k': 20,                # Final chunks for LLM context
+    # Graph bonus multipliers
+    'graph_provenance_multiplier': 1.0,   # Chunks with PCST relations (highest)
+    'graph_entity_multiplier': 0.85,      # Chunks from entity expansion
+    
+    # Standard bonus penalties (applied to all chunks)
+    'jurisdiction_penalty': 0.9,          # Multiply if NO jurisdiction match
+    'doc_type_penalty': 0.85,             # Multiply if NO doc_type match
+    
+    'final_top_k': 20,                    # Final chunks for LLM context
 }
 
 # Entity Resolution (from Phase 3.3.1)
