@@ -30,12 +30,12 @@ class RetrievalMode(Enum):
     """
     Retrieval strategy modes for ablation studies.
     
-    NAIVE: Path B only (semantic FAISS search)
-    GRAPHRAG: Path A only (entity-centric with PCST)
-    DUAL: Both paths merged (default)
+    SEMANTIC: Semantic retrieval only (vector similarity via FAISS)
+    GRAPH: Graph retrieval only (entity-centric with PCST)
+    DUAL: Both channels merged (default)
     """
-    NAIVE = "naive"
-    GRAPHRAG = "graphrag"
+    SEMANTIC = "semantic"
+    GRAPH = "graph"
     DUAL = "dual"
 
 
@@ -184,7 +184,7 @@ class RetrievalResult:
     Contains both chunks and subgraph for prompt assembly.
     Subgraph relations will be formatted as GRAPH STRUCTURE section.
     
-    MODIFIED: Added extracted_entities and resolved_entities for evaluation/testing.
+    MODIFIED: Added extracted_entities, resolved_entities, and query_embedding for evaluation/testing.
     Not used in production prompt assembly, but critical for ablation studies.
     """
     query: str
@@ -194,6 +194,7 @@ class RetrievalResult:
     # Evaluation metadata (added for Phase 3 testing)
     extracted_entities: List[ExtractedEntity] = field(default_factory=list)  # Raw LLM extraction
     resolved_entities: List[ResolvedEntity] = field(default_factory=list)    # After FAISS disambiguation
+    query_embedding: Optional[np.ndarray] = None  # For query similarity computation
 
 
 # ============================================================================

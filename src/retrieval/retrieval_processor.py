@@ -215,6 +215,7 @@ class RetrievalProcessor:
         # This enables ablation studies to track entity resolution quality
         result.extracted_entities = understanding.parsed_query.extracted_entities
         result.resolved_entities = understanding.resolved_entities
+        result.query_embedding = understanding.parsed_query.query_embedding
         
         return result
     

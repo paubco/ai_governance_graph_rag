@@ -5,7 +5,7 @@ Script: test_retrieval_ablation_v1.py
 Purpose: Unified ablation study with comprehensive evaluation metrics
 
 Single test suite that:
-1. Compares naive, graphrag, and dual retrieval modes
+1. Compares semantic, graph, and dual retrieval modes
 2. Evaluates with RAGAS metrics (faithfulness + relevancy)
 3. Tracks comprehensive metrics aligned with thesis objectives
 4. Generates detailed analysis reports
@@ -13,9 +13,15 @@ Single test suite that:
 v1.0 Features:
 - Complete entity resolution tracking
 - Graph utilization metrics
+- Coverage metrics (answer utilization of retrieved info)
 - Retrieval effectiveness measurement
 - RAGAS answer quality evaluation
 - Performance/cost tracking
+
+UPDATED: 2025-12-15
+- Fixed source_path labeling bug
+- Renamed naive → semantic, graphrag → graph
+- Added coverage metrics
 
 Usage:
     python tests/retrieval/test_retrieval_ablation_v1.py              # Full suite (18 tests)
@@ -24,6 +30,7 @@ Usage:
 
 Author: Pau Barba i Colomer
 Created: 2025-12-14
+Modified: 2025-12-15
 """
 
 import sys
@@ -43,7 +50,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from src.retrieval.config import RetrievalMode
+from src.retrieval.config import RetrievalMode  # Note: This needs updating in config.py
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 
@@ -55,9 +62,11 @@ from test_metrics import (
     RetrievalMetrics,
     RAGASMetrics,
     PerformanceMetrics,
+    CoverageMetrics,
     compute_entity_resolution_metrics,
     compute_graph_utilization_metrics,
-    compute_retrieval_metrics
+    compute_retrieval_metrics,
+    compute_coverage_metrics
 )
 
 logger = get_logger(__name__)
@@ -324,10 +333,15 @@ class AblationTestSuite:
                   f"{graph_metrics.relations_in_subgraph} relations")
             
             # Compute retrieval metrics
-            retrieval_metrics = compute_retrieval_metrics(retrieval_result.chunks)
+            retrieval_metrics = compute_retrieval_metrics(
+                retrieval_result.chunks,
+                retrieval_result.query_embedding,
+                self.processor.chunk_retriever
+            )
             
             print(f"   Retrieved: {retrieval_metrics.total_chunks} chunks")
             print(f"   Sources: {retrieval_metrics.chunks_by_source}")
+            print(f"   Avg query similarity: {retrieval_metrics.avg_query_similarity:.3f}")
             
             # ====================
             # 2. ANSWER GENERATION
@@ -342,6 +356,15 @@ class AblationTestSuite:
             print(f"   Tokens: {answer_result.output_tokens}")
             print(f"   Cost: ${answer_result.cost_usd:.4f}")
             print(f"   Answer preview: {answer_result.answer[:150]}...")
+            
+            # Compute coverage metrics (how well answer used retrieved info)
+            coverage_metrics = compute_coverage_metrics(
+                retrieval_result.subgraph,
+                answer_result.answer
+            )
+            
+            print(f"   Coverage: {coverage_metrics.entity_coverage_rate:.1%} entities, "
+                  f"{coverage_metrics.relation_coverage_rate:.1%} relations used")
             
             # ====================
             # 3. RAGAS EVALUATION
@@ -418,6 +441,7 @@ class AblationTestSuite:
                 # Comprehensive metrics
                 entity_resolution=entity_metrics,
                 graph_utilization=graph_metrics,
+                coverage=coverage_metrics,
                 retrieval=retrieval_metrics,
                 ragas=ragas_metrics,
                 performance=performance_metrics,
@@ -445,6 +469,7 @@ class AblationTestSuite:
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
+                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
                 retrieval=RetrievalMetrics(0, {}, 0.0, {}, []),
                 ragas=RAGASMetrics(0.0, {}, 0.0, ""),
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
@@ -495,7 +520,7 @@ class AblationTestSuite:
         print("1. ENTITY RESOLUTION QUALITY")
         print("-" * 60)
         
-        for mode in ['naive', 'graphrag', 'dual']:
+        for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
                 avg_extracted = sum(r.entity_resolution.extracted_count for r in mode_results) / len(mode_results)
@@ -512,7 +537,7 @@ class AblationTestSuite:
         print(f"\n2. GRAPH UTILIZATION")
         print("-" * 60)
         
-        for mode in ['naive', 'graphrag', 'dual']:
+        for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
                 avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
@@ -526,7 +551,7 @@ class AblationTestSuite:
         print(f"\n3. RETRIEVAL EFFECTIVENESS")
         print("-" * 60)
         
-        for mode in ['naive', 'graphrag', 'dual']:
+        for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
                 avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
@@ -549,7 +574,7 @@ class AblationTestSuite:
             print(f"\n4. RAGAS ANSWER QUALITY")
             print("-" * 60)
             
-            for mode in ['naive', 'graphrag', 'dual']:
+            for mode in ['semantic', 'graph', 'dual']:
                 mode_results = [r for r in successful_tests if r.mode == mode]
                 if mode_results:
                     avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
@@ -577,7 +602,7 @@ class AblationTestSuite:
         print(f"\n5. COST & EFFICIENCY")
         print("-" * 60)
         
-        for mode in ['naive', 'graphrag', 'dual']:
+        for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
                 avg_cost = sum(r.performance.cost_usd for r in mode_results) / len(mode_results)
@@ -645,10 +670,22 @@ class AblationTestSuite:
                     'jurisdictions_covered': r.graph_utilization.jurisdictions_covered
                 },
                 
+                'coverage': {
+                    'entities_in_subgraph': r.coverage.entities_in_subgraph,
+                    'entities_in_answer': r.coverage.entities_in_answer,
+                    'entity_coverage_rate': r.coverage.entity_coverage_rate,
+                    'relations_in_subgraph': r.coverage.relations_in_subgraph,
+                    'relations_mentioned': r.coverage.relations_mentioned,
+                    'relation_coverage_rate': r.coverage.relation_coverage_rate,
+                    'covered_entities': r.coverage.covered_entities,
+                    'uncovered_entities': r.coverage.uncovered_entities
+                },
+                
                 'retrieval': {
                     'total_chunks': r.retrieval.total_chunks,
                     'chunks_by_source': r.retrieval.chunks_by_source,
                     'avg_chunk_score': r.retrieval.avg_chunk_score,
+                    'avg_query_similarity': r.retrieval.avg_query_similarity,
                     'source_diversity': r.retrieval.source_diversity,
                     'jurisdiction_diversity': r.retrieval.jurisdiction_diversity
                 },
@@ -696,7 +733,7 @@ class AblationTestSuite:
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
 **Total Tests:** {len(self.results)}  
 **Successful:** {len(successful_tests)}  
-**Modes Compared:** naive, graphrag, dual  
+**Modes Compared:** semantic, graph, dual  
 
 ---
 
@@ -704,8 +741,8 @@ class AblationTestSuite:
 
 This ablation study compares three retrieval strategies across {len(set(r.query for r in self.results))} test queries:
 
-- **NAIVE:** Vector similarity search only (baseline RAG)
-- **GRAPHRAG:** Entity-centric graph traversal only
+- **SEMANTIC:** Vector similarity search only (baseline RAG)
+- **GRAPH:** Entity-centric graph traversal only
 - **DUAL:** Hybrid approach combining both strategies
 
 ### Evaluation Metrics
@@ -725,7 +762,7 @@ This ablation study compares three retrieval strategies across {len(set(r.query 
         
         # Add summary statistics by mode
         by_mode = {}
-        for mode in ['naive', 'graphrag', 'dual']:
+        for mode in ['semantic', 'graph', 'dual']:
             by_mode[mode] = [r for r in successful_tests if r.mode == mode]
         
         for mode, mode_results in by_mode.items():
@@ -843,8 +880,8 @@ Metrics Tracked:
                        help='Number of queries to test (default: all 6)')
     parser.add_argument('--no-ragas', action='store_true',
                        help='Skip RAGAS evaluation (faster but less informative)')
-    parser.add_argument('-o', '--output', type=str, default='evaluation_v1.0',
-                       help='Output directory (default: evaluation_v1.0)')
+    parser.add_argument('-o', '--output', type=str, default='tests/reports',
+                       help='Output directory (default: tests/reports)')
     
     args = parser.parse_args()
     
@@ -858,7 +895,7 @@ Metrics Tracked:
             queries = TEST_QUERIES
         
         # Modes to compare
-        modes = [RetrievalMode.NAIVE, RetrievalMode.GRAPHRAG, RetrievalMode.DUAL]
+        modes = [RetrievalMode.SEMANTIC, RetrievalMode.GRAPH, RetrievalMode.DUAL]
         
         # Initialize test suite
         suite = AblationTestSuite(enable_ragas=not args.no_ragas)

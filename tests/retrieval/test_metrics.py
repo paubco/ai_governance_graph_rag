@@ -99,10 +99,12 @@ class RetrievalMetrics:
     - How many chunks retrieved per path?
     - What's the source diversity?
     - Which path contributed more?
+    - How relevant are chunks to the query (pure semantic similarity)?
     """
     total_chunks: int
-    chunks_by_source: Dict[str, int]      # {"graphrag_relation": 5, "graphrag_entity": 3, "naive": 7}
+    chunks_by_source: Dict[str, int]      # {"graph_relation": 5, "graph_entity": 3, "semantic": 7}
     avg_chunk_score: float                # Mean ranking score
+    avg_query_similarity: float           # Mean cosine sim(chunk_emb, query_emb) - pure relevance
     source_diversity: Dict[str, int]      # {"regulation": 8, "paper": 7}
     jurisdiction_diversity: List[str]     # Jurisdictions represented in chunks
 
@@ -251,12 +253,18 @@ def compute_graph_utilization_metrics(subgraph) -> GraphUtilizationMetrics:
     )
 
 
-def compute_retrieval_metrics(chunks: List) -> RetrievalMetrics:
+def compute_retrieval_metrics(
+    chunks: List,
+    query_embedding: np.ndarray,
+    chunk_retriever
+) -> RetrievalMetrics:
     """
     Compute retrieval metrics from ranked chunks.
     
     Args:
         chunks: List[RankedChunk]
+        query_embedding: Query embedding for similarity computation
+        chunk_retriever: ChunkRetriever instance (for FAISS index access)
         
     Returns:
         RetrievalMetrics
@@ -271,6 +279,24 @@ def compute_retrieval_metrics(chunks: List) -> RetrievalMetrics:
     
     # Average score
     avg_chunk_score = sum(c.score for c in chunks) / total_chunks if total_chunks > 0 else 0.0
+    
+    # Compute average query similarity (pure semantic relevance)
+    avg_query_similarity = 0.0
+    if total_chunks > 0:
+        similarities = []
+        for chunk in chunks:
+            # Look up FAISS position for this chunk
+            if chunk.chunk_id in chunk_retriever.chunk_id_map:
+                faiss_idx = chunk_retriever.chunk_id_map[chunk.chunk_id]
+                # Get embedding from FAISS index
+                chunk_emb = chunk_retriever.faiss_index.reconstruct(int(faiss_idx))
+                # Compute cosine similarity with query
+                similarity = np.dot(query_embedding, chunk_emb) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)
+                )
+                similarities.append(float(similarity))
+        
+        avg_query_similarity = sum(similarities) / len(similarities) if similarities else 0.0
     
     # Source diversity (doc_type)
     source_diversity = {}
@@ -288,6 +314,7 @@ def compute_retrieval_metrics(chunks: List) -> RetrievalMetrics:
         total_chunks=total_chunks,
         chunks_by_source=chunks_by_source,
         avg_chunk_score=avg_chunk_score,
+        avg_query_similarity=avg_query_similarity,
         source_diversity=source_diversity,
         jurisdiction_diversity=list(jurisdictions)
     )

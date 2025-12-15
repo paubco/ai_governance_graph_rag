@@ -31,7 +31,7 @@ import pytest
 # Local
 from src.retrieval.config import (
     RetrievalResult,
-    GraphSubgraph,
+    Subgraph,
     Relation,
     RankedChunk
 )
@@ -53,7 +53,7 @@ def sample_retrieval_result():
     """Create sample retrieval result for testing."""
     
     # Subgraph with relations
-    subgraph = GraphSubgraph(
+    subgraph = Subgraph(
         entities=[
             'ent_001',
             'ent_002',
@@ -282,7 +282,7 @@ def test_empty_subgraph(mock_api_key):
     """Test handling of empty subgraph."""
     generator = AnswerGenerator(api_key=mock_api_key)
     
-    empty_subgraph = GraphSubgraph(entities=[], relations=[])
+    empty_subgraph = Subgraph(entities=[], relations=[])
     
     graph_str = generator._format_graph_structure(empty_subgraph, max_tokens=500)
     assert "No relations" in graph_str
