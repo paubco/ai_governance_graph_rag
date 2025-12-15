@@ -1,18 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Module: test_answer_generator.py
-Package: tests.retrieval
-Purpose: Unit tests for answer generation from retrieval results
+Unit tests for answer generation from retrieval results.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-09
-Modified: 2025-12-12
+Tests prompt formatting with token budgeting, mock API calls, cost estimation,
+and error handling for the answer generator component.
 
-Tests:
-- Prompt formatting with token budgeting
-- Mock API calls
-- Cost estimation
-- Error handling
+Example:
+    pytest tests/retrieval/test_answer_generator.py -v
 """
 
 # Standard library

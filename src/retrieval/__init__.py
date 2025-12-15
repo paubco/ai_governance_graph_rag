@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-src.retrieval package
-Phase 3 Retrieval Pipeline
+AI Governance GraphRAG Pipeline - Retrieval package.
+
+Phase 3 retrieval pipeline for query understanding, graph expansion, and context
+retrieval with dual-channel architecture.
 """
 
 from .config import (

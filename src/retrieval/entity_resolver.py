@@ -1,25 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Module: entity_resolver.py
-Package: src.retrieval
-Purpose: Resolve entity mentions to canonical entity IDs (Phase 3.3.1)
+Entity resolver for AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-07
+Resolves entity mentions from queries to canonical entity IDs in the knowledge
+graph. Uses two-stage matching: exact string match for O(1) lookup, followed by
+FAISS semantic similarity for fuzzy matching with configurable threshold.
 
-References:
-    - PHASE_3_DESIGN.md § 4.3 (Entity resolution approach)
-    - RAKG methodology for entity matching
+Strategy:
+    1. Exact match: Direct lookup in entity name dictionary
+    2. Fuzzy match: FAISS similarity search with threshold filtering
+    3. Type checking: Ensure resolved entities match expected types
+
+Example:
+    resolver = EntityResolver(
+        faiss_index_path=Path("data/faiss/entities.index"),
+        entity_ids_path=Path("data/faiss/entity_ids.json"),
+        normalized_entities_path=Path("data/processed/entities.json"),
+        embedding_model=embedder
+    )
+    resolved = resolver.resolve_entities(extracted_entities)
 """
 
+# Standard library
 import json
 from pathlib import Path
 from typing import List, Dict, Optional
 
+# Third-party
 import faiss
 import numpy as np
 
+# Local
 from .config import (
     ResolvedEntity,
     ExtractedEntity,

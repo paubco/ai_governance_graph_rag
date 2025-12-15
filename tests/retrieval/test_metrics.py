@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Module: test_metrics.py
-Package: tests.retrieval
-Purpose: Comprehensive evaluation metrics for retrieval ablation study
+Comprehensive evaluation metrics for retrieval ablation study.
 
-Aligned with thesis objectives:
-1. Factual Accuracy → EntityResolutionMetrics, RAGASMetrics
-2. Query Relevance → RAGASMetrics, RetrievalMetrics  
-3. Effective Use of Sources → GraphUtilizationMetrics, RetrievalMetrics
+Provides metrics aligned with thesis objectives for factual accuracy, query relevance,
+and effective use of sources. Includes entity resolution, graph utilization, and
+RAGAS metrics for comprehensive retrieval system evaluation.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-14
+Example:
+    metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
 """
 
+# Standard library
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+
+# Third-party
 import numpy as np
 
 

@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Module: jurisdiction_matcher.py
-Package: src.enrichment
-Purpose: Link country/region entities to jurisdiction codes
+Link country/region entities to jurisdiction codes.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-05
-Modified: 2025-12-05
-
-Links entities like "European Union" → Jurisdiction(EU) via SAME_AS relation.
-Only for country/region entities that ARE the jurisdiction (not organizations).
+Maps country and region entities to jurisdiction codes via SAME_AS relationships.
+Only links entities that represent the jurisdiction itself (not organizations like
+CNIL or FTC).
 
 Example:
-    Entity("Spain") --[SAME_AS]--> Jurisdiction(ES)
-    Entity("European Union") --[SAME_AS]--> Jurisdiction(EU)
+    matcher = JurisdictionMatcher(valid_codes)
+    matches = matcher.match_entities(entities)
+    # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
 """
 
+# Standard library
 from typing import List, Dict, Set
 
 

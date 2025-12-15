@@ -1,34 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Module: chunk_retriever.py
-Package: src.retrieval
-Purpose: Dual-channel chunk retrieval (Graph + Semantic)
+Dual-channel chunk retrieval for AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-15
+Implements combined graph-based and semantic retrieval for context gathering.
+Graph retrieval performs corpus retrospective on PCST-expanded entities with
+relation provenance tracking. Semantic retrieval uses FAISS for direct vector
+similarity search as baseline comparison.
 
-References:
-    - RAKG (Zhang et al., 2025) - Corpus retrospective retrieval
-    - RAGulating (Agarwal et al., 2025) - Provenance tracking
-    - PHASE_3_DESIGN.md § 5.2 (Dual-channel architecture)
+Retrieval channels:
+    - Graph: Entity expansion → corpus retrospective (EXTRACTED_FROM edges)
+            + relation provenance chunks (contains PCST relations)
+    - Semantic: FAISS similarity search on chunk embeddings
 
-Retrieval Channels:
-    Graph Retrieval: Entity expansion → Corpus retrospective
-        - Get all chunks mentioning PCST entities (EXTRACTED_FROM)
-        - PLUS chunks containing PCST relations (provenance)
-    
-    Semantic Retrieval: Direct vector similarity search
-        - FAISS similarity search on chunk embeddings
-        - Baseline for comparison
+Example:
+    retriever = ChunkRetriever(
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_user="neo4j",
+        neo4j_password="password",
+        chunk_index_path="data/faiss/chunks.index",
+        chunk_id_map_path="data/faiss/chunk_id_map.json"
+    )
+    graph_chunks, semantic_chunks = retriever.retrieve_dual(subgraph, query_emb)
 """
 
-import numpy as np
+# Standard library
 from typing import List
-from neo4j import GraphDatabase
-import faiss
 import json
 
+# Third-party
+import numpy as np
+from neo4j import GraphDatabase
+import faiss
+
+# Local
 from .config import (
     Subgraph,
     Chunk,

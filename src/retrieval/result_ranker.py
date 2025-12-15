@@ -1,24 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Module: result_ranker.py
-Package: src.retrieval
-Purpose: Merge, deduplicate, and rank chunks from dual channels
+Result ranker for AI governance GraphRAG pipeline.
 
-CRITICAL BUG FIX: Now properly sets source_path when creating RankedChunk objects
-MODIFIED: Updated to graph/semantic nomenclature (removed Path A/B naming)
+Merges, deduplicates, and ranks chunks from dual retrieval channels (graph and
+semantic). Implements multiplicative scoring with entity coverage, provenance
+tracking, and metadata-based penalties. Returns top-K ranked chunks for answer
+generation.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-08
-Modified: 2025-12-15 (bug fix + nomenclature update)
+Scoring strategy:
+    - Graph chunks: Base score (entity coverage) × graph bonus × filter penalties
+    - Semantic chunks: FAISS similarity × filter penalties
+    - Deduplication: Keep highest score per chunk
+    - Final ranking: Sort by score, return top-K
 
-References:
-    - PHASE_3_DESIGN.md § 5.3 (Ranking strategy)
-    - RAGulating (Agarwal et al., 2025) - Provenance bonus concept
+Example:
+    ranker = ResultRanker()
+    result = ranker.rank(
+        graph_chunks=graph_chunks,
+        semantic_chunks=semantic_chunks,
+        subgraph=subgraph,
+        filters=filters,
+        query="What are transparency requirements?"
+    )
 """
 
+# Standard library
 from typing import List, Set, Dict, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
+# Local
 from .config import (
     Chunk,
     RankedChunk,

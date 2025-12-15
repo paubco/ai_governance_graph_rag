@@ -1,32 +1,40 @@
 # -*- coding: utf-8 -*-
 """
-Module: graph_expander.py
-Package: src.retrieval
-Purpose: Graph expansion via Prize-Collecting Steiner Tree (PCST) optimization
+Graph expander for AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-07
-
-References:
-    - He et al. (2024) "G-Retriever" - PCST for GraphRAG (NeurIPS 2024)
-    - Neo4j GDS documentation: Prize-Collecting Steiner Tree
-    - PHASE_3.3.2_OPEN_QUESTIONS.md (Design rationale)
+Expands from query entities using Prize-Collecting Steiner Tree (PCST)
+optimization to find minimal connecting subgraph. Implements two-stage expansion
+to prevent hub node explosion: FAISS k-NN for candidate selection, followed by
+PCST for optimal subgraph extraction.
 
 Algorithm:
-    Two-stage expansion to avoid hub node explosion:
-    1. FAISS k-NN: Get top-K similar entities per query entity (broad net)
-    2. PCST: Find minimal connecting subgraph among candidates (focused)
+    1. Stage 1: FAISS k-NN similarity search to get top-K entity candidates
+    2. Stage 2: PCST optimization to find minimal connecting subgraph
+    3. Result: Focused subgraph avoiding hub nodes via prize-cost balance
 
-Key insight: PCST automatically avoids hub nodes by optimizing
-prize-cost balance, finding shortest meaningful paths between query entities.
+PCST automatically discovers bridging concepts while avoiding highly-connected
+nodes that would explode the subgraph size.
+
+Example:
+    expander = GraphExpander(
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_user="neo4j",
+        neo4j_password="password",
+        entity_index_path="data/faiss/entities.index",
+        entity_id_map_path="data/faiss/entity_ids.json"
+    )
+    subgraph = expander.expand(resolved_entities)
 """
 
-import numpy as np
+# Standard library
 from typing import List, Dict, Set
+
+# Third-party
+import numpy as np
 from neo4j import GraphDatabase
 import faiss
 
+# Local
 from .config import (
     ResolvedEntity,
     Subgraph,

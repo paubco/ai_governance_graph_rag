@@ -4,7 +4,11 @@
       "Bash(python -c:*)",
       "Bash(python -m py_compile:*)",
       "Bash(tree:*)",
-      "Bash(du:*)"
+      "Bash(du:*)",
+      "Bash(cat:*)",
+      "Bash(for dir in src/*/)",
+      "Bash(done)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

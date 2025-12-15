@@ -1,18 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Module: enrichment_processor.py
-Package: src.enrichment
-Purpose: Pipeline orchestrator for Phase 2A Scopus enrichment
+Pipeline orchestrator for Phase 2A Scopus enrichment.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-05
-Modified: 2025-12-05
+Coordinates L1 metadata extraction, citation matching, jurisdiction linking, and
+relation generation for the AI governance GraphRAG pipeline. Outputs JSON files
+for Phase 2B Neo4j construction.
 
-References:
-    - See docs/PHASE_2A_DESIGN.md for full specification
-    - See docs/ARCHITECTURE.md §§ 4-5 for graph schema
-
-Usage:
+Example:
     python src/enrichment/enrichment_processor.py
 """
 

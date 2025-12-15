@@ -1,35 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Module: retrieval_processor.py
-Package: src.retrieval
-Purpose: Orchestrate full Phase 3 retrieval pipeline (3.3.1 + 3.3.2)
+Retrieval processor for AI governance GraphRAG pipeline.
 
-MODIFIED: Updated to graph/semantic nomenclature (removed Path A/B naming)
+Orchestrates full retrieval pipeline combining query understanding and context
+retrieval. Coordinates parsing, entity resolution, graph expansion, dual-channel
+retrieval, and ranking into unified workflow.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-15 (nomenclature update + bug fix)
+Pipeline stages:
+    1. Query Understanding:
+        - Parse query with LLM entity extraction
+        - Resolve entities to canonical IDs via FAISS
 
-References:
-    - PHASE_3_DESIGN.md § 4-5 (Query Understanding + Context Retrieval)
-    - ARCHITECTURE.md § 3.3 (Phase 3 pipeline overview)
-    - PHASE_3.3.2_IMPLEMENTATION.md (PCST-based expansion)
+    2. Context Retrieval:
+        - Expand from entities using PCST optimization
+        - Retrieve chunks via graph and semantic channels
+        - Rank and merge results with provenance tracking
 
-Pipeline:
-    1. Query Understanding (3.3.1)
-        - Parse query (LLM entity extraction + filters)
-        - Resolve entities (FAISS matching)
-    
-    2. Context Retrieval (3.3.2)
-        - Graph expansion (PCST optimization)
-        - Dual-channel retrieval (Graph + Semantic)
-        - Ranking (provenance bonus)
+Example:
+    processor = RetrievalProcessor(
+        query_parser=parser,
+        entity_resolver=resolver,
+        graph_expander=expander,
+        chunk_retriever=retriever,
+        result_ranker=ranker
+    )
+    result = processor.retrieve(query="What are GDPR transparency rules?")
 """
 
+# Standard library
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+# Local
 from .config import ParsedQuery, ResolvedEntity, RetrievalResult
 from .query_parser import QueryParser
 from .entity_resolver import EntityResolver

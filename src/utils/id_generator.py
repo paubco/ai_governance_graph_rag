@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Module: id_generator.py
-Package: src.utils
-Purpose: Consistent ID generation using deterministic hashing
+Consistent ID generation using deterministic hashing.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-05
-Modified: 2025-12-05
+Generates reproducible IDs for entities, publications, authors, and journals using
+MD5/SHA-256 hashing. Ensures same entity names generate consistent IDs across pipeline
+stages for reliable entity linking and deduplication.
 
-References:
-    - Used across entity disambiguation, alias discovery, and enrichment
-    - See docs/ARCHITECTURE.md for ID schemes
+Example:
+    entity_id = generate_entity_id("EU AI Act")
+    # Returns: "ent_a3f4e9c2d5b1"
 """
 
+# Standard library
 import hashlib
 from typing import Optional
 

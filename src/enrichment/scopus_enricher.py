@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Module: scopus_enricher.py
-Package: src.enrichment
-Purpose: Core classes for Scopus metadata enrichment and citation matching
+Core classes for Scopus metadata enrichment and citation matching.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-05
-Modified: 2025-12-05
+Provides parsers for Scopus CSV data and reference fields, identifies citation
+entities using discusses relations, and matches entities to publications using
+fuzzy matching with provenance constraints.
 
-References:
-    - See docs/PHASE_2A_DESIGN.md for full specification
-    - See docs/ARCHITECTURE.md § 4 for graph schema
+Example:
+    parser = ScopusParser('data/scopus.csv')
+    l1_pubs, authors, journals = parser.parse_publications()
 """
 
 # Standard library

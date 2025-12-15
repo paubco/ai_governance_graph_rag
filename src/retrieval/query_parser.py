@@ -1,26 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Module: query_parser.py
-Package: src.retrieval
-Purpose: Parse user queries with LLM entity extraction (Phase 3)
+Query parser for AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-07
-Modified: 2025-12-07
+Parses user queries into structured format with LLM-based entity extraction,
+rule-based metadata filter extraction, and query embedding. Uses Mistral-7B
+for entity extraction with enforced type constraints, and BGE-M3 for semantic
+query embedding.
 
-References:
-    - PHASE_3_DESIGN.md § 5.1 (LLM entity extraction)
-    - Consistent with Phase 1D methodology (Mistral-7B)
+Components:
+    - LLM entity extraction: Identify mentions of concepts, laws, organizations
+    - Filter extraction: Parse jurisdictions and document types
+    - Query embedding: Generate vector representation for semantic search
+
+Example:
+    parser = QueryParser(embedding_model=embedder, api_key="...")
+    parsed = parser.parse_query("What are GDPR transparency requirements?")
+    # Returns: ParsedQuery with entities, filters, and embedding
 """
 
+# Standard library
 import json
 import os
 from typing import List
 
+# Third-party
 import numpy as np
 from together import Together
 from dotenv import load_dotenv
 
+# Local
 from .config import (
     ParsedQuery,
     QueryFilters,
@@ -31,7 +39,7 @@ from .config import (
 )
 from src.prompts.prompts import QUERY_ENTITY_EXTRACTION_PROMPT
 
-# Load environment variables from .env
+# Load environment
 load_dotenv()
 
 

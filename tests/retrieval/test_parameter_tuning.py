@@ -1,26 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Parameter Tuning Tests for Phase 3 Retrieval Pipeline
+Parameter Tuning Tests for Phase 3 Retrieval Pipeline.
 
-Tests different parameter combinations to evaluate sensitivity:
-1. Entity resolution top_k (how many fuzzy matches per entity)
-2. Ranking bonuses (provenance, jurisdiction, doc_type weights)
-3. FAISS top-k (semantic search breadth)
+Tests different parameter combinations to evaluate sensitivity for entity resolution,
+ranking bonuses, and FAISS top-k settings with comparative analysis output.
 
-Usage:
+Example:
     pytest test_parameter_tuning.py -v -s
-    
-Output:
-    Comparison table showing how parameters affect:
-    - Number of entities resolved
-    - Subgraph size (PCST expansion)
-    - Final chunk count
-    - Score distribution
+    # Output: Comparison table showing parameter effects on entities, subgraphs, chunks
 """
 
-import pytest
-import numpy as np
+# Standard library
 from pathlib import Path
+
+# Third-party
+import numpy as np
+import pytest
+
+# Local
 
 from src.retrieval.entity_resolver import EntityResolver
 from src.retrieval.result_ranker import ResultRanker

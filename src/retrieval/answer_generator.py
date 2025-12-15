@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Module: answer_generator.py
-Package: src.retrieval
-Purpose: Generate answers from retrieval results using Claude API
+Answer generator for AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-09
-Modified: 2025-12-12
+Generates answers from retrieval results using Claude API with structured prompts,
+token budgeting, and citation extraction. Formats retrieved chunks into context
+and calls Claude with system/user prompts for answer synthesis.
 
-Phase 3.3.4: Answer Generation
-- Formats retrieval results into structured prompts
-- Calls Claude API with token budgeting
-- Extracts citations and provides formatted answers
+Components:
+    - Context formatting: Structures chunks with provenance metadata
+    - Token budgeting: Ensures context fits within model limits
+    - API interaction: Calls Claude API with retry handling
+    - Citation extraction: Parses chunk references from generated answers
 
-References:
-    - Anthropic Claude API docs
-    - PHASE_3_DESIGN.md § 3.3.4
+Example:
+    generator = AnswerGenerator(api_key="...")
+    answer = generator.generate(retrieval_result)
+    print(answer.answer)  # LLM-generated response with citations
 """
 
 # Standard library
@@ -45,6 +45,7 @@ from src.prompts.prompts import (
 )
 from src.utils.logger import get_logger
 
+# Setup logging
 logger = get_logger(__name__)
 
 

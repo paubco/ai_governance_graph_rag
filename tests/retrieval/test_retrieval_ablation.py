@@ -1,52 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script: test_retrieval_ablation_v1.py
-Purpose: Unified ablation study with comprehensive evaluation metrics
+Unified ablation study with comprehensive evaluation metrics.
 
-Single test suite that:
-1. Compares semantic, graph, and dual retrieval modes
-2. Evaluates with RAGAS metrics (faithfulness + relevancy)
-3. Tracks comprehensive metrics aligned with thesis objectives
-4. Generates detailed analysis reports
+Compares semantic, graph, and dual retrieval modes with RAGAS metrics (faithfulness
+and relevancy), entity resolution tracking, graph utilization, and coverage metrics
+for comprehensive analysis with detailed report generation.
 
-v1.0 Features:
-- Complete entity resolution tracking
-- Graph utilization metrics
-- Coverage metrics (answer utilization of retrieved info)
-- Retrieval effectiveness measurement
-- RAGAS answer quality evaluation
-- Performance/cost tracking
+Example:
+    # Full suite (18 tests)
+    python tests/retrieval/test_retrieval_ablation.py
 
-UPDATED: 2025-12-15
-- Fixed source_path labeling bug
-- Renamed naive → semantic, graphrag → graph
-- Added coverage metrics
+    # Quick test (2 queries)
+    python tests/retrieval/test_retrieval_ablation.py --quick
 
-Usage:
-    python tests/retrieval/test_retrieval_ablation_v1.py              # Full suite (18 tests)
-    python tests/retrieval/test_retrieval_ablation_v1.py --quick      # Quick test (2 queries)
-    python tests/retrieval/test_retrieval_ablation_v1.py --no-ragas   # Skip RAGAS (faster)
-
-Author: Pau Barba i Colomer
-Created: 2025-12-14
-Modified: 2025-12-15
+    # Skip RAGAS (faster)
+    python tests/retrieval/test_retrieval_ablation.py --no-ragas
 """
 
-import sys
-import os
-from pathlib import Path
+# Standard library
 import argparse
 import json
-import anthropic
+import os
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
-# Project root (script in tests/retrieval/)
+# Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
+import anthropic
+
+# Local
 
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator

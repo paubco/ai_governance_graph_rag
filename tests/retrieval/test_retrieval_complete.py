@@ -1,37 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-test_retrieval_complete.py - Complete Phase 3 Retrieval Test Suite
+Complete Phase 3 Retrieval Test Suite.
 
-Tests Phase 3.3.1 (Query Understanding) + Phase 3.3.2 (Context Retrieval)
-with BOTH mock tests and real integration tests.
+Tests Phase 3.3.1 (Query Understanding) and Phase 3.3.2 (Context Retrieval)
+with both mock tests and real integration tests for comprehensive validation.
 
-Run quick tests only:
+Example:
+    # Run quick tests only
     pytest tests/retrieval/test_retrieval_complete.py -v -m "not integration"
 
-Run all tests (including slow integration):
+    # Run all tests (including slow integration)
     pytest tests/retrieval/test_retrieval_complete.py -v
 
-Run only integration tests:
+    # Run only integration tests
     pytest tests/retrieval/test_retrieval_complete.py -v -m integration
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
+# Standard library
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock, MagicMock, patch
+
+# Project root
+project_root = Path(__file__).resolve().parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Third-party
 import numpy as np
-import sys
-import os
+import pytest
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+# Local
 
 from src.retrieval.config import (
     ExtractedEntity,
