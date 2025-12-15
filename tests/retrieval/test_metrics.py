@@ -15,6 +15,7 @@ Created: 2025-12-14
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+import numpy as np
 
 
 # ============================================================================
