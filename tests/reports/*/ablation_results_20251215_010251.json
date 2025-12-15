@@ -1,0 +1,1673 @@
+[
+  {
+    "test_id": "q1_semantic",
+    "query": "What is the EU AI Act?",
+    "mode": "semantic",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:54:52.590294",
+    "success": true,
+    "error": null,
+    "answer_text": "The EU AI Act is a comprehensive regulatory framework designed to govern artificial intelligence systems in the European Union, focusing on protecting fundamental rights and ensuring responsible AI development.\n\nKey Characteristics:\n1. Fundamental Rights Protection\n- Aims to safeguard EU citizens' fundamental rights [5]\n- Addresses potential risks like bias and privacy infringements [5]\n\n2. Regulatory Scope\n- Applies to AI systems defined as \"machine-based systems\" with varying autonomy [6]\n- Uses a technology-neutral definition focusing on system effects [6]\n\n3. Prohibited Practices\nThe Act explicitly bans certain AI practices under Article 5, including:\n- Subliminal and manipulative techniques [8]\n- Exploiting vulnerabilities of specific groups [8]\n- Social scoring by public authorities [8]\n- Unauthorized biometric identification in public spaces [8]\n\n4. Enforcement Mechanism\n- Significant financial penalties for non-compliance\n- Fines up to EUR 35 million or 7% of global annual turnover [2, 9]\n\n5. Principles of Trustworthy AI\nRecital 27 outlines seven principles emphasizing:\n- Human agency and oversight\n- Respect for human dignity\n- Personal autonomy\n- Ensuring AI serves people [3, 10-13]\n\n6. Compliance Requirements\n- High-risk AI systems must have human oversight [3]\n- Providers responsible for ensuring compliance [4]\n- Focus on non-discrimination and fairness [7, 18-20]\n\nGraph Insights:\n- The Act regulates high-risk AI systems\n- Prohibits manipulative AI techniques\n- Involves multiple stakeholders like European Parliament and private sector organizations\n\nCross-Jurisdictional Note:\nMultiple EU member states (NO, FI, PT, EE, GR, FR, SI, DE, IE, IT, BG) reference consistent implementation of the Act's principles.\n\nLimitations: While comprehensive, the sources do not provide exhaustive details on every aspect of implementation or potential future amendments.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 9,
+      "resolution_rate": 9.0,
+      "avg_confidence": 0.7692951824929979,
+      "entity_names": [
+        "AI Act",
+        "Article 5 of the EU AI Act",
+        "Art. 13(1), EU AI Act",
+        "Article 99(1) of EU AI Act",
+        "EU AI Alliance",
+        "recital 27 of the EU AI Act",
+        "EU AI Act (n 80)",
+        "AI development in EU countries",
+        "2021 AI Act"
+      ],
+      "match_types": {
+        "fuzzy": 9
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 18,
+      "relations_in_subgraph": 30,
+      "relation_types": {
+        "regulates": 4,
+        "are_used_for": 1,
+        "prohibits": 1,
+        "includes": 5,
+        "is_associated_with": 1,
+        "issues": 1,
+        "is_related_to": 1,
+        "outlines": 1,
+        "is regulated by": 1,
+        "suggests_amendments": 1,
+        "approves": 1,
+        "should_ensure": 1,
+        "should_be_monitored": 1,
+        "applies_to": 1,
+        "can_make": 1,
+        "uses": 1,
+        "are_banned": 1,
+        "is_based_on": 1,
+        "issued_by": 1,
+        "are_part_of": 1,
+        "provides_basis_for": 1,
+        "allows_for": 1,
+        "bans": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 18,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 30,
+      "relations_mentioned": 6,
+      "relation_coverage_rate": 0.2,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_a781ef896647",
+        "ent_f5f44604266c",
+        "ent_5f3a1998ea4e",
+        "ent_cd26421a0be0",
+        "ent_c4a46726bbea",
+        "ent_4bfd05fdea90",
+        "ent_cff316136f47",
+        "ent_88d53fd1694e",
+        "ent_e7fe8afecb05",
+        "ent_e6cafc2a5a2f"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "graph_entity": 7
+      },
+      "avg_chunk_score": 0.9752777777777775,
+      "avg_query_similarity": 0.6157260745763778,
+      "source_diversity": {
+        "regulation": 20
+      },
+      "jurisdiction_diversity": [
+        "FR",
+        "GR",
+        "DE",
+        "IE",
+        "IT",
+        "FI",
+        "PT",
+        "SI",
+        "EE",
+        "EU",
+        "BG",
+        "NO"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.0,
+      "faithfulness_details": {
+        "supported_claims": 0,
+        "total_claims": 0,
+        "explanation": "Error: Expecting ',' delimiter: line 11 column 175 (char 2137)"
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively covers the main aspects of the EU AI Act including its purpose (fundamental rights protection), scope (AI systems definition), key provisions (prohibited practices under Article 5), enforcement mechanisms (penalties), underlying principles (trustworthy AI), and compliance requirements. It provides specific details like penalty amounts and references to relevant articles. However, it lacks some important details such as the risk-based classification system (minimal, limited, high-risk, unacceptable risk), timeline for implementation, and specific requirements for different risk categories beyond high-risk systems."
+    },
+    "performance": {
+      "retrieval_time": 1.5831923484802246,
+      "answer_time": 11.104899644851685,
+      "total_time": 34.208125591278076,
+      "answer_tokens": 459,
+      "cost_usd": 0.0052064
+    }
+  },
+  {
+    "test_id": "q1_graph",
+    "query": "What is the EU AI Act?",
+    "mode": "graph",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:55:27.619732",
+    "success": true,
+    "error": null,
+    "answer_text": "The EU AI Act is a comprehensive regulatory framework designed to govern artificial intelligence systems in the European Union, focusing on protecting fundamental rights and ensuring responsible AI development.\n\nKey Characteristics:\n1. Fundamental Rights Protection\n- Aims to safeguard EU citizens' fundamental rights [5]\n- Addresses potential risks like bias and privacy infringements [5]\n\n2. Regulatory Scope\n- Applies to AI systems defined as \"machine-based systems\" with varying autonomy [6]\n- Uses a technology-neutral definition focusing on system effects [6]\n\n3. Prohibited Practices\nThe Act explicitly bans certain AI practices under Article 5, including:\n- Subliminal and manipulative techniques [8]\n- Exploiting vulnerabilities of specific groups [8]\n- Social scoring by public authorities [8]\n- Unauthorized biometric identification in public spaces [8]\n\n4. Enforcement Mechanism\n- Significant financial penalties for non-compliance\n- Fines up to EUR 35 million or 7% of global annual turnover [2, 9]\n\n5. Principles of Trustworthy AI\nRecital 27 outlines seven principles emphasizing:\n- Human agency and oversight\n- Respect for human dignity\n- Personal autonomy\n- Ensuring AI serves people [3, 10-13]\n\n6. Compliance Requirements\n- High-risk AI systems must have human oversight [3]\n- Providers responsible for ensuring compliance [4]\n- Focus on non-discrimination and fairness [7, 18-20]\n\nGraph Insights:\n- The Act regulates high-risk AI systems\n- Prohibits manipulative AI techniques\n- Involves multiple stakeholders like European Parliament and private sector organizations\n\nCross-Jurisdictional Note:\nMultiple EU member states (NO, FI, PT, EE, GR, FR, SI, DE, IE, IT, BG) reference consistent implementation of the Act's principles.\n\nLimitations: While comprehensive, the sources do not provide exhaustive details on every aspect of implementation or potential future amendments.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 9,
+      "resolution_rate": 9.0,
+      "avg_confidence": 0.7692951824929979,
+      "entity_names": [
+        "AI Act",
+        "Article 5 of the EU AI Act",
+        "Art. 13(1), EU AI Act",
+        "Article 99(1) of EU AI Act",
+        "EU AI Alliance",
+        "recital 27 of the EU AI Act",
+        "EU AI Act (n 80)",
+        "AI development in EU countries",
+        "2021 AI Act"
+      ],
+      "match_types": {
+        "fuzzy": 9
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 18,
+      "relations_in_subgraph": 30,
+      "relation_types": {
+        "regulates": 4,
+        "are_used_for": 1,
+        "prohibits": 1,
+        "includes": 5,
+        "is_associated_with": 1,
+        "issues": 1,
+        "is_related_to": 1,
+        "outlines": 1,
+        "is regulated by": 1,
+        "suggests_amendments": 1,
+        "approves": 1,
+        "should_ensure": 1,
+        "should_be_monitored": 1,
+        "applies_to": 1,
+        "can_make": 1,
+        "uses": 1,
+        "are_banned": 1,
+        "is_based_on": 1,
+        "issued_by": 1,
+        "are_part_of": 1,
+        "provides_basis_for": 1,
+        "allows_for": 1,
+        "bans": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 18,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 30,
+      "relations_mentioned": 6,
+      "relation_coverage_rate": 0.2,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_a781ef896647",
+        "ent_f5f44604266c",
+        "ent_5f3a1998ea4e",
+        "ent_cd26421a0be0",
+        "ent_c4a46726bbea",
+        "ent_4bfd05fdea90",
+        "ent_cff316136f47",
+        "ent_88d53fd1694e",
+        "ent_e7fe8afecb05",
+        "ent_e6cafc2a5a2f"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "graph_entity": 7
+      },
+      "avg_chunk_score": 0.9752777777777775,
+      "avg_query_similarity": 0.6157260745763778,
+      "source_diversity": {
+        "regulation": 20
+      },
+      "jurisdiction_diversity": [
+        "FR",
+        "GR",
+        "DE",
+        "IE",
+        "IT",
+        "FI",
+        "PT",
+        "SI",
+        "EE",
+        "EU",
+        "BG",
+        "NO"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.84,
+      "faithfulness_details": {
+        "supported_claims": 17,
+        "total_claims": 19,
+        "explanation": "Most claims are well-supported by the context, particularly regarding the Act's purpose, prohibited practices, enforcement mechanisms, and compliance requirements. However, some claims about stakeholder involvement and cross-jurisdictional implementation lack evidence in the provided context."
+      },
+      "relevancy_score": 0.9,
+      "relevancy_explanation": "The answer comprehensively addresses the query by providing a clear definition of the EU AI Act and covering its key aspects including fundamental rights protection, regulatory scope, prohibited practices, enforcement mechanisms, trustworthy AI principles, and compliance requirements. It includes specific examples and technical details. Minor deduction for acknowledging limitations in coverage of implementation details and future amendments, but overall provides a thorough and well-structured explanation of what the EU AI Act is."
+    },
+    "performance": {
+      "retrieval_time": 1.5754187107086182,
+      "answer_time": 11.014706134796143,
+      "total_time": 35.02896595001221,
+      "answer_tokens": 459,
+      "cost_usd": 0.0052064
+    }
+  },
+  {
+    "test_id": "q1_dual",
+    "query": "What is the EU AI Act?",
+    "mode": "dual",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:56:02.219590",
+    "success": true,
+    "error": null,
+    "answer_text": "The EU AI Act is a comprehensive regulatory framework designed to govern artificial intelligence systems in the European Union, focusing on protecting fundamental rights and ensuring responsible AI development.\n\nKey Characteristics:\n1. Fundamental Rights Protection\n- Aims to safeguard EU citizens' fundamental rights [5]\n- Addresses potential risks like bias and privacy infringements [5]\n\n2. Regulatory Scope\n- Applies to AI systems defined as \"machine-based systems\" with varying autonomy [6]\n- Covers systems that generate predictions, content, recommendations, or decisions [6]\n\n3. Prohibited Practices\nThe Act explicitly bans certain AI practices under Article 5, including:\n- Subliminal and manipulative techniques [8]\n- Exploiting vulnerabilities of specific groups [8]\n- Social scoring by public authorities [8]\n- Unauthorized biometric identification in public spaces [8]\n\n4. Enforcement Mechanism\n- Significant financial penalties for non-compliance\n- Fines up to EUR 35 million or 7% of global annual turnover [2, 9]\n\n5. Principles of Trustworthy AI\nRecital 27 outlines seven principles emphasizing:\n- Human agency and oversight\n- Respect for human dignity\n- Personal autonomy\n- Ensuring AI serves people [3, 10-13]\n\n6. High-Risk System Regulations\n- Requires human oversight for high-risk AI systems [3]\n- Mandates competent personnel with necessary training and authority [3]\n\nGraph Insights:\n- The Act is interconnected with European Parliament resolutions\n- Involves multiple stakeholders including private sector organizations\n- Provides basis for national implementations (e.g., Norwegian proposal)\n\nJurisdictional Notes:\n- Consistent implementation across EU member states\n- Serves as a potential model for global AI governance\n\nLimitations in Current Sources:\n- Detailed breakdown of the seven trustworthy AI principles not fully elaborated\n- Specific implementation mechanisms not comprehensively described",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 9,
+      "resolution_rate": 9.0,
+      "avg_confidence": 0.7692951824929979,
+      "entity_names": [
+        "AI Act",
+        "Article 5 of the EU AI Act",
+        "Art. 13(1), EU AI Act",
+        "Article 99(1) of EU AI Act",
+        "EU AI Alliance",
+        "recital 27 of the EU AI Act",
+        "EU AI Act (n 80)",
+        "AI development in EU countries",
+        "2021 AI Act"
+      ],
+      "match_types": {
+        "fuzzy": 9
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 18,
+      "relations_in_subgraph": 30,
+      "relation_types": {
+        "regulates": 4,
+        "are_used_for": 1,
+        "prohibits": 1,
+        "includes": 5,
+        "is_associated_with": 1,
+        "issues": 1,
+        "is_related_to": 1,
+        "outlines": 1,
+        "is regulated by": 1,
+        "suggests_amendments": 1,
+        "approves": 1,
+        "should_ensure": 1,
+        "should_be_monitored": 1,
+        "applies_to": 1,
+        "can_make": 1,
+        "uses": 1,
+        "are_banned": 1,
+        "is_based_on": 1,
+        "issued_by": 1,
+        "are_part_of": 1,
+        "provides_basis_for": 1,
+        "allows_for": 1,
+        "bans": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 18,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 30,
+      "relations_mentioned": 6,
+      "relation_coverage_rate": 0.2,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_a781ef896647",
+        "ent_f5f44604266c",
+        "ent_5f3a1998ea4e",
+        "ent_cd26421a0be0",
+        "ent_c4a46726bbea",
+        "ent_4bfd05fdea90",
+        "ent_cff316136f47",
+        "ent_88d53fd1694e",
+        "ent_e7fe8afecb05",
+        "ent_e6cafc2a5a2f"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "graph_entity": 7
+      },
+      "avg_chunk_score": 0.9752777777777775,
+      "avg_query_similarity": 0.6157260745763778,
+      "source_diversity": {
+        "regulation": 20
+      },
+      "jurisdiction_diversity": [
+        "FR",
+        "GR",
+        "DE",
+        "IE",
+        "IT",
+        "FI",
+        "PT",
+        "SI",
+        "EE",
+        "EU",
+        "BG",
+        "NO"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.72,
+      "faithfulness_details": {
+        "supported_claims": 19,
+        "total_claims": 25,
+        "explanation": "18 out of 25 claims are supported by the context. Most core information about the EU AI Act is accurately represented, but several claims about broader implications, stakeholder involvement, and limitations are not supported by the provided context."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively covers the main aspects of the EU AI Act including its purpose (fundamental rights protection), scope (AI systems definition), key prohibitions (Article 5 banned practices), enforcement mechanisms (financial penalties), core principles (trustworthy AI), and regulatory requirements (high-risk systems). It also provides useful context about jurisdictional scope and interconnections. However, it loses some points for acknowledging significant gaps in explaining the seven trustworthy AI principles and implementation mechanisms, and the inclusion of 'Graph Insights' and citation numbers suggests this may be extracted from a larger document rather than a direct answer to the query."
+    },
+    "performance": {
+      "retrieval_time": 1.1380572319030762,
+      "answer_time": 11.08454942703247,
+      "total_time": 34.59960341453552,
+      "answer_tokens": 446,
+      "cost_usd": 0.0051544
+    }
+  },
+  {
+    "test_id": "q2_semantic",
+    "query": "What are high-risk AI systems?",
+    "mode": "semantic",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:56:35.187843",
+    "success": true,
+    "error": null,
+    "answer_text": "High-risk AI systems (HRAIs) are AI technologies that can significantly impact individuals' rights, safety, and fundamental freedoms, requiring stringent regulatory oversight.\n\nKey Characteristics:\n1. Definition and Scope\n- HRAIs are systems that can create \"adverse impacts on people's safety or fundamental rights\" [16]\n- The EU AI Act identifies eight specific types of high-risk AI systems [16]\n- Covered domains include: biometric identification, critical infrastructure, law enforcement, migration management, education, and democratic processes [19]\n\n2. Regulatory Requirements\n- Must undergo conformity assessments before market entry [16]\n- Providers must maintain:\n  - Risk management systems\n  - Data governance measures\n  - Technical documentation [18]\n  - Logging capabilities\n  - Transparency requirements [11]\n\n3. Risk Assessment Criteria\nDifferent jurisdictions evaluate high-risk AI through varying lenses:\n- EU focuses on impacts to fundamental rights and safety [1]\n- Australia considers risks to:\n  - Individual human rights\n  - Group/cultural rights\n  - Broader societal and economic impacts [8]\n\n4. Oversight Principles\n- Require human supervision [4]\n- Must be designed to prevent or minimize potential risks\n- Proportional monitoring based on associated risk levels [4]\n\nCross-Jurisdictional Insights:\n- EU leads with most comprehensive HRAI framework\n- Australia and Chile developing similar risk-based approaches\n- Common theme: balancing innovation with human rights protection [9]\n\nPotential Challenges:\n- High compliance costs might deter startups from high-risk AI domains [17]\n- Regulatory \"sandboxes\" proposed to mitigate financial constraints [17]\n\nGraph Relationships:\n- HRAIs directly connect to:\n  - Conformity assessments\n  - Human rights protection\n  - Technical documentation requirements\n  - Data protection impact assessments\n\nLimitations: Sources primarily focus on EU perspective; global comprehensive framework still emerging.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 10,
+      "resolution_rate": 10.0,
+      "avg_confidence": 0.8236437737941742,
+      "entity_names": [
+        "high risk AI technology",
+        "high-risk artificial intelligence systems",
+        "high-risk AI domains",
+        "high-risk AI system users",
+        "AI designated as high-risk",
+        "critical infrastructures",
+        "high-risk AI providers",
+        "AI systems with known or foreseeable proposed uses that are considered to be high risk",
+        "High-risk AI systems (HRAIs)",
+        "worst behaviours of AI systems"
+      ],
+      "match_types": {
+        "fuzzy": 10
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 23,
+      "relations_in_subgraph": 39,
+      "relation_types": {
+        "undergo": 1,
+        "must_undergo": 1,
+        "applies_to": 6,
+        "regulates": 4,
+        "carries_out": 1,
+        "is_obliged_to": 1,
+        "obliges": 1,
+        "imposes_obligations_on": 1,
+        "helps_protect": 1,
+        "safeguards": 2,
+        "is_used_for": 1,
+        "discusses": 2,
+        "considers_to_be_high_risk": 1,
+        "ensures": 1,
+        "may_deter": 1,
+        "collaborates_with": 1,
+        "provides": 1,
+        "requires": 1,
+        "plans_to_adopt": 1,
+        "addresses": 2,
+        "prevents": 1,
+        "disciplines_the_application_of": 1,
+        "protects_in_the_context_of": 1,
+        "can_make": 1,
+        "assigns": 1,
+        "included_in": 1,
+        "proposed_by": 1,
+        "is_required_for": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 23,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 39,
+      "relations_mentioned": 9,
+      "relation_coverage_rate": 0.23076923076923078,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_21a6a8a12a29",
+        "ent_384a4270f1c7",
+        "ent_0e2abb08a288",
+        "ent_5abd34413489",
+        "ent_6ab9d0b5e2f7",
+        "ent_83d8c947a4d5",
+        "ent_eb7f2cfe3bd1",
+        "ent_54e111fbfdb2",
+        "ent_39b4b042b4d7"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 16,
+        "graph_entity": 4
+      },
+      "avg_chunk_score": 0.8657608695652174,
+      "avg_query_similarity": 0.5770778775215148,
+      "source_diversity": {
+        "paper": 17,
+        "regulation": 3
+      },
+      "jurisdiction_diversity": [
+        "IT",
+        "AU",
+        "CL"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.53,
+      "faithfulness_details": {
+        "supported_claims": 9,
+        "total_claims": 15,
+        "explanation": "8 out of 15 claims are supported by the context. Many core concepts about high-risk AI systems, regulatory oversight, and jurisdictional approaches are supported, but specific details like the eight types of systems, exact requirements, compliance costs, and comparative assessments are not found in the context."
+      },
+      "relevancy_score": 0.9,
+      "relevancy_explanation": "The answer comprehensively addresses the query by defining high-risk AI systems, explaining their key characteristics, regulatory requirements, risk assessment criteria, and oversight principles. It provides specific examples of covered domains and compares approaches across jurisdictions (EU, Australia, Chile). The response includes practical considerations like compliance costs and regulatory sandboxes. Minor gaps include limited discussion of specific technical implementation details and fewer concrete examples of actual high-risk AI systems in practice, but overall provides a thorough and well-structured explanation of what constitutes high-risk AI systems."
+    },
+    "performance": {
+      "retrieval_time": 1.5859739780426025,
+      "answer_time": 10.550477266311646,
+      "total_time": 32.968000173568726,
+      "answer_tokens": 441,
+      "cost_usd": 0.0054751999999999995
+    }
+  },
+  {
+    "test_id": "q2_graph",
+    "query": "What are high-risk AI systems?",
+    "mode": "graph",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:57:05.123701",
+    "success": true,
+    "error": null,
+    "answer_text": "High-risk AI systems (HRAIs) are AI technologies that can significantly impact individuals' lives, safety, or fundamental rights, requiring stringent regulatory oversight and conformity assessments.\n\nKey Characteristics:\n1. Definition and Scope\n- HRAIs are systems that create potential adverse impacts on people's safety or fundamental rights [16]\n- The EU AI Act identifies eight specific types of high-risk AI systems [19]\n- Domains include biometric identification, critical infrastructure, law enforcement, education, migration management, and democratic processes [19]\n\n2. Regulatory Requirements\n- Must undergo conformity assessments before market entry [16]\n- Providers must maintain:\n  - Risk management systems\n  - Data governance measures\n  - Technical documentation [18]\n  - Logging capabilities\n  - Transparency requirements [11]\n\n3. Risk Assessment Criteria\nDifferent jurisdictions have varying approaches:\n- EU focuses on potential harm to health, safety, and fundamental rights [19]\n- Australia considers impacts on:\n  - Individual human rights\n  - Group/cultural rights\n  - Broader societal and economic implications [8]\n\n4. Jurisdictional Insights\n- EU: Aims to balance innovation with ethical governance [9]\n- Chile emphasizes human oversight and proportional risk management [4]\n- Australia categorizes high-risk AI into two broad types: systems with known risks and advanced general-purpose AI [8]\n\nGraph Relationships:\n- High-risk AI systems --must_undergo--> conformity assessment\n- High-risk AI providers --imposes_obligations_on--> technical documentation\n- AI Act --regulates--> high-risk AI systems\n- AI System --helps_protect--> human rights\n\nLimitations: Sources primarily focus on EU perspectives, with limited global comparative analysis.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 10,
+      "resolution_rate": 10.0,
+      "avg_confidence": 0.8236437737941742,
+      "entity_names": [
+        "high risk AI technology",
+        "high-risk artificial intelligence systems",
+        "high-risk AI domains",
+        "high-risk AI system users",
+        "AI designated as high-risk",
+        "critical infrastructures",
+        "high-risk AI providers",
+        "AI systems with known or foreseeable proposed uses that are considered to be high risk",
+        "High-risk AI systems (HRAIs)",
+        "worst behaviours of AI systems"
+      ],
+      "match_types": {
+        "fuzzy": 10
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 23,
+      "relations_in_subgraph": 39,
+      "relation_types": {
+        "undergo": 1,
+        "must_undergo": 1,
+        "applies_to": 6,
+        "regulates": 4,
+        "carries_out": 1,
+        "is_obliged_to": 1,
+        "obliges": 1,
+        "imposes_obligations_on": 1,
+        "helps_protect": 1,
+        "safeguards": 2,
+        "is_used_for": 1,
+        "discusses": 2,
+        "considers_to_be_high_risk": 1,
+        "ensures": 1,
+        "may_deter": 1,
+        "collaborates_with": 1,
+        "provides": 1,
+        "requires": 1,
+        "plans_to_adopt": 1,
+        "addresses": 2,
+        "prevents": 1,
+        "disciplines_the_application_of": 1,
+        "protects_in_the_context_of": 1,
+        "can_make": 1,
+        "assigns": 1,
+        "included_in": 1,
+        "proposed_by": 1,
+        "is_required_for": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 23,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 39,
+      "relations_mentioned": 9,
+      "relation_coverage_rate": 0.23076923076923078,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_21a6a8a12a29",
+        "ent_384a4270f1c7",
+        "ent_0e2abb08a288",
+        "ent_5abd34413489",
+        "ent_6ab9d0b5e2f7",
+        "ent_83d8c947a4d5",
+        "ent_eb7f2cfe3bd1",
+        "ent_54e111fbfdb2",
+        "ent_39b4b042b4d7"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 16,
+        "graph_entity": 4
+      },
+      "avg_chunk_score": 0.8657608695652174,
+      "avg_query_similarity": 0.5770778775215148,
+      "source_diversity": {
+        "paper": 17,
+        "regulation": 3
+      },
+      "jurisdiction_diversity": [
+        "IT",
+        "AU",
+        "CL"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.7,
+      "faithfulness_details": {
+        "supported_claims": 8,
+        "total_claims": 10,
+        "explanation": "7 out of 10 claims are supported. The unsupported claims include specific details about 'eight types of AI systems' and detailed provider obligations that are not mentioned in the context. Most high-level concepts about high-risk AI systems, regulatory approaches, and jurisdictional differences are well-supported."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the main question by defining high-risk AI systems and providing detailed context. It covers key characteristics, regulatory requirements, risk assessment criteria, and jurisdictional approaches with specific examples. The structured format with clear categories makes it highly informative. However, it falls slightly short of perfect due to acknowledged limitations in global perspective (primarily EU-focused) and could benefit from more concrete examples of specific high-risk AI applications in practice."
+    },
+    "performance": {
+      "retrieval_time": 1.3937113285064697,
+      "answer_time": 9.230343103408813,
+      "total_time": 29.935590982437134,
+      "answer_tokens": 396,
+      "cost_usd": 0.0052952
+    }
+  },
+  {
+    "test_id": "q2_dual",
+    "query": "What are high-risk AI systems?",
+    "mode": "dual",
+    "category": "simple_factual",
+    "timestamp": "2025-12-15T00:57:33.062573",
+    "success": true,
+    "error": null,
+    "answer_text": "High-risk AI systems (HRAIs) are AI technologies that can significantly impact individuals' lives, safety, or fundamental rights, requiring stringent regulatory oversight and conformity assessments.\n\nKey Characteristics:\n1. Definition and Scope\n- HRAIs are systems that create potential adverse impacts on people's safety or fundamental rights [16]\n- The EU AI Act identifies eight specific types of high-risk AI systems [19]\n- Domains include biometric identification, critical infrastructure, law enforcement, education, migration management, and democratic processes [19]\n\n2. Regulatory Requirements\n- Must undergo conformity assessments before market entry [16]\n- Providers must maintain:\n  - Risk management systems\n  - Data governance measures\n  - Technical documentation [18]\n  - Logging capabilities\n  - Transparency requirements [11]\n\n3. Jurisdictional Perspectives\n- EU Approach: Focuses on safeguarding citizens' health, safety, and fundamental rights [1]\n- Australian Approach: Considers risks to individual/group rights, economy, society, and rule of law [8]\n- Chilean Approach: Emphasizes human oversight and proportional risk mitigation [4]\n\nGraph Insights:\n- High-risk AI systems are connected to:\n  - Conformity assessments\n  - Human rights protection\n  - Technical documentation requirements\n  - Potential startup deterrence [17]\n\nLimitations: While comprehensive, sources primarily focus on EU regulatory frameworks, suggesting more comparative international research is needed.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 10,
+      "resolution_rate": 10.0,
+      "avg_confidence": 0.8236437737941742,
+      "entity_names": [
+        "high risk AI technology",
+        "high-risk artificial intelligence systems",
+        "high-risk AI domains",
+        "high-risk AI system users",
+        "AI designated as high-risk",
+        "critical infrastructures",
+        "high-risk AI providers",
+        "AI systems with known or foreseeable proposed uses that are considered to be high risk",
+        "High-risk AI systems (HRAIs)",
+        "worst behaviours of AI systems"
+      ],
+      "match_types": {
+        "fuzzy": 10
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 23,
+      "relations_in_subgraph": 39,
+      "relation_types": {
+        "undergo": 1,
+        "must_undergo": 1,
+        "applies_to": 6,
+        "regulates": 4,
+        "carries_out": 1,
+        "is_obliged_to": 1,
+        "obliges": 1,
+        "imposes_obligations_on": 1,
+        "helps_protect": 1,
+        "safeguards": 2,
+        "is_used_for": 1,
+        "discusses": 2,
+        "considers_to_be_high_risk": 1,
+        "ensures": 1,
+        "may_deter": 1,
+        "collaborates_with": 1,
+        "provides": 1,
+        "requires": 1,
+        "plans_to_adopt": 1,
+        "addresses": 2,
+        "prevents": 1,
+        "disciplines_the_application_of": 1,
+        "protects_in_the_context_of": 1,
+        "can_make": 1,
+        "assigns": 1,
+        "included_in": 1,
+        "proposed_by": 1,
+        "is_required_for": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 23,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 39,
+      "relations_mentioned": 8,
+      "relation_coverage_rate": 0.20512820512820512,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_21a6a8a12a29",
+        "ent_384a4270f1c7",
+        "ent_0e2abb08a288",
+        "ent_5abd34413489",
+        "ent_6ab9d0b5e2f7",
+        "ent_83d8c947a4d5",
+        "ent_eb7f2cfe3bd1",
+        "ent_54e111fbfdb2",
+        "ent_39b4b042b4d7"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 16,
+        "graph_entity": 4
+      },
+      "avg_chunk_score": 0.8657608695652174,
+      "avg_query_similarity": 0.5770778775215148,
+      "source_diversity": {
+        "paper": 17,
+        "regulation": 3
+      },
+      "jurisdiction_diversity": [
+        "IT",
+        "AU",
+        "CL"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.67,
+      "faithfulness_details": {
+        "supported_claims": 7,
+        "total_claims": 9,
+        "explanation": "6 out of 9 claims are supported. Major unsupported claims include the specific number of eight types of high-risk AI systems and detailed regulatory requirements not explicitly mentioned in the context. The answer also includes references to sources [16], [18], [19] etc. that are not present in the provided context."
+      },
+      "relevancy_score": 0.95,
+      "relevancy_explanation": "Excellently addresses the query with comprehensive coverage of definition, scope, regulatory requirements, and international perspectives on high-risk AI systems. Includes specific examples, regulatory frameworks, and technical requirements. Only minor limitation is the acknowledged focus on EU frameworks over global perspectives, but this doesn't significantly detract from answering what high-risk AI systems are."
+    },
+    "performance": {
+      "retrieval_time": 1.8901145458221436,
+      "answer_time": 7.896207094192505,
+      "total_time": 27.938618183135986,
+      "answer_tokens": 331,
+      "cost_usd": 0.0050352
+    }
+  },
+  {
+    "test_id": "q3_semantic",
+    "query": "Which jurisdictions regulate facial recognition?",
+    "mode": "semantic",
+    "category": "cross_jurisdictional",
+    "timestamp": "2025-12-15T00:58:00.916966",
+    "success": true,
+    "error": null,
+    "answer_text": "Multiple jurisdictions regulate facial recognition, with varying approaches and scopes:\n\nUnited States:\n- Several states have banned or limited facial recognition, particularly for law enforcement [16]:\n  - California, Vermont, Virginia, Massachusetts, Maine, New York, Washington, Maryland, and Oregon have specific restrictions\n- Some municipalities like San Francisco and Boston have banned state use of facial recognition technology [15]\n- The FTC can issue injunctions against misuse, including forcing companies to delete facial recognition algorithms [6]\n\nEuropean Union:\n- The GDPR prohibits certain facial recognition applications, specifically:\n  - Real-time facial recognition databases in public spaces\n  - Emotional recognition technology in work and educational contexts [8, 9]\n- The AI Act focuses particularly on facial recognition technologies, encouraging regulatory compliance [11]\n\nChina:\n- The Supreme People's Court has defined legal liability for facial information processing in commercial and public settings [13]\n\nKey Regulatory Considerations:\n- Regulations often target specific risks like:\n  - Potential racial and gender biases [10]\n  - Privacy concerns [14]\n  - Discrimination risks [15]\n\nLimitations in Current Sources:\n- No comprehensive global mapping of facial recognition regulations\n- Regulatory landscape is rapidly evolving\n- Significant variation exists between jurisdictions\n\nGraph Insights:\n- No explicit relationship structure was provided in the knowledge graph for this query\n\nRecommendation: Organizations should carefully track local regulations, as facial recognition rules differ significantly across jurisdictions.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 1,
+      "resolution_rate": 1.0,
+      "avg_confidence": 0.7603846788406372,
+      "entity_names": [
+        "face detection"
+      ],
+      "match_types": {
+        "fuzzy": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_d131f755d31b",
+        "ent_38dd7043c627",
+        "ent_fae1629ac68d",
+        "ent_5d623f357a8c",
+        "ent_40b90a268d81",
+        "ent_b240560bcce0"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "semantic": 15,
+        "graph_entity": 5
+      },
+      "avg_chunk_score": 0.846620080868403,
+      "avg_query_similarity": 0.5108711302280426,
+      "source_diversity": {
+        "regulation": 3,
+        "paper": 17
+      },
+      "jurisdiction_diversity": [
+        "US"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.5,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 10,
+        "explanation": "Half of the claims are supported by the context. The answer contains accurate information about FTC enforcement, GDPR prohibitions, bias concerns, and specific details about Colorado and Utah laws. However, it includes unsupported claims about specific US states' bans, municipalities like San Francisco and Boston, China's regulations, and references to 'the AI Act' that aren't clearly established in the context."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the main question by identifying key jurisdictions (US, EU, China) that regulate facial recognition and provides specific examples of regulations and restrictions. It covers federal, state, and municipal levels in the US, explains GDPR and AI Act provisions in the EU, and mentions China's legal framework. The answer also discusses regulatory considerations and acknowledges limitations in coverage. However, it could be enhanced by including more jurisdictions (Canada, Australia, other countries) and providing more detail on enforcement mechanisms and penalties."
+    },
+    "performance": {
+      "retrieval_time": 0.705833911895752,
+      "answer_time": 8.116691589355469,
+      "total_time": 27.854126453399658,
+      "answer_tokens": 324,
+      "cost_usd": 0.0036584
+    }
+  },
+  {
+    "test_id": "q3_graph",
+    "query": "Which jurisdictions regulate facial recognition?",
+    "mode": "graph",
+    "category": "cross_jurisdictional",
+    "timestamp": "2025-12-15T00:58:29.640203",
+    "success": true,
+    "error": null,
+    "answer_text": "Multiple jurisdictions regulate facial recognition, with varying approaches and scopes:\n\nUnited States:\n- Several states have banned or limited facial recognition, particularly for law enforcement [16]:\n  - California, Vermont, Virginia, Massachusetts, Maine, New York, Washington, Maryland, and Oregon have specific restrictions\n- Some municipalities like San Francisco and Boston have banned state use of facial recognition technology [15]\n- At the federal level, the FTC can issue injunctions against misuse, including facial recognition technology [6]\n\nEuropean Union:\n- The GDPR prohibits certain facial recognition applications, specifically:\n  - Real-time facial recognition databases in public spaces\n  - Emotional recognition technology in work and educational contexts [8, 9]\n- The AI Act focuses particularly on facial recognition technologies, encouraging regulatory compliance [11]\n\nChina:\n- The Supreme People's Court has defined legal liability for facial information processing in commercial and public settings [13]\n\nKey Regulatory Considerations:\n- Regulations often target specific risks like:\n  - Potential gender and race biases [10]\n  - Privacy concerns [14]\n  - Discrimination risks [15]\n\nLimitations in Current Sources:\n- No comprehensive global mapping of facial recognition regulations\n- Regulatory landscape is rapidly evolving\n- Significant variation exists between jurisdictions\n\nGraph Insights:\n- No explicit relationship structure was provided in the knowledge graph for this query\n\nCross-Jurisdictional Trend:\n- Growing consensus on need for oversight and limitations on facial recognition technology, especially in law enforcement and public spaces [15, 16]",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 1,
+      "resolution_rate": 1.0,
+      "avg_confidence": 0.7603846788406372,
+      "entity_names": [
+        "face detection"
+      ],
+      "match_types": {
+        "fuzzy": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_d131f755d31b",
+        "ent_38dd7043c627",
+        "ent_fae1629ac68d",
+        "ent_5d623f357a8c",
+        "ent_40b90a268d81",
+        "ent_b240560bcce0"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "semantic": 15,
+        "graph_entity": 5
+      },
+      "avg_chunk_score": 0.846620080868403,
+      "avg_query_similarity": 0.5108711302280426,
+      "source_diversity": {
+        "regulation": 3,
+        "paper": 17
+      },
+      "jurisdiction_diversity": [
+        "US"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.45,
+      "faithfulness_details": {
+        "supported_claims": 6,
+        "total_claims": 11,
+        "explanation": "5 out of 11 major claims are supported by the context. Key supported claims include FTC enforcement capabilities, GDPR prohibitions, facial recognition bias issues, and Colorado/Utah AI laws. However, many specific details about state bans, municipalities, China's regulations, and EU AI Act focus are not supported by the provided context."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the main question by identifying multiple jurisdictions (US states, EU, China) that regulate facial recognition and provides specific examples of regulations like state bans, GDPR provisions, and the AI Act. It covers key regulatory considerations and acknowledges limitations in coverage. However, it misses other major jurisdictions like Canada, Australia, and other significant countries/regions that may have facial recognition regulations, preventing it from being fully comprehensive."
+    },
+    "performance": {
+      "retrieval_time": 0.48903894424438477,
+      "answer_time": 8.43771505355835,
+      "total_time": 28.722997426986694,
+      "answer_tokens": 342,
+      "cost_usd": 0.0037304
+    }
+  },
+  {
+    "test_id": "q3_dual",
+    "query": "Which jurisdictions regulate facial recognition?",
+    "mode": "dual",
+    "category": "cross_jurisdictional",
+    "timestamp": "2025-12-15T00:58:55.564892",
+    "success": true,
+    "error": null,
+    "answer_text": "Multiple jurisdictions regulate facial recognition, with varying approaches and scopes:\n\nUnited States:\n- Several states have banned or limited facial recognition, particularly for law enforcement [16]:\n  - California, Vermont, Virginia, Massachusetts, Maine, New York, Washington, Maryland, and Oregon have specific restrictions\n- Some municipalities like San Francisco and Boston have banned state use of facial recognition technology [15]\n- State-level enforcement varies, with Colorado and Utah developing AI-specific laws that can address facial recognition [6, 7]\n\nEuropean Union:\n- The General Data Protection Regulation (GDPR) prohibits:\n  - Real-time facial recognition databases in public spaces\n  - Emotional recognition technology in work and educational contexts [8, 9]\n- The AI Act specifically focuses on facial recognition technologies [11]\n\nChina:\n- The Supreme People's Court has defined legal liability for facial information processing in commercial and public settings [13]\n\nKey Regulatory Considerations:\n- Regulations often target specific risks like:\n  - Potential gender and race biases [10]\n  - Privacy concerns [14]\n  - Discrimination risks [15]\n\nDefinitional Approach:\nPolicymakers are defining facial recognition as \"the automatic processing of digital images which contain faces of individuals for identification, authentication, or categorization\" [3]\n\nLimitations in Sources:\n- No comprehensive global mapping of facial recognition regulations\n- Regulations continue to evolve rapidly",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 1,
+      "resolution_rate": 1.0,
+      "avg_confidence": 0.7603846788406372,
+      "entity_names": [
+        "face detection"
+      ],
+      "match_types": {
+        "fuzzy": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_d131f755d31b",
+        "ent_38dd7043c627",
+        "ent_fae1629ac68d",
+        "ent_5d623f357a8c",
+        "ent_40b90a268d81",
+        "ent_b240560bcce0"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "semantic": 15,
+        "graph_entity": 5
+      },
+      "avg_chunk_score": 0.846620080868403,
+      "avg_query_similarity": 0.5108711302280426,
+      "source_diversity": {
+        "regulation": 3,
+        "paper": 17
+      },
+      "jurisdiction_diversity": [
+        "US"
+      ]
+    },
+    "ragas": {
+      "faithfulness_score": 0.4,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 10,
+        "explanation": "Only 4 out of 10 claims are supported by the context. The answer includes many specific details about states, municipalities, and international regulations that are not present in the provided context, significantly reducing faithfulness."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the main question by identifying key jurisdictions (US, EU, China) that regulate facial recognition and providing specific details about their regulatory approaches. It covers state-level US regulations, EU's GDPR and AI Act provisions, and China's legal framework. The answer also includes valuable context about regulatory considerations, definitions, and limitations. However, it misses some major jurisdictions like Canada, Australia, UK (post-Brexit), and other significant countries/regions that may have facial recognition regulations, preventing a perfect score."
+    },
+    "performance": {
+      "retrieval_time": 0.562063455581665,
+      "answer_time": 8.041728734970093,
+      "total_time": 25.924465656280518,
+      "answer_tokens": 315,
+      "cost_usd": 0.0036224000000000004
+    }
+  },
+  {
+    "test_id": "q4_semantic",
+    "query": "Compare China and US AI governance",
+    "mode": "semantic",
+    "category": "cross_jurisdictional_comparison",
+    "timestamp": "2025-12-15T00:59:21.548082",
+    "success": true,
+    "error": null,
+    "answer_text": "Direct Answer:\nChina and the United States have distinct approaches to AI governance, with China taking a more proactive legislative stance and the US initially favoring voluntary frameworks, though both are moving towards more structured AI regulation [10, 13].\n\nKey Comparative Insights:\n\n1. Regulatory Approaches\n- China: Actively legislating and releasing ethics documents [13]\n- US: Transitioning from voluntary frameworks to concrete legislation [13]\n\n2. AI Policy Narratives\n- China strongly emphasizes AI leadership and implementation [3]\n- US focuses on multiple narratives, including technology leadership [5, 6]\n\n3. AI Development Focus\n- Both countries prioritize AI as a strategic technology [3]\n- China is accelerating AI professional training and discipline development [14]\n- US leads in AI patents, with 58% of research documents [7, 11]\n\n4. Governance Characteristics\n- China uses AI in judicial systems to address case backlogs [12]\n- US developing AI governance through STEM education programs [14]\n\nCross-Jurisdictional Observations:\n- Both countries are underrepresented in global AI policy research [9]\n- Tensions between the countries are influencing AI competitive rhetoric [13]\n\nLimitations: The sources provide a high-level comparison but lack deep details on specific regulatory mechanisms.",
+    "entity_resolution": {
+      "extracted_count": 3,
+      "resolved_count": 1,
+      "resolution_rate": 0.3333333333333333,
+      "avg_confidence": 1.0,
+      "entity_names": [
+        "China"
+      ],
+      "match_types": {
+        "exact": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_bed3ecc577c5",
+        "ent_d45463897889",
+        "ent_3f3c1d9a890e",
+        "ent_20c2fd639e39",
+        "ent_8f995daaf637",
+        "ent_0d5bb4ce2430"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_entity": 20
+      },
+      "avg_chunk_score": 0.8041666666666663,
+      "avg_query_similarity": 0.5527822926640511,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.5,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 10,
+        "explanation": "Half of the claims are supported by the context. The supported claims relate to both countries' emphasis on AI leadership, US document representation in research, and underrepresentation in policy research. However, many specific claims about legislative approaches, professional training, judicial AI use, STEM programs, and bilateral tensions lack evidence in the provided context."
+      },
+      "relevancy_score": 0.75,
+      "relevancy_explanation": "The answer addresses the main query by providing a structured comparison of China and US AI governance approaches. It covers key differences in regulatory strategies (China's proactive legislation vs US voluntary-to-legislative transition), policy narratives, and development focus. However, it has significant gaps in specifics about actual governance mechanisms, regulatory frameworks, enforcement approaches, and concrete policy examples. The answer acknowledges its own limitations regarding 'deep details on specific regulatory mechanisms.' While it provides a useful high-level overview, it lacks the depth needed for a comprehensive comparison of AI governance systems."
+    },
+    "performance": {
+      "retrieval_time": 0.7349944114685059,
+      "answer_time": 7.984661817550659,
+      "total_time": 25.982959747314453,
+      "answer_tokens": 294,
+      "cost_usd": 0.003984
+    }
+  },
+  {
+    "test_id": "q4_graph",
+    "query": "Compare China and US AI governance",
+    "mode": "graph",
+    "category": "cross_jurisdictional_comparison",
+    "timestamp": "2025-12-15T00:59:50.484980",
+    "success": true,
+    "error": null,
+    "answer_text": "Direct Answer:\nChina and the United States have distinct approaches to AI governance, with China taking a more proactive legislative stance and the US initially favoring voluntary frameworks, though both are moving towards more structured AI regulation [10, 13].\n\nKey Comparative Insights:\n\n1. Regulatory Approaches\n- China: Actively legislating and releasing ethics documents [13]\n- US: Transitioning from voluntary frameworks to concrete legislation [13]\n\n2. AI Policy Narratives\n- China strongly emphasizes AI leadership and implementation [3]\n- US focuses on multiple narratives, including technology leadership [5, 6]\n\n3. AI Development Focus\n- Both countries prioritize AI as a strategic technology [3]\n- China is accelerating AI discipline development and professional training [14]\n- US leads in AI patent registrations, though Israel has the highest AI patent proportion [11]\n\n4. AI Application Areas\n- Both countries are integrating AI into judicial systems [12]\n- China uses AI in courts to manage case growth and efficiency [12]\n- US uses AI tools like \"Correctional Offender Management Profiling\" [12]\n\n5. Ethical Considerations\n- Limited emphasis on ethical and trustworthy AI narratives in both countries [2]\n\nLimitations: Sources provide a fragmented view and may not capture the most recent regulatory developments.\n\nCross-Jurisdictional Nuance: While approaches differ, both countries are actively developing AI governance frameworks with a focus on technological leadership.",
+    "entity_resolution": {
+      "extracted_count": 3,
+      "resolved_count": 1,
+      "resolution_rate": 0.3333333333333333,
+      "avg_confidence": 1.0,
+      "entity_names": [
+        "China"
+      ],
+      "match_types": {
+        "exact": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_bed3ecc577c5",
+        "ent_d45463897889",
+        "ent_3f3c1d9a890e",
+        "ent_20c2fd639e39",
+        "ent_8f995daaf637",
+        "ent_0d5bb4ce2430"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_entity": 20
+      },
+      "avg_chunk_score": 0.8041666666666663,
+      "avg_query_similarity": 0.5527822926640511,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.45,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 11,
+        "explanation": "5 out of 11 claims are supported by the context. Several claims about specific AI applications, patent statistics, and detailed regulatory approaches are not supported by the provided context. The answer includes accurate information about AI policy narratives and leadership emphasis but makes unsupported claims about judicial AI applications and patent data."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer effectively addresses the main query by providing a structured comparison of China and US AI governance across multiple dimensions (regulatory approaches, policy narratives, development focus, applications, and ethics). It clearly distinguishes between the two countries' approaches and provides specific examples. However, it has some limitations: the analysis relies on fragmented sources that may not capture recent developments, some areas lack depth (particularly on specific regulations and implementation details), and the comparison could benefit from more concrete examples of actual governance frameworks and their outcomes."
+    },
+    "performance": {
+      "retrieval_time": 1.1087055206298828,
+      "answer_time": 8.5631844997406,
+      "total_time": 28.936689138412476,
+      "answer_tokens": 326,
+      "cost_usd": 0.004112
+    }
+  },
+  {
+    "test_id": "q4_dual",
+    "query": "Compare China and US AI governance",
+    "mode": "dual",
+    "category": "cross_jurisdictional_comparison",
+    "timestamp": "2025-12-15T01:00:21.905134",
+    "success": true,
+    "error": null,
+    "answer_text": "Direct Answer:\nChina and the United States have distinct approaches to AI governance, with China taking a more proactive legislative stance and the US initially favoring voluntary frameworks, though both are moving towards more structured AI regulation [10, 13].\n\nKey Comparative Insights:\n\n1. Regulatory Approaches\n- China: Actively legislating and releasing ethics documents [13]\n- US: Transitioning from voluntary frameworks to concrete legislation [13]\n\n2. AI Policy Narratives\n- China strongly emphasizes AI leadership and implementation [3]\n- US focuses on multiple narratives, including technology leadership [5, 6]\n\n3. AI Development Focus\n- Both countries prioritize AI as a strategic technology [3]\n- China is accelerating AI professional training and discipline development [14]\n- US leads in AI patent registrations, though Israel has the highest AI patent proportion [11]\n\n4. AI Application Areas\n- Both countries are integrating AI into judicial systems [12]\n- China uses AI in courts to manage case growth and efficiency [12]\n- US uses AI tools like \"Correctional Offender Management Profiling\" [12]\n\n5. Regulatory Trends\n- Both countries show increasing interest in AI governance [10]\n- Emerging similarities with EU-style comprehensive AI regulation [18, 19]\n\nLimitations: Sources provide limited depth on specific regulatory mechanisms and do not comprehensively detail all aspects of AI governance in these countries.\n\nCross-Jurisdictional Context: Both countries are competing for AI leadership while developing distinct but converging regulatory approaches.",
+    "entity_resolution": {
+      "extracted_count": 3,
+      "resolved_count": 1,
+      "resolution_rate": 0.3333333333333333,
+      "avg_confidence": 1.0,
+      "entity_names": [
+        "China"
+      ],
+      "match_types": {
+        "exact": 1
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 6,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 6,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_bed3ecc577c5",
+        "ent_d45463897889",
+        "ent_3f3c1d9a890e",
+        "ent_20c2fd639e39",
+        "ent_8f995daaf637",
+        "ent_0d5bb4ce2430"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_entity": 20
+      },
+      "avg_chunk_score": 0.8041666666666663,
+      "avg_query_similarity": 0.5527822926640511,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.35,
+      "faithfulness_details": {
+        "supported_claims": 7,
+        "total_claims": 17,
+        "explanation": "Only 6 out of 17 claims are clearly supported by the context. Many claims about specific policies, patent data, judicial AI applications, and regulatory transitions are not evidenced in the provided context. The answer appears to draw from sources beyond what was provided."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer effectively addresses the main query by providing a structured comparison of China and US AI governance across multiple dimensions including regulatory approaches, policy narratives, development focus, application areas, and regulatory trends. It clearly distinguishes between China's proactive legislative stance and the US's transition from voluntary to concrete frameworks. However, it has some limitations: lacks specific details about regulatory mechanisms, doesn't provide concrete examples of legislation or policies, and acknowledges gaps in comprehensive coverage of all AI governance aspects. The comparison is well-organized and informative but could benefit from more specific regulatory examples and deeper analysis of implementation differences."
+    },
+    "performance": {
+      "retrieval_time": 0.9333877563476562,
+      "answer_time": 9.117938995361328,
+      "total_time": 31.419923067092896,
+      "answer_tokens": 341,
+      "cost_usd": 0.004172
+    }
+  },
+  {
+    "test_id": "q5_semantic",
+    "query": "What academic research discusses algorithmic bias?",
+    "mode": "semantic",
+    "category": "multi_hop_research",
+    "timestamp": "2025-12-15T01:00:49.587467",
+    "success": true,
+    "error": null,
+    "answer_text": "Academic research extensively discusses algorithmic bias from multiple perspectives:\n\nKey Research Findings on Algorithmic Bias:\n\n1. Conceptual Understanding\n- AI can both detect and amplify bias [7]:\n  - AI systems can help reduce human bias\n  - AI can also potentially reflect and embed existing societal biases\n- Bias is increasingly viewed as a complex \"wicked problem\" requiring multi-stakeholder approaches [19]\n\n2. Detection and Mitigation Methods\n- Researchers have developed techniques to:\n  - Detect bias in datasets and algorithms [2]\n  - Use cross-validation for model evaluation [8]\n  - Apply techniques like undersampling to balance datasets [9]\n\n3. Interdisciplinary Perspectives\n- Intersectional and feminist approaches recommend:\n  - Challenging discriminatory AI systems\n  - Creating more collaborative and consensual AI development [6]\n- Critical approaches emphasize examining bias through social and technical lenses [19]\n\n4. Institutional Responses\n- Organizations like Carnegie Mellon University's Centre for Machine Learning and Health are dedicated to detecting and mitigating algorithmic bias [2]\n- Professional associations and policy institutions are expanding discussions beyond technical fixes [19]\n\nGraph Insights:\n- Algorithmic bias is deeply interconnected with:\n  - Algorithm transparency\n  - AI system optimization\n  - Discrimination detection methods\n\nLimitations: While sources provide comprehensive overview, more empirical research on long-term bias mitigation strategies would be beneficial.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 5,
+      "resolution_rate": 5.0,
+      "avg_confidence": 0.778211796283722,
+      "entity_names": [
+        "algorithmic biases",
+        "algorithmic bias mitigation",
+        "Algorithm Bias Detection",
+        "biases in AI algorithms",
+        "detecting and mitigating bias in algorithms"
+      ],
+      "match_types": {
+        "fuzzy": 5
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 11,
+      "relations_in_subgraph": 15,
+      "relation_types": {
+        "are_proposed_to_be_reduced": 1,
+        "involves": 1,
+        "applies_to": 3,
+        "is_used_for": 3,
+        "influences": 1,
+        "facilitates": 1,
+        "can_be_detected": 1,
+        "can_be_reflected_embedded_and_amplified_by": 1,
+        "is_related_to": 1,
+        "affects": 1,
+        "can_make": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 11,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 15,
+      "relations_mentioned": 1,
+      "relation_coverage_rate": 0.06666666666666667,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_c1f01068a859",
+        "ent_644590cd81b7",
+        "ent_c1344772ab64",
+        "ent_01155eb07464",
+        "ent_6e573394efb8",
+        "ent_cbbd5a52e76e",
+        "ent_958671b10187",
+        "ent_5260d84effb6",
+        "ent_4ddaf0c10398"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "semantic": 6,
+        "graph_entity": 1
+      },
+      "avg_chunk_score": 0.9551749549670652,
+      "avg_query_similarity": 0.5381073519587517,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.69,
+      "faithfulness_details": {
+        "supported_claims": 10,
+        "total_claims": 13,
+        "explanation": "9 out of 13 claims are supported by the context. The answer contains several unsupported claims including references to 'wicked problem' terminology, 'critical approaches', and statements about professional associations that are not present in the context. However, the majority of technical and research-related claims are well-supported."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the query by covering key aspects of academic research on algorithmic bias including conceptual frameworks, detection/mitigation methods, interdisciplinary perspectives, and institutional responses. It provides specific examples and references numbered sources. However, it lacks concrete citations to actual academic papers, author names, or journal titles that would make it more authoritative and useful for someone seeking specific research to reference."
+    },
+    "performance": {
+      "retrieval_time": 1.0509498119354248,
+      "answer_time": 8.521735906600952,
+      "total_time": 27.68209481239319,
+      "answer_tokens": 328,
+      "cost_usd": 0.0042176
+    }
+  },
+  {
+    "test_id": "q5_graph",
+    "query": "What academic research discusses algorithmic bias?",
+    "mode": "graph",
+    "category": "multi_hop_research",
+    "timestamp": "2025-12-15T01:01:18.985896",
+    "success": true,
+    "error": null,
+    "answer_text": "Academic research extensively discusses algorithmic bias from multiple perspectives:\n\nKey Research Findings on Algorithmic Bias:\n\n1. Conceptual Understanding\n- AI can both detect and amplify bias [7]:\n  - AI systems can help reduce human bias\n  - AI can also potentially reflect and embed existing societal biases\n- Bias is increasingly viewed as a complex \"wicked problem\" requiring multi-stakeholder approaches [19]\n\n2. Detection and Mitigation Methods\n- Researchers have developed techniques to:\n  - Detect bias in datasets and algorithms [2]\n  - Use cross-validation for algorithm performance assessment [8]\n  - Apply techniques like undersampling to balance datasets [9]\n\n3. Interdisciplinary Perspectives\n- Intersectional and feminist approaches recommend:\n  - Challenging discriminatory AI systems\n  - Creating more collaborative and consensual AI development [6]\n- Critical approaches emphasize examining bias through social and technical lenses [19]\n\n4. Institutional Responses\n- Organizations like Carnegie Mellon University's Centre for Machine Learning and Health are dedicated to detecting and mitigating algorithmic bias [2]\n- Professional associations and policy institutions are expanding discussions beyond technical fixes [19]\n\nGraph Insights:\n- Algorithmic bias is closely related to:\n  - Algorithm transparency\n  - AI system optimization\n  - Discrimination detection methods\n\nLimitations: While sources provide comprehensive overview, more empirical research on bias mitigation strategies would be beneficial.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 5,
+      "resolution_rate": 5.0,
+      "avg_confidence": 0.778211796283722,
+      "entity_names": [
+        "algorithmic biases",
+        "algorithmic bias mitigation",
+        "Algorithm Bias Detection",
+        "biases in AI algorithms",
+        "detecting and mitigating bias in algorithms"
+      ],
+      "match_types": {
+        "fuzzy": 5
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 11,
+      "relations_in_subgraph": 15,
+      "relation_types": {
+        "are_proposed_to_be_reduced": 1,
+        "involves": 1,
+        "applies_to": 3,
+        "is_used_for": 3,
+        "influences": 1,
+        "facilitates": 1,
+        "can_be_detected": 1,
+        "can_be_reflected_embedded_and_amplified_by": 1,
+        "is_related_to": 1,
+        "affects": 1,
+        "can_make": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 11,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 15,
+      "relations_mentioned": 1,
+      "relation_coverage_rate": 0.06666666666666667,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_c1f01068a859",
+        "ent_644590cd81b7",
+        "ent_c1344772ab64",
+        "ent_01155eb07464",
+        "ent_6e573394efb8",
+        "ent_cbbd5a52e76e",
+        "ent_958671b10187",
+        "ent_5260d84effb6",
+        "ent_4ddaf0c10398"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "semantic": 6,
+        "graph_entity": 1
+      },
+      "avg_chunk_score": 0.9551749549670652,
+      "avg_query_similarity": 0.5381073519587517,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.86,
+      "faithfulness_details": {
+        "supported_claims": 12,
+        "total_claims": 14,
+        "explanation": "Most claims are well-supported by the context, particularly those about AI's dual role in bias, detection methods, and institutional responses. However, some specific claims like 'wicked problem' terminology and statements about professional associations are not supported by the provided context. Reference citations in the answer ([7], [19], etc.) don't match the context format."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the query by covering multiple dimensions of academic research on algorithmic bias including conceptual frameworks, detection/mitigation methods, interdisciplinary perspectives, and institutional responses. It provides specific examples and cites numbered sources. However, it lacks concrete paper titles, author names, or journal references that would make it more academically robust, and could benefit from mentioning specific research domains where bias has been studied (e.g., hiring, criminal justice, healthcare)."
+    },
+    "performance": {
+      "retrieval_time": 1.4142241477966309,
+      "answer_time": 8.514114618301392,
+      "total_time": 29.398175716400146,
+      "answer_tokens": 325,
+      "cost_usd": 0.0042056
+    }
+  },
+  {
+    "test_id": "q5_dual",
+    "query": "What academic research discusses algorithmic bias?",
+    "mode": "dual",
+    "category": "multi_hop_research",
+    "timestamp": "2025-12-15T01:01:45.157051",
+    "success": true,
+    "error": null,
+    "answer_text": "Academic research extensively discusses algorithmic bias from multiple perspectives:\n\nKey Research Findings on Algorithmic Bias:\n\n1. Conceptual Understanding\n- AI can both detect and amplify bias [7]:\n  - AI systems can help reduce human bias\n  - AI can also potentially reflect and embed existing societal biases\n- Bias is increasingly viewed as a complex \"wicked problem\" requiring multi-stakeholder approaches [19]\n\n2. Detection and Mitigation Methods\n- Researchers have developed techniques to:\n  - Detect bias in datasets and algorithms [2]\n  - Use cross-validation for algorithm performance assessment [8]\n  - Apply techniques like undersampling to balance datasets [9]\n\n3. Interdisciplinary Perspectives\n- Intersectional and feminist approaches recommend:\n  - Challenging discriminatory AI systems\n  - Creating more collaborative and consensual AI development [6]\n- Critical approaches emphasize examining bias through social and technical lenses [19]\n\n4. Institutional Responses\n- Organizations like Carnegie Mellon University's Centre for Machine Learning and Health are dedicated to detecting and mitigating algorithmic bias [2]\n- Professional associations and policy institutions are expanding discussions beyond technical fixes [19]\n\nGraph Insights:\n- Algorithmic bias is closely related to:\n  - Algorithm transparency\n  - AI system optimization\n  - Discrimination detection methods\n\nLimitations: While sources provide comprehensive overview, more empirical research on long-term bias mitigation strategies would be beneficial.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 5,
+      "resolution_rate": 5.0,
+      "avg_confidence": 0.778211796283722,
+      "entity_names": [
+        "algorithmic biases",
+        "algorithmic bias mitigation",
+        "Algorithm Bias Detection",
+        "biases in AI algorithms",
+        "detecting and mitigating bias in algorithms"
+      ],
+      "match_types": {
+        "fuzzy": 5
+      }
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 11,
+      "relations_in_subgraph": 15,
+      "relation_types": {
+        "are_proposed_to_be_reduced": 1,
+        "involves": 1,
+        "applies_to": 3,
+        "is_used_for": 3,
+        "influences": 1,
+        "facilitates": 1,
+        "can_be_detected": 1,
+        "can_be_reflected_embedded_and_amplified_by": 1,
+        "is_related_to": 1,
+        "affects": 1,
+        "can_make": 1
+      },
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 11,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 15,
+      "relations_mentioned": 1,
+      "relation_coverage_rate": 0.06666666666666667,
+      "covered_entities": [],
+      "uncovered_entities": [
+        "ent_f5f44604266c",
+        "ent_c1f01068a859",
+        "ent_644590cd81b7",
+        "ent_c1344772ab64",
+        "ent_01155eb07464",
+        "ent_6e573394efb8",
+        "ent_cbbd5a52e76e",
+        "ent_958671b10187",
+        "ent_5260d84effb6",
+        "ent_4ddaf0c10398"
+      ]
+    },
+    "retrieval": {
+      "total_chunks": 20,
+      "chunks_by_source": {
+        "graph_relation": 13,
+        "semantic": 6,
+        "graph_entity": 1
+      },
+      "avg_chunk_score": 0.9551749549670652,
+      "avg_query_similarity": 0.5381073519587517,
+      "source_diversity": {
+        "paper": 20
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.83,
+      "faithfulness_details": {
+        "supported_claims": 10,
+        "total_claims": 12,
+        "explanation": "Most claims are well-supported by the context, with clear evidence for bias detection/amplification, mitigation techniques, intersectional approaches, and CMU's work. However, some claims about 'wicked problems' and professional associations lack specific supporting evidence in the provided context."
+      },
+      "relevancy_score": 0.85,
+      "relevancy_explanation": "The answer comprehensively addresses the query by covering key areas of academic research on algorithmic bias including conceptual frameworks, detection/mitigation methods, interdisciplinary perspectives, and institutional responses. It provides specific research findings and mentions relevant academic institutions. However, it lacks specific author names, journal titles, or publication details that would make the academic research more concrete and verifiable."
+    },
+    "performance": {
+      "retrieval_time": 1.2445504665374756,
+      "answer_time": 8.495197296142578,
+      "total_time": 26.170911073684692,
+      "answer_tokens": 328,
+      "cost_usd": 0.0042176
+    }
+  },
+  {
+    "test_id": "q6_semantic",
+    "query": "What is Snoopy's arch enemy?",
+    "mode": "semantic",
+    "category": "out_of_domain",
+    "timestamp": "2025-12-15T01:02:08.713925",
+    "success": true,
+    "error": null,
+    "answer_text": "I apologize, but I cannot find any information about Snoopy's arch enemy in the provided source documents. The sources appear to be academic papers about AI regulation and technology, primarily in Ukrainian and Russian, and do not contain any information about the Peanuts comic strip character Snoopy or his fictional adversaries.\n\nTo properly answer this question, I would need sources related to the Peanuts comic strip or Snoopy's character background. The current knowledge graph and source documents are not relevant to this query.\n\nIf you're interested in learning about Snoopy's arch enemy, I recommend consulting sources specifically about the Peanuts comic strip, such as Charles Schulz's original works or official Peanuts character guides.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 0,
+      "resolution_rate": 0.0,
+      "avg_confidence": 0.0,
+      "entity_names": [],
+      "match_types": {}
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 0,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 0,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": []
+    },
+    "retrieval": {
+      "total_chunks": 15,
+      "chunks_by_source": {
+        "semantic": 15
+      },
+      "avg_chunk_score": 0.4477352678775787,
+      "avg_query_similarity": 0.38320269584655764,
+      "source_diversity": {
+        "paper": 15
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.83,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 6,
+        "explanation": "5 out of 6 claims are supported. The answer correctly identifies that the context lacks information about Snoopy and accurately describes what the sources actually contain. Only the specific recommendation about Charles Schulz's works is not supported by the context."
+      },
+      "relevancy_score": 0.0,
+      "relevancy_explanation": "The answer completely fails to address the query. While it's honest about not having relevant sources, it doesn't provide the basic factual answer that Snoopy's arch enemy is the Red Baron (or the World War I Flying Ace fantasy). The query asks for simple factual information about a well-known fictional character, but the answer provides no useful information about Snoopy's adversaries."
+    },
+    "performance": {
+      "retrieval_time": 0.8271093368530273,
+      "answer_time": 5.070825576782227,
+      "total_time": 23.556623697280884,
+      "answer_tokens": 162,
+      "cost_usd": 0.0056184
+    }
+  },
+  {
+    "test_id": "q6_graph",
+    "query": "What is Snoopy's arch enemy?",
+    "mode": "graph",
+    "category": "out_of_domain",
+    "timestamp": "2025-12-15T01:02:30.632853",
+    "success": true,
+    "error": null,
+    "answer_text": "I apologize, but I cannot find any information about Snoopy's arch enemy in the provided source documents. The sources appear to be academic papers about AI regulations and technology, primarily in Ukrainian and Russian, and do not contain any information about the Peanuts comic strip character Snoopy or his fictional adversaries.\n\nTo properly answer this question, I would need sources related to the Peanuts comic strip or Snoopy's character background. The current knowledge graph and source documents are not relevant to answering this specific question.\n\nIf you're interested in learning about Snoopy's arch enemy, I recommend consulting sources specifically about the Peanuts comic strip, such as comic book references or Charles Schulz biography materials.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 0,
+      "resolution_rate": 0.0,
+      "avg_confidence": 0.0,
+      "entity_names": [],
+      "match_types": {}
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 0,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 0,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": []
+    },
+    "retrieval": {
+      "total_chunks": 15,
+      "chunks_by_source": {
+        "semantic": 15
+      },
+      "avg_chunk_score": 0.4477352678775787,
+      "avg_query_similarity": 0.38320269584655764,
+      "source_diversity": {
+        "paper": 15
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.83,
+      "faithfulness_details": {
+        "supported_claims": 5,
+        "total_claims": 6,
+        "explanation": "5 out of 6 claims are supported. The answer correctly identifies that the provided context does not contain information about Snoopy and accurately describes what the context does contain. However, the recommendation about consulting Peanuts-related sources is not supported by the context."
+      },
+      "relevancy_score": 0.0,
+      "relevancy_explanation": "The answer completely fails to address the query. While it correctly states that the provided sources don't contain information about Snoopy, it doesn't attempt to answer the straightforward question about Snoopy's arch enemy (which is the Red Baron). The response is overly focused on source limitations rather than providing the requested information."
+    },
+    "performance": {
+      "retrieval_time": 0.7734253406524658,
+      "answer_time": 4.941325902938843,
+      "total_time": 21.918732166290283,
+      "answer_tokens": 160,
+      "cost_usd": 0.0056104
+    }
+  },
+  {
+    "test_id": "q6_dual",
+    "query": "What is Snoopy's arch enemy?",
+    "mode": "dual",
+    "category": "out_of_domain",
+    "timestamp": "2025-12-15T01:02:51.884682",
+    "success": true,
+    "error": null,
+    "answer_text": "I apologize, but I cannot find any information about Snoopy's arch enemy in the provided source documents. The sources appear to be academic papers about AI regulation and technology, primarily in Ukrainian and Russian, and do not contain any information about the Peanuts comic strip character Snoopy or his fictional adversaries.\n\nTo properly answer this question, I would need sources related to the Peanuts comic strip or Snoopy's character background. The current knowledge graph and source documents are not relevant to this query.\n\nIf you're interested in learning about Snoopy's arch enemy, I recommend consulting sources specifically about the Peanuts comic strip, such as comic archives, character guides, or biographical information about Charles Schulz's work.",
+    "entity_resolution": {
+      "extracted_count": 1,
+      "resolved_count": 0,
+      "resolution_rate": 0.0,
+      "avg_confidence": 0.0,
+      "entity_names": [],
+      "match_types": {}
+    },
+    "graph_utilization": {
+      "entities_in_subgraph": 0,
+      "relations_in_subgraph": 0,
+      "relation_types": {},
+      "jurisdictions_covered": []
+    },
+    "coverage": {
+      "entities_in_subgraph": 0,
+      "entities_in_answer": 0,
+      "entity_coverage_rate": 0.0,
+      "relations_in_subgraph": 0,
+      "relations_mentioned": 0,
+      "relation_coverage_rate": 0.0,
+      "covered_entities": [],
+      "uncovered_entities": []
+    },
+    "retrieval": {
+      "total_chunks": 15,
+      "chunks_by_source": {
+        "semantic": 15
+      },
+      "avg_chunk_score": 0.4477352678775787,
+      "avg_query_similarity": 0.38320269584655764,
+      "source_diversity": {
+        "paper": 15
+      },
+      "jurisdiction_diversity": []
+    },
+    "ragas": {
+      "faithfulness_score": 0.8,
+      "faithfulness_details": {
+        "supported_claims": 4,
+        "total_claims": 5,
+        "explanation": "4 out of 5 claims are supported. The assistant correctly identifies that the context doesn't contain information about Snoopy and accurately describes what the context does contain. However, the final recommendation about consulting Peanuts sources is the assistant's own suggestion, not supported by the context."
+      },
+      "relevancy_score": 0.2,
+      "relevancy_explanation": "The answer completely fails to address the main query about Snoopy's arch enemy. While it appropriately acknowledges the lack of relevant source material and provides transparency about limitations, it offers no actual information about Snoopy's arch enemy (the Red Baron). The response is professionally handled but entirely unhelpful for answering the specific question asked."
+    },
+    "performance": {
+      "retrieval_time": 0.6503033638000488,
+      "answer_time": 5.35907244682312,
+      "total_time": 21.25164222717285,
+      "answer_tokens": 163,
+      "cost_usd": 0.0056224
+    }
+  }
+]

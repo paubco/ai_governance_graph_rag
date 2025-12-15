@@ -181,26 +181,46 @@ class RetrievalProcessor:
         understanding = self.understand_query(query)
         
         if not understanding.resolved_entities:
-            # No entities found - fall back to semantic only
-            print("⚠️  No entities resolved, using semantic search only")
-            graph_chunks = []
-            semantic_chunks = self.chunk_retriever._retrieve_semantic(
-                understanding.parsed_query.query_embedding
-            )
+            # No entities found - handle based on mode
+            print("⚠️  No entities resolved")
             
             # Create empty subgraph
             from .config import Subgraph
             subgraph = Subgraph(entities=[], relations=[])
+            graph_chunks = []
+            
+            # For semantic and dual modes, fall back to semantic search
+            # For graph mode, return empty (no entities = no graph retrieval possible)
+            if mode in ["semantic", "dual"]:
+                print("   Falling back to semantic search")
+                semantic_chunks = self.chunk_retriever._retrieve_semantic(
+                    understanding.parsed_query.query_embedding
+                )
+            else:  # mode == "graph"
+                print("   Graph mode requires entities - returning empty result")
+                semantic_chunks = []
             
         else:
             # Phase 3.3.2a: Graph Expansion (PCST)
             subgraph = self.graph_expander.expand(understanding.resolved_entities)
             
-            # Phase 3.3.2b: Dual-Channel Retrieval
-            graph_chunks, semantic_chunks = self.chunk_retriever.retrieve_dual(
-                subgraph=subgraph,
-                query_embedding=understanding.parsed_query.query_embedding
-            )
+            # Phase 3.3.2b: Mode-Aware Retrieval
+            if mode == "semantic":
+                # Semantic-only mode: skip graph retrieval
+                graph_chunks = []
+                semantic_chunks = self.chunk_retriever._retrieve_semantic(
+                    understanding.parsed_query.query_embedding
+                )
+            elif mode == "graph":
+                # Graph-only mode: skip semantic retrieval
+                graph_chunks = self.chunk_retriever._retrieve_graph(subgraph)
+                semantic_chunks = []
+            else:  # mode == "dual" (default)
+                # Dual mode: both channels
+                graph_chunks, semantic_chunks = self.chunk_retriever.retrieve_dual(
+                    subgraph=subgraph,
+                    query_embedding=understanding.parsed_query.query_embedding
+                )
         
         # Phase 3.3.2c: Ranking
         result = self.result_ranker.rank(
