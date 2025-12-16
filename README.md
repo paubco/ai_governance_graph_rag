@@ -1,246 +1,172 @@
-# AI Governance GraphRAG
+# AI Governance GraphRAG Pipeline
 
-> **A knowledge graph that connects AI research with regulations across 48 countries.**
+A knowledge graph construction and retrieval system for cross-jurisdictional AI governance research. Combines 48 regulatory documents from DLA Piper's "AI Laws of the World" with 156 academic papers to enable structured queries across legal and scholarly sources.
 
-<p align="center">
-  <img src="docs/images/graph_preview.png" alt="Knowledge Graph Preview" width="600">
-</p>
-
-## The Problem
-
-AI regulations are emerging worldwide, but they're scattered across jurisdictions and disconnected from academic research. A compliance officer asking *"How do different countries define 'high-risk AI systems'?"* would need to manually read dozens of regulatory documents and cross-reference academic literature.
-
-## The Solution
-
-This project builds a **knowledge graph** that:
-
-1. **Extracts concepts** from 158 academic papers and 48 countries' AI regulations
-2. **Links related ideas** across sources (e.g., "transparency" in the EU AI Act ↔ "explainability" in research)
-3. **Enables cross-domain queries** like:
-   - *"What does academic research say about the transparency requirements in EU AI Act?"*
-   - *"Which jurisdictions mention algorithmic bias?"*
-   - *"How do US and EU approaches to AI risk differ?"*
-
-### Key Finding
-
-**512 "bridge concepts"** appear in both academic papers AND regulatory texts—including `AI System`, `transparency`, `human rights`, and `data protection`. These bridges connect previously siloed knowledge domains.
+**Master's Thesis** — Universitat Oberta de Catalunya (UOC)  
+**Author**: Pau Barba i Colomer  
+**Tutor**: Janneth Chicaiza Espinosa  
+**Date**: December 2025  
+**License**: MIT (code) / CC BY-NC 3.0 (thesis)
 
 ---
 
-## What's a Knowledge Graph?
+## Overview
 
-A knowledge graph represents information as a network of **entities** (things) and **relationships** (connections between things).
+This system implements a GraphRAG (Graph Retrieval-Augmented Generation) pipeline that:
 
-```
-┌──────────────┐                      ┌──────────────┐
-│   EU AI Act  │───── regulates ─────▶│  AI System   │
-│ (Regulation) │                      │ (Technology) │
-└──────────────┘                      └──────────────┘
-       │                                     │
-       │ requires                            │ discussed_in
-       ▼                                     ▼
-┌──────────────┐                      ┌──────────────┐
-│ transparency │◀──── studied_by ─────│ Smith (2024) │
-│  (Concept)   │                      │   (Paper)    │
-└──────────────┘                      └──────────────┘
-```
-
-This structure lets you traverse connections that would be invisible in traditional search.
+1. **Extracts** entities and relations from regulatory and academic texts using LLM-based extraction
+2. **Disambiguates** entities via FAISS blocking with tiered similarity thresholds
+3. **Enriches** the graph with Scopus bibliometric metadata (authors, journals, citations)
+4. **Retrieves** context using dual-channel search (graph traversal + semantic similarity)
+5. **Generates** answers grounded in both graph structure and source text
 
 ---
 
-## Results
+## Quick Start
 
-| What We Built | Count |
-|---------------|-------|
-| 🌐 Jurisdictions covered | 48 |
-| 📄 Academic papers processed | 158 |
-| 🔗 Entities extracted | 55,695 |
-| 🕸️ Relationships discovered | 105,456 |
-| 🌉 Cross-domain bridges | 512 |
+```bash
+# 1. Clone repository
+git clone https://github.com/paubco/ai_governance_graph_rag
+cd ai_governance_graph_rag
 
-### Network Structure
+# 2. Create environment
+conda env create -f environment.yml
+conda activate graphrag
 
-The graph exhibits **scale-free** properties (like the web or social networks):
+# 3. Configure API keys
+cp .env.example .env
+# Edit .env with TOGETHER_API_KEY, ANTHROPIC_API_KEY
 
-- **4 super-hubs** with 500+ connections each
-- **"AI System"** is the most connected concept (3,496 links)
-- 82% of entities have ≤5 connections (long-tail distribution)
+# 4. Start Neo4j (Docker)
+docker-compose up -d neo4j
 
-### Top Connected Concepts
-
-| Concept | Type | Why It Matters |
-|---------|------|----------------|
-| AI System | Technology | Central to all regulations |
-| transparency | Concept | Key requirement across jurisdictions |
-| European Union | Organization | Most comprehensive AI framework |
-| AI Act | Legislation | First major AI law |
-| human rights | Legal Concept | Foundational principle |
-
----
-
-## How It Works
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           DATA SOURCES                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│  📚 Scopus Academic Papers (158)    │    🌍 DLA Piper AI Regulations (48) │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PHASE 1: EXTRACTION                             │
-├─────────────────────────────────────────────────────────────────────────┤
-│  1. Chunk documents into ~500 token segments                            │
-│  2. Extract entities using LLM (Qwen-72B)                               │
-│  3. Disambiguate duplicates (FAISS + embeddings)                        │
-│  4. Extract relationships using LLM (Mistral-7B)                        │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PHASE 2: ENRICHMENT                             │
-├─────────────────────────────────────────────────────────────────────────┤
-│  5. Link citations to Scopus metadata                                   │
-│  6. Match entities to jurisdiction codes                                │
-│  7. Build provenance chains (entity → chunk → source)                   │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PHASE 3: GRAPH + RETRIEVAL                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│  8. Import to Neo4j graph database                                      │
-│  9. Build FAISS vector indices for semantic search                      │
-│  10. Query interface (coming soon)                                      │
-└─────────────────────────────────────────────────────────────────────────┘
+# 5. Run a query
+python -m src.retrieval.run_query "What is the EU AI Act?" --mode dual
 ```
 
 ---
 
-## Use Cases
+## Running Queries
 
-### For Researchers
-- Find which papers discuss specific regulatory concepts
-- Discover connections between research topics and policy frameworks
-- Identify gaps in academic coverage of emerging regulations
+The system supports three retrieval modes for ablation testing:
 
-### For Policy Analysts
-- Compare how different jurisdictions define key terms
-- Trace the academic foundations of regulatory requirements
-- Identify concepts that span multiple legal frameworks
+```bash
+# Semantic-only (baseline)
+python -m src.retrieval.run_query "What are high-risk AI systems?" --mode semantic
 
-### For Compliance Teams
-- Map regulatory requirements to academic best practices
-- Find authoritative sources for compliance documentation
-- Track how concepts like "algorithmic transparency" are interpreted globally
+# Graph-only (entity traversal)
+python -m src.retrieval.run_query "What are high-risk AI systems?" --mode graph
+
+# Dual (both channels - recommended)
+python -m src.retrieval.run_query "What are high-risk AI systems?" --mode dual
+```
+
+Query cost: ~$0.005 | Latency: ~70 seconds | Output: 300-500 tokens with 5-15 source citations
 
 ---
 
-## Technical Details
+## Data Sources
 
-<details>
-<summary><b>Stack</b></summary>
+| Source | Content | Count |
+|--------|---------|-------|
+| Regulations | DLA Piper jurisdiction summaries | 48 |
+| Academic Papers | Scopus PDFs (MinerU-parsed) | 156 |
+| **Total Documents** | | **204** |
+
+---
+
+## Pipeline Results
+
+| Artifact | Count |
+|----------|-------|
+| Chunks | ~25,000 |
+| Pre-entities | ~155,000 |
+| Canonical Entities | ~56,000 |
+| Relations | 150,000+ |
+| L2 Publications | 557 |
+
+---
+
+## Project Structure
+
+```
+ai_governance_graph_rag/
+├── src/
+│   ├── ingestion/          # Data loading
+│   ├── processing/
+│   │   ├── chunking/       # Semantic chunking + BGE-M3 embeddings
+│   │   ├── entities/       # Extraction + disambiguation
+│   │   └── relations/      # OpenIE triplet extraction
+│   ├── enrichment/         # Scopus metadata linking
+│   ├── graph/              # Neo4j + FAISS import
+│   └── retrieval/          # Query processing + generation
+├── data/
+│   ├── raw/                # Original inputs
+│   ├── interim/            # Processing checkpoints
+│   └── processed/          # Final outputs
+└── docs/                   # Documentation
+```
+
+---
+
+## Tech Stack
 
 | Component | Technology |
 |-----------|------------|
-| Graph Database | Neo4j Aura |
-| Vector Search | FAISS (HNSW) |
-| Embeddings | BGE-M3 (1024-dim) |
-| Entity Extraction | Qwen-72B via Together.ai |
-| Relation Extraction | Mistral-7B via Together.ai |
-| Language | Python 3.10+ |
-
-</details>
-
-<details>
-<summary><b>Graph Schema</b></summary>
-
-**Nodes:**
-- `Entity` — Extracted concepts (55,695)
-- `Chunk` — Text segments with provenance (25,131)  
-- `Publication` — Academic papers (158)
-- `L2Publication` — Cited works (557)
-- `Jurisdiction` — Countries/regions (48)
-- `Author` — Paper authors (572)
-- `Journal` — Academic journals (119)
-
-**Relationships:**
-- `RELATION` — Semantic connections (105,456)
-- `EXTRACTED_FROM` — Entity provenance (126,000)
-- `CONTAINS` — Document structure (24,549)
-- `CITES` — Citation links (579)
-- `MATCHED_TO` — Entity-citation alignment (2,388)
-
-</details>
-
-<details>
-<summary><b>Data Quality</b></summary>
-
-| Metric | Value |
-|--------|-------|
-| Entity provenance coverage | 100% |
-| Chunk-to-source attribution | 97.7% |
-| Orphan nodes | 4 |
-| Unique predicates | 20,832 |
-
-</details>
-
-<details>
-<summary><b>Running the Pipeline</b></summary>
-
-```bash
-# Setup
-conda env create -f environment.yml
-conda activate graphrag
-cp .env.example .env  # Add your API keys
-
-# Run pipeline
-python -m src.processing.chunking.chunk_processor
-python -m src.processing.entities.entity_processor
-python -m src.processing.entities.disambiguation_processor
-python -m src.processing.relations.run_relation_extraction
-python -m src.enrichment.enrichment_processor
-python -m src.graph.neo4j_import_processor
-```
-
-</details>
+| LLM (Entity Extraction) | Qwen-72B via Together.ai |
+| LLM (Disambiguation) | Qwen-7B via Together.ai |
+| LLM (Relations) | Mistral-7B via Together.ai |
+| LLM (Generation) | Claude Haiku 3.5 via Anthropic |
+| Embeddings | BGE-M3 (1024-dim, multilingual) |
+| Graph Database | Neo4j + GDS (Steiner Tree) |
+| Vector Store | FAISS (HNSW) |
 
 ---
 
-## Project Context
+## Methodology
 
-**Master's Thesis** — MSc Data Science, Universitat Oberta de Catalunya (UOC)  
-**Author**: Pau Calvet Milián  
-**Date**: December 2025  
-**Advisor**: [TBD]
-
-### Methodology
-
-This project combines techniques from two recent papers:
-
-1. **RAKG** (Zhou et al., 2025) — Entity extraction and disambiguation using LLMs
-2. **RAGulating Compliance** (Agarwal et al., 2025) — Ontology-free relation extraction for regulatory texts
-
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed methodology.
+The implementation follows RAKG methodology (Zhang et al., 2025) with domain-specific adaptations. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details including two-track extraction, tiered disambiguation, and dual-channel retrieval design.
 
 ---
 
-## Acknowledgments
+## Evaluation
 
-- **DLA Piper** for the [AI Laws of the World](https://www.dlapiper.com/en-us/insights/publications/ai-laws-of-the-world) dataset
-- **Scopus** for academic paper metadata and full texts
-- **Together.ai** for affordable LLM API access
+Three-way ablation across 6 query types (18 test scenarios):
+
+| Mode | Mean Faithfulness | Best For |
+|------|-------------------|----------|
+| Semantic | 0.63 | Comparison queries |
+| Graph | 0.66 | Entity-centric queries |
+| Dual | 0.54 | Conceptual synthesis |
+
+Evaluation uses RAGAS metrics (faithfulness, relevancy) with Claude Haiku 3.5 as judge.
+
+---
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical specification, methodology, graph schema |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Code standards, development guide |
+
+---
+
+## References
+
+1. Zhang, H., et al. (2025). "RAKG: Document-level Retrieval Augmented Knowledge Graph Construction."
+2. He, X., et al. (2024). "G-Retriever: Retrieval-Augmented Generation for Textual Graph Understanding." NeurIPS 2024.
+3. Han, H., et al. (2025). "Retrieval-Augmented Generation with Graphs (GraphRAG)." arXiv.
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+- **Code**: MIT License. See [LICENSE](LICENSE).
+- **Thesis document**: CC BY-NC 3.0 (per UOC requirements).
 
 ---
 
-<p align="center">
-  <i>Built with 🧠 and ☕ in Barcelona</i>
-</p>
+## Acknowledgments
+
+Developed as part of a Master's thesis in Data Science at Universitat Oberta de Catalunya (UOC), supervised by Janneth Chicaiza Espinosa.

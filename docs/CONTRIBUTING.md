@@ -1,7 +1,8 @@
 # Contributing / Code Standards
 
 **Project**: AI Governance GraphRAG Pipeline  
-**Last Updated**: December 4, 2025
+**Version**: 1.0  
+**Last Updated**: December 2025
 
 ---
 
@@ -9,194 +10,93 @@
 
 ```
 src/
-├── ingestion/              # Data loading
-│   ├── document_loader.py
-│   ├── scopus_csv_loader.py
-│   ├── dlapiper_scraper.py
-│   └── mineru_metadata_matcher.py
+├── ingestion/                    # Phase 0: Data acquisition
+│   ├── document_loader.py        # Main orchestrator
+│   ├── dlapiper_scraper.py       # Regulation scraping
+│   ├── scopus_csv_loader.py      # Academic metadata loading
+│   └── paper_to_scopus_metadata_matcher.py
 │
-├── processing/
-│   ├── chunking/
-│   │   ├── semantic_chunker.py
-│   │   └── chunk_processor.py
-│   ├── entities/
-│   │   ├── entity_extractor.py
-│   │   ├── entity_processor.py
+├── processing/                   # Phase 1: Core NLP pipeline
+│   ├── chunking/                 # Phase 1A
+│   │   ├── semantic_chunker.py   # BGE-M3 embeddings, cosine similarity
+│   │   └── chunk_processor.py    # Batch processing orchestrator
+│   │
+│   ├── entities/                 # Phase 1B-1C
+│   │   ├── entity_extractor.py   # LLM-based extraction (Qwen-72B)
+│   │   ├── entity_processor.py   # Parallel extraction orchestrator
+│   │   ├── filter_pre_entities.py
 │   │   ├── entity_disambiguator.py
 │   │   ├── disambiguation_processor.py
-│   │   ├── filter_pre_entities.py
+│   │   ├── alias_processor.py
 │   │   └── add_entity_ids.py
-│   └── relations/
-│       ├── relation_extractor.py
+│   │
+│   └── relations/                # Phase 1D
+│       ├── relation_extractor.py # LLM triplet extraction (Mistral-7B)
 │       ├── relation_processor.py
 │       ├── run_relation_extraction.py
 │       ├── build_entity_cooccurrence.py
-│       └── normalize_relations.py
+│       ├── normalize_relations.py
+│       └── build_alias_lookup.py
 │
-├── enrichment/
-│   ├── scopus_enricher.py
-│   ├── author_journal_builder.py
-│   └── citation_matcher.py
+├── enrichment/                   # Phase 2A: Scopus enrichment
+│   ├── enrichment_processor.py   # 10-step pipeline orchestrator
+│   ├── scopus_enricher.py        # Citation matching
+│   └── jurisdiction_matcher.py   # Entity-to-jurisdiction linking
 │
-└── utils/
-    ├── embedder.py
+├── graph/                        # Phase 2B: Storage
+│   ├── neo4j_import_processor.py # Batch Neo4j import
+│   ├── neo4j_importer.py
+│   ├── faiss_builder.py          # HNSW index construction
+│   └── graph_analytics.py
+│
+├── retrieval/                    # Phase 3: Query processing
+│   ├── retrieval_processor.py    # Pipeline orchestration
+│   ├── query_parser.py           # Entity extraction from queries
+│   ├── entity_resolver.py        # FAISS-based entity matching
+│   ├── chunk_retriever.py        # Dual-channel retrieval
+│   ├── graph_expander.py         # PCST subgraph extraction
+│   ├── result_ranker.py          # Multiplicative scoring
+│   ├── answer_generator.py       # LLM generation (Claude)
+│   └── config.py                 # Dataclasses for retrieval
+│
+├── prompts/                      # LLM prompt templates
+│   └── prompts.py
+│
+└── utils/                        # Cross-cutting utilities
+    ├── embedder.py               # BGE-M3 wrapper
     ├── checkpoint_manager.py
     ├── rate_limiter.py
-    └── logger.py
+    ├── logger.py
+    ├── id_generator.py
+    ├── token_counter.py
+    └── neo4j_utils.py
+
+tests/
+├── processing/                   # Phase 1 tests
+├── retrieval/                    # Phase 3 tests
+├── graph/                        # Neo4j + FAISS tests
+├── ingestion/                    # Document loading tests
+└── utils/                        # Utility tests
 ```
 
 ---
 
-## 2. File Header Template (Google Style, Tiered)
+## 2. File Header Template
 
-Scale complexity with the file. Use the simplest format that covers everything.
-
-### Tier 1: Simple (utility files, single-purpose modules)
+All Python files should use this header format:
 
 ```python
 # -*- coding: utf-8 -*-
 """
-One-line summary.
+Brief module title for AI governance GraphRAG pipeline.
 
-Extended prose if needed. No headers, just flowing text.
-"""
-```
-
-### Tier 2: Standard (most files)
-
-```python
-# -*- coding: utf-8 -*-
-"""
-One-line summary.
-
-Extended description as flowing prose - methodology, key details, outputs.
+Detailed description of functionality in 2-3 sentences. Workflow
+or architecture details included where relevant.
 
 Example:
-    result = function_name("input")
-    # Returns: expected_output
+    processor = ClassExample(...)
+    result = processor.method()
 """
-```
-
-### Tier 3: Complex (pipelines, multi-stage processors)
-
-Use **short single-word headers** only when content is truly categorical:
-
-```python
-# -*- coding: utf-8 -*-
-"""
-One-line summary.
-
-Extended prose description of what this does and why.
-
-Workflow:
-    1. Input: description
-    2. Process: description  
-    3. Output: description
-
-Stages:
-    Stage 1: What it does
-    Stage 2: What it does
-
-Config:
-    --flag-name: What it controls
-    --other-flag: What it controls
-
-Example:
-    python src/module/script.py --flag value
-"""
-```
-
-### Header Rules
-
-- **Single word + colon** (`Workflow:`, `Stages:`, `Config:`, `Features:`)
-- **Only when categorical** - if it can be prose, make it prose
-- **Terse content** - no full sentences under headers, just fragments
-- **No metadata headers** - no `Author:`, `Created:`, `Modified:`, `References:`
-
-### Examples
-
-**Simple utility:**
-```python
-"""
-Semantic chunker for AI governance GraphRAG pipeline.
-
-Implements RAKG-style chunking with hierarchical boundaries: headers are hard
-boundaries (respect document structure), within sections use sentence similarity
-for semantic coherence, and sentences are never split (atomic units).
-"""
-```
-
-**Standard with example:**
-```python
-"""
-Hash-based entity ID generator for normalized entities.
-
-Assigns unique, reproducible entity IDs using SHA-256 hashing. Uses first 12 
-characters (48 bits, ~281 trillion combinations) with collision detection.
-Outputs normalized_entities_with_ids.json and entity_name_to_id.json lookup.
-
-Example:
-    entity_id = generate_entity_id("GDPR", "Regulation")
-    # Returns: "ent_a3f4e9c2d5b1"
-"""
-```
-
-**Complex pipeline:**
-```python
-"""
-GPU-optimized entity disambiguation with 4-stage pipeline.
-
-Production pipeline for Phase 1C using GPU-accelerated embedding, FAISS HNSW 
-blocking, and multithreaded LLM verification.
-
-Workflow:
-    1. pre_entities.json (~143k raw)
-    2. pre_entities_clean.json (~21k filtered)
-    3. normalized_entities.json (~18-20k disambiguated)
-
-Stages:
-    Stage 1:   Exact deduplication (name normalization)
-    Stage 1.5: BGE-M3 embedding (1024-dim, GPU)
-    Stage 2:   FAISS HNSW blocking (GPU, parallel)
-    Stage 3:   Tiered threshold filtering (auto-merge high confidence)
-    Stage 4:   SameJudge LLM verification (multithreaded)
-
-Config:
-    --faiss-workers: Parallel FAISS threads (4-8 recommended)
-    --samejudge-workers: Parallel LLM threads (8-12 recommended)
-    --start-from-stage: 1 (all) or 2 (skip dedup+embed)
-    --stop-at-stage: 1-4 for partial runs
-"""
-```
-
-**Filter with features:**
-```python
-"""
-Pre-entity quality filter with academic type normalization.
-
-Conservative filtering to remove metadata entities and low-quality extractions
-before Phase 1C disambiguation.
-
-Features:
-    Academic type normalization (121 → 15 canonical types)
-    Metadata entity removal (identifiers, dates, structural)
-    Character cleaning and length validation
-    Conservative single-mention filtering
-
-Example:
-    python src/processing/entities/filter_pre_entities.py \\
-        --input data/interim/entities/pre_entities.json \\
-        --output data/interim/entities/pre_entities_clean.json
-"""
-```
-
----
-
-## 3. Import Structure
-
-```python
-# -*- coding: utf-8 -*-
-"""..."""
 
 # Standard library
 import json
@@ -219,6 +119,50 @@ from src.utils.embedder import BGEEmbedder
 
 logger = get_logger(__name__)
 ```
+
+**Note**: Do NOT include:
+- `Module: filename.py`
+- `Package: src.xxx`
+- `Purpose: ...`
+- `Author: ...`
+- `Created: ...` / `Modified: ...`
+- `References: ...`
+- `CRITICAL BUG FIX: ...` annotations
+
+---
+
+## 3. Import Structure
+
+Imports should be organized in this order:
+
+```python
+# -*- coding: utf-8 -*-
+"""Module docstring..."""
+
+# Standard library
+import json
+import sys
+from pathlib import Path
+from typing import List, Dict, Optional
+
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Third-party
+import numpy as np
+from tqdm import tqdm
+
+# Local (always absolute from src/)
+from src.utils.logger import get_logger
+from src.utils.embedder import BGEEmbedder
+```
+
+**Rules**:
+- Use absolute imports from `src/` (not relative imports)
+- Group imports with blank lines between sections
+- Sort alphabetically within each section
 
 ---
 
@@ -248,10 +192,21 @@ def extract_entities(chunk_text: str, chunk_id: str) -> List[Dict]:
 | Type | Convention | Example |
 |------|------------|---------|
 | Files | snake_case | `entity_extractor.py` |
-| Classes | PascalCase | `RAKGEntityExtractor` |
+| Classes | PascalCase with role suffix | `EntityProcessor`, `ChunkRetriever` |
 | Functions | snake_case | `extract_entities()` |
 | Constants | UPPER_SNAKE | `MAX_CHUNK_SIZE` |
 | Private | _prefix | `_parse_json()` |
+
+**Class role suffixes**:
+- `*Processor`: Orchestrates batch operations
+- `*Retriever`: Fetches data
+- `*Builder`: Constructs artifacts
+- `*Parser`: Parses input
+- `*Pipeline`: End-to-end flow
+
+**Embedding terminology**:
+- `embedding` (singular): One vector
+- `embeddings` (plural): Module or collection
 
 ---
 
@@ -260,28 +215,39 @@ def extract_entities(chunk_text: str, chunk_id: str) -> List[Dict]:
 Always specify encoding:
 
 ```python
-# Reading
+# Reading JSON
 with open(path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
-# Writing
+# Writing JSON
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
 
 # Scopus CSV (has BOM)
 with open(path, 'r', encoding='utf-8-sig') as f:
     reader = csv.DictReader(f)
+
+# JSONL streaming
+with open(path, 'r', encoding='utf-8') as f:
+    for line in f:
+        record = json.loads(line)
 ```
 
 ---
 
 ## 7. Data Directories
 
-| Directory | Purpose |
-|-----------|---------|
-| `data/raw/` | Original inputs (read-only) |
-| `data/interim/` | Checkpoints, partial outputs |
-| `data/processed/` | Final outputs |
+| Directory | Purpose | Access |
+|-----------|---------|--------|
+| `data/raw/` | Original inputs | Read-only |
+| `data/interim/` | Checkpoints, partial outputs | Read/write |
+| `data/processed/` | Final outputs | Write once |
+
+**File format conventions**:
+- `.json`: Small files, lookups, configs
+- `.jsonl`: Large files, streaming data
+- `.index`: FAISS indices
+- `.csv`: Tabular exports
 
 ---
 
@@ -291,19 +257,153 @@ with open(path, 'r', encoding='utf-8-sig') as f:
 <type>(<scope>): <description>
 
 Types: feat, fix, refactor, docs, test, chore
-Scopes: ingestion, chunking, entities, relations, enrichment, utils
+Scopes: ingestion, chunking, entities, relations, enrichment, retrieval, utils
+```
+
+**Examples**:
+```
+feat(entities): add tiered threshold disambiguation
+fix(relations): handle empty co-occurrence matrix
+refactor(retrieval): extract scoring to separate module
+docs(architecture): update Phase 3 retrieval diagram
+test(entities): add alias tracking coverage
+chore: update environment.yml dependencies
 ```
 
 ---
 
-## 9. Checklist
+## 9. Testing
+
+### Test File Naming
+
+- Unit tests: `test_{module}.py`
+- Integration tests: `test_{feature}_integration.py`
+
+### Test Location
+
+Tests mirror the `src/` structure:
+```
+tests/
+├── processing/
+│   ├── test_semantic_chunker.py
+│   ├── test_entity_extraction.py
+│   └── test_relation_extraction.py
+├── retrieval/
+│   ├── test_answer_generator.py
+│   └── test_retrieval_complete.py
+└── ...
+```
+
+### Running Tests
+
+```bash
+# All tests
+pytest tests/
+
+# Specific module
+pytest tests/processing/test_entity_extraction.py
+
+# With coverage
+pytest --cov=src tests/
+```
+
+---
+
+## 10. Code Quality Checklist
 
 When creating/modifying a file:
 
 - [ ] `# -*- coding: utf-8 -*-` at top
-- [ ] Module docstring with purpose
-- [ ] Imports in correct order
-- [ ] Type hints on functions
-- [ ] `encoding='utf-8'` on file ops
-- [ ] Pathlib for paths
-- [ ] Logger instead of print
+- [ ] Module docstring with brief description + example
+- [ ] Imports in correct order (stdlib, project root, third-party, local)
+- [ ] Type hints on all functions
+- [ ] `encoding='utf-8'` on all file operations
+- [ ] Pathlib for paths (not string concatenation)
+- [ ] Logger instead of print statements
+- [ ] No hardcoded paths (use `data/interim/...` pattern)
+- [ ] Google-style docstrings for public functions
+
+---
+
+## 11. Environment Setup
+
+```bash
+# Create environment
+conda env create -f environment.yml
+conda activate graphrag
+
+# Install dev dependencies
+pip install pytest pytest-cov black isort
+
+# Configure API keys
+cp .env.example .env
+# Edit .env with TOGETHER_API_KEY, ANTHROPIC_API_KEY
+```
+
+---
+
+## 12. Common Patterns
+
+### LLM Calls
+
+```python
+from together import Together
+
+client = Together(api_key=os.getenv("TOGETHER_API_KEY"))
+response = client.chat.completions.create(
+    model="mistralai/Mistral-7B-Instruct-v0.3",
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0.0,
+    max_tokens=4096
+)
+result = response.choices[0].message.content
+```
+
+### Batch Processing with Progress
+
+```python
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
+
+with ThreadPoolExecutor(max_workers=10) as executor:
+    results = list(tqdm(
+        executor.map(process_item, items),
+        total=len(items),
+        desc="Processing"
+    ))
+```
+
+### Checkpoint Loading
+
+```python
+checkpoint_path = Path("data/interim/entities/checkpoint.json")
+if checkpoint_path.exists():
+    with open(checkpoint_path, 'r', encoding='utf-8') as f:
+        processed_ids = set(json.load(f))
+else:
+    processed_ids = set()
+```
+
+---
+
+## 13. Known Issues to Avoid
+
+| Anti-pattern | Why | Instead |
+|--------------|-----|---------|
+| `Dict[str, Any]` everywhere | No type safety | Use dataclasses or Pydantic models |
+| Hardcoded paths | Breaks portability | Use `data/interim/...` pattern |
+| Bare `except:` | Hides bugs | Catch specific exceptions |
+| `print()` for logging | No levels, no file output | Use `logger.info()` |
+| Relative imports | Fragile across moves | Use `from src.module import` |
+
+---
+
+## 14. Future Improvements (v1.1)
+
+See `docs/V1_1_IMPLEMENTATION_PLAN.md` for planned improvements:
+
+- Pydantic models for all data structures
+- Centralized config in `src/config/`
+- Consolidated LLM client in `src/utils/llm.py`
+- Single processor per phase (no tripartite split)
+- Mistral-7B throughout (cost savings)
