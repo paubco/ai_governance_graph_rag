@@ -536,8 +536,8 @@ def main():
     
     # Run pipeline
     report = processor.process(
-        sample_size=args.sample if args.sample > 0 else None,
-        random_seed=args.seed
+        sample=args.sample if args.sample > 0 else 0,
+        seed=args.seed
     )
     
     logger.info("Pipeline completed successfully")
