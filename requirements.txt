@@ -22,6 +22,7 @@ FlagEmbedding>=1.2.0
 together>=1.2.0
 openai>= 2.8.1
 anthropic>= 0.75.0
+clean-text[gpl]
 
 # Scopus
 pybliometrics>=4.4
