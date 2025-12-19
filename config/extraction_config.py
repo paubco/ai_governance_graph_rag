@@ -128,14 +128,13 @@ SEMANTIC_ENTITY_TYPES = {
     "Technology": "AI systems/tools/models (ChatGPT, BERT, neural networks)",
     "Organization": "Formal institutions (European Commission, NIST, UNESCO)",
     "Location": "Geographic/jurisdictional (EU, California, China)",
-    "Principle": "Normative values (transparency, fairness, accountability)",
+    "Principle": "ONLY ethical/normative values (transparency, fairness, accountability, human dignity, privacy)",
 }
 
 ACADEMIC_ENTITY_TYPES = {
     "Citation": "In-text references: 'Author (Year)', 'Author et al. (Year)'",
     "Author": "Named researchers (full names only)",
     "Journal": "Publication venues, conferences",
-    "Self-Reference": "Multi-word phrases: 'this study', 'we propose', 'our approach'",
 }
 
 # Convenience lists for validation

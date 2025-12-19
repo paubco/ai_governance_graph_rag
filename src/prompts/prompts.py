@@ -2,11 +2,10 @@
 """
 LLM prompt templates - Mistral-7B optimized with examples.
 
-Structure follows Mistral best practices:
-- Hierarchical sections with # headers
-- Explicit type list
-- Examples for anchoring
-- Clear constraints
+v1.3 changes:
+- Remove Self-Reference type
+- Add entity splitting guidance
+- Tighten Principle to ONLY ethical values
 """
 
 from config.extraction_config import (
@@ -39,9 +38,12 @@ ONLY use these exact type names:
 # Rules
 - Use EXACT type names from the list above
 - Do NOT invent new types
+- Split compound entities: "AI and ML" → extract "AI" AND "ML" separately
 - Regulation = the law/act ITSELF (e.g., "EU AI Act", "GDPR", "Article 5")
 - RegulatoryConcept = IDEAS about regulation (e.g., "compliance", "data governance")
 - Article/Amendment references are Regulation, NOT RegulatoryConcept
+- Principle = ONLY ethical/normative values (transparency, fairness, accountability)
+- Principle is NOT: languages, metrics, emotions, skills, returns
 
 # DO NOT EXTRACT
 - Citations: "Author (Year)", "et al.", "[1]", "[2]"
@@ -58,11 +60,11 @@ Output: {{{{"entities": [
   {{{{"name": "high-risk systems", "type": "TechnicalConcept", "description": "AI systems requiring strict oversight"}}}}
 ]}}}}
 
-Input: "Article 9 of the GDPR addresses transparency requirements."
+Input: "AI and ML technologies enable automated decision-making."
 Output: {{{{"entities": [
-  {{{{"name": "Article 9", "type": "Regulation", "description": "GDPR provision"}}}},
-  {{{{"name": "GDPR", "type": "Regulation", "description": "EU data protection law"}}}},
-  {{{{"name": "transparency", "type": "Principle", "description": "Normative value of openness"}}}}
+  {{{{"name": "AI", "type": "Technology", "description": "Artificial intelligence"}}}},
+  {{{{"name": "ML", "type": "Technology", "description": "Machine learning"}}}},
+  {{{{"name": "automated decision-making", "type": "TechnicalProcess", "description": "Algorithmic decisions without human input"}}}}
 ]}}}}
 
 Input: "Floridi (2018) argues that algorithmic fairness requires accountability mechanisms."
@@ -94,12 +96,12 @@ ONLY use these exact type names:
 - Citation: "Author (Year)" patterns, bracketed references [1], [2]
 - Author: Full researcher names only
 - Journal: Publication venue names
-- Self-Reference: ONLY these phrases: "this study", "we propose", "our approach", "the authors", "this paper", "our findings", "we argue", "our method"
 
 # DO NOT EXTRACT
 - Concepts, processes, principles
 - Regulations, technologies, organizations
 - Locations, dates, page numbers
+- "this study", "we propose" (skip these entirely)
 
 # Examples
 
@@ -109,12 +111,11 @@ Output: {{{{"entities": [
   {{{{"name": "Nature", "type": "Journal", "description": "Scientific publication venue"}}}}
 ]}}}}
 
-Input: "As shown in [1], [2], and Jobin et al. (2019), this study proposes a new framework."
+Input: "As shown in [1], [2], and Jobin et al. (2019), the framework addresses key issues."
 Output: {{{{"entities": [
   {{{{"name": "[1]", "type": "Citation", "description": "Numbered reference"}}}},
   {{{{"name": "[2]", "type": "Citation", "description": "Numbered reference"}}}},
-  {{{{"name": "Jobin et al. (2019)", "type": "Citation", "description": "Reference to Jobin survey"}}}},
-  {{{{"name": "this study", "type": "Self-Reference", "description": "Reference to current work"}}}}
+  {{{{"name": "Jobin et al. (2019)", "type": "Citation", "description": "Reference to Jobin survey"}}}}
 ]}}}}
 
 Input: "ChatGPT demonstrates remarkable capabilities in natural language processing."
