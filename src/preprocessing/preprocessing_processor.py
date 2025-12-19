@@ -2,11 +2,24 @@
 """
 Module: preprocessing_processor.py
 Package: src.preprocessing
-Purpose: Orchestrates text cleaning, language detection, and translation
+Purpose: Orchestrates text cleaning, language detection, translation, and reference extraction
 
 Author: Pau Barba i Colomer
 Created: 2025-12-18
 Modified: 2025-12-18
+
+Pipeline:
+    1. Load documents via DocumentLoader
+    2. Clean text (encoding, HTML, LaTeX, images, emails, garbage sections)
+    3. Extract references from papers (saved separately)
+    4. Detect language
+    5. Translate non-English to English
+    6. Output cleaned JSONL + references JSON + report
+
+Outputs:
+    - documents_cleaned.jsonl: Cleaned text (references removed)
+    - paper_references.json: Extracted bibliography per paper
+    - preprocessing_report.json: Statistics and metadata
 
 References:
     - See ARCHITECTURE.md § 7 for known issues
@@ -16,7 +29,7 @@ References:
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field
 
 # Project root (src/preprocessing/preprocessing_processor.py → 3 parents)
@@ -53,6 +66,7 @@ class CleanedDocument:
     original_text_length: int
     cleaned_text_length: int
     cleaning_fixes: Dict[str, int]
+    references: List[str] = field(default_factory=list)  # Extracted bibliography
     metadata: Dict = field(default_factory=dict)
     
     def to_dict(self) -> Dict:
@@ -69,6 +83,7 @@ class CleanedDocument:
             "original_text_length": self.original_text_length,
             "cleaned_text_length": self.cleaned_text_length,
             "cleaning_fixes": self.cleaning_fixes,
+            "reference_count": len(self.references),  # Count only, refs saved separately
             "metadata": self.metadata,
         }
 
@@ -108,6 +123,10 @@ class PreprocessingProcessor:
         # Output paths
         self.output_jsonl = self.output_dir / "documents_cleaned.jsonl"
         self.output_report = self.output_dir / "preprocessing_report.json"
+        self.output_references = self.output_dir / "paper_references.json"
+        
+        # References storage (doc_id → list of refs)
+        self.paper_references: Dict[str, List[str]] = {}
         
         # Statistics
         self.stats = {
@@ -121,7 +140,15 @@ class PreprocessingProcessor:
             "cleaning_stats": {
                 "encoding": 0,
                 "html": 0,
-                "latex": 0
+                "latex": 0,
+                "images": 0,
+                "emails": 0,
+                "garbage_sections": 0,
+                "references_extracted": 0
+            },
+            "references_stats": {
+                "papers_with_refs": 0,
+                "total_refs_extracted": 0
             },
             "non_english_docs": [],
             "errors": []
@@ -167,12 +194,14 @@ class PreprocessingProcessor:
         
         # Save outputs
         self._save_documents(cleaned_documents)
+        self._save_references()
         self._save_report()
         
         logger.info("=" * 60)
         logger.info("PREPROCESSING COMPLETE")
         logger.info(f"Documents processed: {len(cleaned_documents)}")
         logger.info(f"Output: {self.output_jsonl}")
+        logger.info(f"References: {self.output_references}")
         logger.info(f"Report: {self.output_report}")
         logger.info("=" * 60)
         
@@ -188,13 +217,22 @@ class PreprocessingProcessor:
         Returns:
             CleanedDocument
         """
-        # Step 1: Clean text
-        cleaning_result = self.text_cleaner.clean(doc.text)
+        # Step 1: Clean text (includes reference extraction for papers)
+        is_paper = doc.source_type != "regulation"
+        cleaning_result = self.text_cleaner.clean(doc.text, extract_references=is_paper)
         
         # Update cleaning stats
         for fix_type, count in cleaning_result.fixes_applied.items():
             self.stats["cleaning_stats"][fix_type] = \
                 self.stats["cleaning_stats"].get(fix_type, 0) + count
+        
+        # Handle extracted references (papers only)
+        references = []
+        if is_paper and cleaning_result.references:
+            references = cleaning_result.references
+            self.paper_references[doc.doc_id] = references
+            self.stats["references_stats"]["papers_with_refs"] += 1
+            self.stats["references_stats"]["total_refs_extracted"] += len(references)
         
         # Step 2: Detect language
         detected_lang, confidence = self._detect_language(cleaning_result.text)
@@ -252,6 +290,7 @@ class PreprocessingProcessor:
             original_text_length=cleaning_result.original_length,
             cleaned_text_length=len(translation_result.text),
             cleaning_fixes=cleaning_result.fixes_applied,
+            references=references,
             metadata=doc.metadata
         )
     
@@ -287,6 +326,20 @@ class PreprocessingProcessor:
         
         logger.info(f"Saved {len(documents)} documents to {self.output_jsonl}")
     
+    def _save_references(self):
+        """Save extracted references to JSON (separate file for later use)."""
+        import json
+        
+        if not self.paper_references:
+            logger.info("No references extracted (no papers or no reference sections)")
+            return
+        
+        with open(self.output_references, 'w', encoding='utf-8') as f:
+            json.dump(self.paper_references, f, indent=2, ensure_ascii=False)
+        
+        total_refs = sum(len(refs) for refs in self.paper_references.values())
+        logger.info(f"Saved {total_refs} references from {len(self.paper_references)} papers to {self.output_references}")
+    
     def _save_report(self):
         """Save preprocessing report to JSON."""
         import json
@@ -319,6 +372,7 @@ class PreprocessingProcessor:
         logger.info(f"Chars before: {self.stats['total_chars_before']:,}")
         logger.info(f"Chars after: {self.stats['total_chars_after']:,}")
         logger.info(f"Cleaning fixes: {self.stats['cleaning_stats']}")
+        logger.info(f"References: {self.stats['references_stats']['total_refs_extracted']} from {self.stats['references_stats']['papers_with_refs']} papers")
         if self.stats['errors']:
             logger.warning(f"Errors: {len(self.stats['errors'])}")
         
@@ -367,6 +421,7 @@ def main():
     
     print(f"\nDone! Processed {len(cleaned_docs)} documents.")
     print(f"Output: data/interim/preprocessed/documents_cleaned.jsonl")
+    print(f"References: data/interim/preprocessed/paper_references.json")
 
 
 if __name__ == "__main__":

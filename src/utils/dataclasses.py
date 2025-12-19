@@ -53,24 +53,35 @@ class Chunk:
     """
     Text chunk from document.
     
-    Metadata is stored inline (not normalized) for query-time simplicity.
-    ~12MB duplication cost is acceptable vs. join complexity.
+    Lists-first design for merged chunk provenance (Phase 1A deduplication).
+    Convenience properties provide singular access for downstream compatibility.
     """
-    chunk_id: str                           # e.g., "reg_EU_CHUNK_0042"
-    document_id: str                        # e.g., "reg_EU" or "paper_042"
+    chunk_ids: List[str]                    # Primary - supports merged chunks
+    document_ids: List[str]                 # Primary - multi-doc provenance
     text: str
     position: int                           # 0-indexed position in document
     sentence_count: int
     token_count: int
-    section_header: Optional[str] = None    # This chunk's section
-    metadata: Dict[str, Any] = field(default_factory=dict)  # Inline doc metadata
+    section_header: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @property
+    def chunk_id(self) -> str:
+        """Convenience - first chunk ID."""
+        return self.chunk_ids[0] if self.chunk_ids else ""
+    
+    @property
+    def document_id(self) -> str:
+        """Convenience - first document ID."""
+        return self.document_ids[0] if self.document_ids else ""
     
     @property
     def doc_type(self) -> str:
         """Infer document type from ID prefix."""
-        if self.document_id.startswith("reg_"):
+        doc_id = self.document_id
+        if doc_id.startswith("reg_"):
             return "regulation"
-        elif self.document_id.startswith("paper_"):
+        elif doc_id.startswith("paper_"):
             return "paper"
         return "unknown"
     

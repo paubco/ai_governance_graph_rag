@@ -144,6 +144,34 @@ class PreEntityProcessor:
         
         logger.info(f"PreEntityProcessor initialized with {num_workers} workers")
     
+    def _get_chunk_id(self, chunk: Dict) -> str:
+        """Get chunk ID, handling both chunk_id and chunk_ids (deduplicated)."""
+        if 'chunk_id' in chunk:
+            return chunk['chunk_id']
+        elif 'chunk_ids' in chunk:
+            return chunk['chunk_ids'][0] if chunk['chunk_ids'] else 'unknown'
+        return 'unknown'
+    
+    def _get_doc_type(self, chunk: Dict) -> str:
+        """Get doc type from chunk, handling both document_id and document_ids."""
+        # Try document_id first
+        if 'document_id' in chunk:
+            doc_id = chunk['document_id']
+        elif 'document_ids' in chunk:
+            doc_id = chunk['document_ids'][0] if chunk['document_ids'] else ''
+        else:
+            doc_id = ''
+        
+        # Infer from ID prefix
+        if doc_id.startswith("reg_"):
+            return "regulation"
+        elif doc_id.startswith("paper_"):
+            return "paper"
+        
+        # Fallback: try chunk_id prefix
+        chunk_id = self._get_chunk_id(chunk)
+        return self._infer_doc_type(chunk_id)
+    
     def load_chunks(self, input_file: Path) -> List[Dict]:
         """Load chunks from JSONL file."""
         logger.info(f"Loading chunks from {input_file}...")
@@ -229,15 +257,15 @@ class PreEntityProcessor:
         Extract entities from chunk with exponential backoff.
         
         Args:
-            chunk: Chunk dict with chunk_id, text, and optionally doc_type
+            chunk: Chunk dict with chunk_id/chunk_ids, text, and optionally doc_type
             max_retries: Maximum retry attempts
             
         Returns:
             Result dict with chunk_id, entities list
         """
-        chunk_id = chunk['chunk_id']
+        chunk_id = self._get_chunk_id(chunk)
         chunk_text = chunk['text']
-        doc_type = chunk.get('doc_type') or self._infer_doc_type(chunk_id)
+        doc_type = self._get_doc_type(chunk)
         
         for attempt in range(max_retries):
             try:
@@ -312,7 +340,7 @@ class PreEntityProcessor:
         # Filter out already-processed chunks
         chunks_to_process = [
             c for c in chunks
-            if c['chunk_id'] not in self.processed_chunk_ids
+            if self._get_chunk_id(c) not in self.processed_chunk_ids
         ]
         
         logger.info(f"Chunks remaining: {len(chunks_to_process):,} "

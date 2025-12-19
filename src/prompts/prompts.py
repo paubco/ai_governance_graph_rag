@@ -22,20 +22,26 @@ TYPES (choose exactly one):
 - Regulation: Legally binding documents, laws, directives
 - Technology: AI systems, models, algorithms, tools
 - Organization: Institutions, companies, agencies with formal structure
-- Person: Named individuals
+- Person: Named individuals (NOT paper authors or cited researchers)
 - Location: Geographic/jurisdictional entities
 - Process: Procedures, methodologies with defined steps
-- Document: Reports, standards, non-binding publications
+- Document: Reports, standards, non-binding publications (NOT journal articles)
 - Group: Collectives, categories without formal structure
-- Metric: Measurable quantities, KPIs
 - Principle: Normative values, rights, ethical concepts
-- Event: Conferences, milestones, temporal occurrences
 
 DOMAINS (choose exactly one):
 - Regulatory: Legal requirements, compliance, policy rules
 - Political: Governance actors, policy-making bodies
 - Technical: AI/ML systems, methods, algorithms
 - General: Domain-agnostic or cross-cutting
+
+DO NOT EXTRACT (handled separately):
+- Citations: "Author (Year)", "Author et al. (Year)", any parenthetical references
+- Journal names: "Nature", "AI & Society", "Frontiers in..."
+- Author names from paper metadata or citations
+- DOIs, page numbers, publication dates, affiliations
+- Self-references: "this study", "we propose", "the authors"
+- Table/Figure references: "Table 1", "Figure 2"
 
 TYPE DISAMBIGUATION:
 - Concept vs Principle: Has normative/ethical weight? -> Principle. Otherwise -> Concept.
@@ -54,17 +60,10 @@ DOMAIN DISAMBIGUATION:
 TEXT:
 {chunk_text}
 
-OUTPUT (JSON array only, no other text):
-[
-  {{
-    "name": "entity name (canonical form)",
-    "type": "one of the 12 types above",
-    "domain": "one of the 4 domains above",
-    "description": "brief description of this entity in context"
-  }}
-]
-
-JSON:"""
+Respond with a JSON object containing an "entities" array:
+{{"entities": [
+  {{"name": "entity name", "type": "one of 10 types", "domain": "one of 4 domains", "description": "brief description"}}
+]}}"""
 
 
 # ============================================================================
@@ -75,29 +74,32 @@ ACADEMIC_EXTRACTION_PROMPT = """Extract academic entities (citations, authors, j
 
 TYPES (choose exactly one):
 - Citation: In-text references like "Author (Year)" or "Author et al. (Year)"
-- Author: Named researchers or writers
-- Journal: Publication venues, conference proceedings
-- Self-Reference: References to current work ("this study", "the authors", "we propose")
+- Author: Named researchers or writers (full names only)
+- Journal: Publication venues, conference proceedings, journal names
+- Self-Reference: ONLY multi-word phrases referring to current work
+
+REDUNDANT EXTRACTION STRATEGY:
+Extract BOTH complete reference blobs AND their components separately.
+Example text: "as shown in page 12 of Floridi (2018) published in Nature"
+Extract ALL of:
+  - "page 12 of Floridi (2018) published in Nature" (Citation - full blob)
+  - "Floridi (2018)" (Citation - core reference)
+  - "Nature" (Journal)
+
+This redundancy is intentional - extract overlapping entities.
+
+SELF-REFERENCE RULES:
+- Must be at least 2 words
+- VALID: "this study", "the authors", "we propose", "our approach", "this paper", "our findings"
+- INVALID: single words, numbers, "Citation", generic terms
 
 TEXT:
 {chunk_text}
 
-OUTPUT (JSON array only, no other text):
-[
-  {{
-    "name": "entity name",
-    "type": "one of the 4 types above",
-    "description": "brief description"
-  }}
-]
-
-RULES:
-- Extract citations in standard form: "LastName (Year)" or "LastName et al. (Year)"
-- For authors, use full name if available
-- Self-references should capture the exact phrase used
-- If no academic entities found, return empty array: []
-
-JSON:"""
+Respond with a JSON object containing an "entities" array:
+{{"entities": [
+  {{"name": "entity name", "type": "one of 4 types", "description": "brief description"}}
+]}}"""
 
 
 # ============================================================================

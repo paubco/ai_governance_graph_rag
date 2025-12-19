@@ -6,9 +6,9 @@ Tests dual-pass entity extraction with Type x Domain schema validation.
 Uses pytest with fixtures for extractor and sample chunks.
 
 Run:
-    pytest tests/phase1b/test_entity_extraction.py -v
-    pytest tests/phase1b/test_entity_extraction.py -v -k "test_semantic"
-    pytest tests/phase1b/test_entity_extraction.py -v --live-api  # Run live API tests
+    pytest src/processing/entities/tests/test_entity_extraction.py -v
+    pytest src/processing/entities/tests/test_entity_extraction.py -v -k "test_semantic"
+    pytest src/processing/entities/tests/test_entity_extraction.py -v -k "TestLiveAPI"
 
 References:
     - CONTRIBUTING.md Section 2.3 (Testing standards)
@@ -22,11 +22,14 @@ from typing import List, Dict
 from unittest.mock import Mock, patch, MagicMock
 
 import sys
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from dotenv import load_dotenv
+load_dotenv(PROJECT_ROOT / '.env')
+
 from src.utils.dataclasses import PreEntity
-from src.config.extraction_config import (
+from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,
     SEMANTIC_DOMAINS,
     ACADEMIC_ENTITY_TYPES,
@@ -85,7 +88,7 @@ def sample_paper_chunk() -> Dict:
 @pytest.fixture
 def mock_semantic_response() -> str:
     """Mock LLM response for semantic extraction."""
-    return json.dumps([
+    return json.dumps({"entities": [
         {
             "name": "EU AI Act",
             "type": "Regulation",
@@ -116,13 +119,13 @@ def mock_semantic_response() -> str:
             "domain": "Technical",
             "description": "Category of AI systems subject to strict requirements"
         },
-    ])
+    ]})
 
 
 @pytest.fixture
 def mock_academic_response() -> str:
     """Mock LLM response for academic extraction."""
-    return json.dumps([
+    return json.dumps({"entities": [
         {
             "name": "Floridi (2018)",
             "type": "Citation",
@@ -138,7 +141,7 @@ def mock_academic_response() -> str:
             "type": "Self-Reference",
             "description": "Self-reference to the paper's authors"
         },
-    ])
+    ]})
 
 
 # ============================================================================
@@ -149,15 +152,15 @@ class TestTypeValidation:
     """Tests for type and domain validation."""
     
     def test_semantic_types_count(self, semantic_types):
-        """Verify we have exactly 12 semantic types."""
-        assert len(semantic_types) == 12
+        """Verify we have exactly 10 semantic types."""
+        assert len(semantic_types) == 10
     
     def test_semantic_types_expected(self, semantic_types):
         """Verify expected semantic types are present."""
         expected = {
             "Concept", "Regulation", "Technology", "Organization",
             "Person", "Location", "Process", "Document",
-            "Group", "Metric", "Principle", "Event"
+            "Group", "Principle"
         }
         assert semantic_types == expected
     
@@ -253,8 +256,8 @@ class TestPreEntityDataclass:
 class TestJSONParsing:
     """Tests for JSON response parsing."""
     
-    def test_parse_clean_json_array(self):
-        """Test parsing clean JSON array."""
+    def test_parse_clean_json_object(self):
+        """Test parsing clean JSON object with entities array."""
         from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
         
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
@@ -263,7 +266,7 @@ class TestJSONParsing:
             extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
-            content = '[{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]'
+            content = '{"entities": [{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]}'
             result = extractor._parse_json_response(content, "chunk_001", "semantic")
             
             assert len(result) == 1
@@ -279,7 +282,7 @@ class TestJSONParsing:
             extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
-            content = '```json\n[{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]\n```'
+            content = '```json\n{"entities": [{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]}\n```'
             result = extractor._parse_json_response(content, "chunk_001", "semantic")
             
             assert len(result) == 1
@@ -295,7 +298,12 @@ class TestJSONParsing:
             extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
+            # Test empty array
             result = extractor._parse_json_response("[]", "chunk_001", "semantic")
+            assert result == []
+            
+            # Test empty entities in object format
+            result = extractor._parse_json_response('{"entities": []}', "chunk_001", "semantic")
             assert result == []
     
     def test_parse_malformed_json(self):
@@ -435,7 +443,7 @@ class TestIntegrationMocked:
         """Test full extraction flow for regulation chunk."""
         from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
         
-        with patch('src.processing.entities.entity_extractor.Together') as mock_together:
+        with patch('src.processing.entities.pre_entity_extractor.Together') as mock_together:
             # Setup mock
             mock_client = MagicMock()
             mock_together.return_value = mock_client
@@ -468,7 +476,7 @@ class TestIntegrationMocked:
         """Test full extraction flow for paper chunk (both passes)."""
         from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
         
-        with patch('src.processing.entities.entity_extractor.Together') as mock_together:
+        with patch('src.processing.entities.pre_entity_extractor.Together') as mock_together:
             # Setup mock to return different responses for each call
             mock_client = MagicMock()
             mock_together.return_value = mock_client
@@ -501,16 +509,15 @@ class TestIntegrationMocked:
 # LIVE API TESTS (optional, requires --live-api flag)
 # ============================================================================
 
-@pytest.mark.live_api
+# ============================================================================
+# LIVE API TESTS
+# ============================================================================
+
 class TestLiveAPI:
-    """Live API tests - only run with --live-api flag."""
+    """Live API tests - requires TOGETHER_API_KEY in .env."""
     
     def test_live_semantic_extraction(self, sample_regulation_chunk):
         """Test semantic extraction against live API."""
-        import os
-        if not os.getenv("TOGETHER_API_KEY"):
-            pytest.skip("TOGETHER_API_KEY not set")
-        
         from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
         
         extractor = DualPassEntityExtractor()
@@ -531,10 +538,6 @@ class TestLiveAPI:
     
     def test_live_academic_extraction(self, sample_paper_chunk):
         """Test academic extraction against live API."""
-        import os
-        if not os.getenv("TOGETHER_API_KEY"):
-            pytest.skip("TOGETHER_API_KEY not set")
-        
         from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
         
         extractor = DualPassEntityExtractor()
@@ -555,34 +558,3 @@ class TestLiveAPI:
         for e in academic:
             assert e.type in ACADEMIC_ENTITY_TYPES
             assert e.embedding_text == f"{e.name}({e.type})"
-
-
-# ============================================================================
-# PYTEST CONFIGURATION
-# ============================================================================
-
-def pytest_addoption(parser):
-    """Add custom pytest options."""
-    parser.addoption(
-        "--live-api",
-        action="store_true",
-        default=False,
-        help="Run live API tests (requires TOGETHER_API_KEY)",
-    )
-
-
-def pytest_configure(config):
-    """Configure custom markers."""
-    config.addinivalue_line(
-        "markers",
-        "live_api: mark test as requiring live API access",
-    )
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip live API tests unless --live-api flag is set."""
-    if not config.getoption("--live-api"):
-        skip_live = pytest.mark.skip(reason="need --live-api option to run")
-        for item in items:
-            if "live_api" in item.keywords:
-                item.add_marker(skip_live)
