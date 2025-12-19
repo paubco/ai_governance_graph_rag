@@ -5,7 +5,7 @@ Universal embedding processor with batch processing and checkpoints.
 Orchestrates batch embedding pipeline with progress tracking and checkpointing.
 Works for both text chunks (Phase 1A-2) and entities (Phase 1C-1) using BGE-M3
 embedder. Features rolling checkpoint cleanup, optimized append phase without
-checkpoints to prevent O(n²) slowdown, and numpy array serialization for JSON
+checkpoints to prevent O(nÂ²) slowdown, and numpy array serialization for JSON
 compatibility.
 """
 
@@ -109,7 +109,7 @@ class EmbedProcessor:
         Save intermediate checkpoint with rolling cleanup.
         Keeps only the N most recent checkpoints to save disk space.
         
-        NOTE: Currently unused during append phase to avoid O(n²) behavior.
+        NOTE: Currently unused during append phase to avoid O(nÂ²) behavior.
         Could be used for chunked embedding in future optimization.
         
         Args:
@@ -184,9 +184,148 @@ class EmbedProcessor:
             # Store as numpy array in memory
             items[item_id]['embedding'] = embedding
         
-        logger.info(f"✓ Embedded {len(items)} items successfully")
+        logger.info(f"Embedded {len(items)} items successfully")
         return items
     
+    def embed_with_checkpoints(
+        self,
+        items: Dict,
+        text_key: str = 'text',
+        batch_size: int = 8,
+        chunk_size: int = 500,
+        checkpoint_dir: Path = None,
+        min_batch_size: int = 1
+    ) -> Dict:
+        """
+        Embed items with OOM recovery and checkpointing.
+        
+        Processes items in chunks, saving progress after each chunk.
+        On CUDA OOM, reduces batch size and retries. Resumes from
+        checkpoint if items already have embeddings.
+        
+        Args:
+            items: Dictionary of item_id -> item_data
+            text_key: Key to extract text from item dict
+            batch_size: Initial embedding batch size (will reduce on OOM)
+            chunk_size: Number of items to process before checkpointing
+            checkpoint_dir: Directory for checkpoints (required)
+            min_batch_size: Minimum batch size before giving up
+            
+        Returns:
+            Items dictionary with 'embedding' field added
+        """
+        import torch
+        
+        if checkpoint_dir is None:
+            checkpoint_dir = Path('checkpoints/embeddings')
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Filter to items without embeddings (for resume)
+        pending_ids = [
+            item_id for item_id, data in items.items()
+            if 'embedding' not in data or data['embedding'] is None
+        ]
+        
+        if not pending_ids:
+            logger.info("All items already have embeddings, skipping")
+            return items
+        
+        already_done = len(items) - len(pending_ids)
+        if already_done > 0:
+            logger.info(f"Resuming: {already_done} already embedded, {len(pending_ids)} remaining")
+        else:
+            logger.info(f"Embedding {len(pending_ids)} items with chunk_size={chunk_size}")
+        
+        current_batch_size = batch_size
+        processed = 0
+        
+        # Process in chunks
+        for chunk_start in range(0, len(pending_ids), chunk_size):
+            chunk_end = min(chunk_start + chunk_size, len(pending_ids))
+            chunk_ids = pending_ids[chunk_start:chunk_end]
+            chunk_texts = [items[item_id][text_key] for item_id in chunk_ids]
+            
+            # Embed with OOM recovery
+            embeddings = None
+            while embeddings is None and current_batch_size >= min_batch_size:
+                try:
+                    # Clear CUDA cache before batch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    embeddings = self.embedder.embed_batch(
+                        chunk_texts,
+                        batch_size=current_batch_size,
+                        show_progress=True
+                    )
+                    
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        old_size = current_batch_size
+                        current_batch_size = max(current_batch_size // 2, min_batch_size)
+                        logger.warning(
+                            f"CUDA OOM with batch_size={old_size}, "
+                            f"reducing to {current_batch_size}"
+                        )
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        
+                        if current_batch_size < min_batch_size:
+                            raise RuntimeError(
+                                f"Cannot embed with batch_size={min_batch_size}. "
+                                "Try reducing chunk length or using CPU."
+                            )
+                    else:
+                        raise
+            
+            # Add embeddings to items
+            for item_id, embedding in zip(chunk_ids, embeddings):
+                items[item_id]['embedding'] = embedding
+            
+            processed += len(chunk_ids)
+            
+            # Save checkpoint
+            self.save_checkpoint(items, checkpoint_dir, processed + already_done)
+            logger.info(
+                f"Progress: {processed + already_done}/{len(items)} "
+                f"({(processed + already_done)/len(items)*100:.1f}%)"
+            )
+        
+        logger.info(f"Embedded {len(items)} items (final batch_size={current_batch_size})")
+        return items
+    
+    def load_checkpoint(self, checkpoint_dir: Path) -> Dict:
+        """
+        Load most recent checkpoint if available.
+        
+        Args:
+            checkpoint_dir: Directory containing checkpoints
+            
+        Returns:
+            Dictionary of items with partial embeddings, or empty dict
+        """
+        checkpoint_dir = Path(checkpoint_dir)
+        if not checkpoint_dir.exists():
+            return {}
+        
+        checkpoints = sorted(checkpoint_dir.glob("checkpoint_*.json"))
+        if not checkpoints:
+            return {}
+        
+        latest = checkpoints[-1]
+        logger.info(f"Loading checkpoint: {latest.name}")
+        
+        with open(latest, 'r', encoding='utf-8') as f:
+            items = json.load(f)
+        
+        # Convert embedding lists back to numpy arrays
+        for item_id, data in items.items():
+            if 'embedding' in data and isinstance(data['embedding'], list):
+                items[item_id]['embedding'] = np.array(data['embedding'])
+        
+        logger.info(f"Loaded {len(items)} items from checkpoint")
+        return items
+
     def verify_embeddings(self, items: Dict) -> Dict:
         """
         Verify all items have valid embeddings.

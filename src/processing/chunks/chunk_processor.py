@@ -36,10 +36,11 @@ from src.utils.dataclasses import Chunk, EmbeddedChunk
 from src.utils.io import load_jsonl, save_jsonl, save_json
 
 # Config
-from config.extraction_config import CHUNKING_CONFIG
+from config.extraction_config import CHUNKING_CONFIG, EMBEDDING_CONFIG
 
 # Local
 from src.processing.chunks.semantic_chunker import SemanticChunker
+from src.utils.embed_processor import EmbedProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -113,12 +114,19 @@ class ChunkProcessor:
             min_tokens_per_sentence=min_tokens_per_sentence
         )
         
-        # Server mode: load BGE-M3 embedder
+        # Server mode: load BGE-M3 embedder with checkpoint support
         self.embedder = None
+        self.embed_processor = None
         if mode == 'server':
             from src.utils.embedder import BGEEmbedder
             logger.info("Loading BGE-M3 embedder for server mode...")
             self.embedder = BGEEmbedder()
+            self.embed_processor = EmbedProcessor(
+                embedder=self.embedder,
+                checkpoint_freq=EMBEDDING_CONFIG.get('checkpoint_freq', 500)
+            )
+            self.embed_batch_size = EMBEDDING_CONFIG.get('batch_size', 8)
+            self.embed_chunk_size = EMBEDDING_CONFIG.get('checkpoint_freq', 500)
         
         logger.info(
             f"ChunkProcessor initialized: mode={mode}, threshold={threshold}, "
@@ -355,7 +363,9 @@ class ChunkProcessor:
         chunks: List[Chunk]
     ) -> List[EmbeddedChunk]:
         """
-        Embed chunks with BGE-M3.
+        Embed chunks with BGE-M3 using OOM-resilient EmbedProcessor.
+        
+        Uses checkpointing and automatic batch size reduction on CUDA OOM.
         
         Args:
             chunks: List of Chunk objects
@@ -363,15 +373,43 @@ class ChunkProcessor:
         Returns:
             List of EmbeddedChunk objects
         """
-        logger.info(f"Embedding {len(chunks)} chunks with BGE-M3...")
+        logger.info(f"Embedding {len(chunks)} chunks with BGE-M3 (OOM-resilient)...")
         
-        # Extract texts and embed
-        texts = [c.text for c in chunks]
-        embeddings = self.embedder.embed_batch(texts, batch_size=32)
+        # Convert chunks to dict format for EmbedProcessor
+        # Use index as key since chunk_id may be a list
+        items = {}
+        for i, chunk in enumerate(chunks):
+            items[i] = {
+                'text': chunk.text,
+                'chunk': chunk  # Keep original for conversion back
+            }
         
-        # Convert to EmbeddedChunk
+        # Set up checkpoint directory
+        checkpoint_dir = self.output_dir / 'checkpoints' / 'embedding'
+        
+        # Check for existing checkpoint
+        existing = self.embed_processor.load_checkpoint(checkpoint_dir)
+        if existing:
+            # Merge existing embeddings
+            for key, data in existing.items():
+                if key in items and 'embedding' in data:
+                    items[int(key)]['embedding'] = data['embedding']
+            logger.info(f"Loaded {len(existing)} embeddings from checkpoint")
+        
+        # Embed with OOM recovery and checkpointing
+        items = self.embed_processor.embed_with_checkpoints(
+            items=items,
+            text_key='text',
+            batch_size=self.embed_batch_size,
+            chunk_size=self.embed_chunk_size,
+            checkpoint_dir=checkpoint_dir,
+            min_batch_size=1
+        )
+        
+        # Convert back to EmbeddedChunk objects
         embedded_chunks = []
-        for chunk, embedding in zip(chunks, embeddings):
+        for i, chunk in enumerate(chunks):
+            embedding = items[i].get('embedding')
             embedded = EmbeddedChunk(
                 chunk_ids=chunk.chunk_ids,
                 document_ids=chunk.document_ids,
