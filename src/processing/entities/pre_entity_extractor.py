@@ -157,6 +157,7 @@ class DualPassEntityExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
+                response_format={"type": "json_object"},
             )
             
             content = response.choices[0].message.content
@@ -198,6 +199,7 @@ class DualPassEntityExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
+                response_format={"type": "json_object"},
             )
             
             content = response.choices[0].message.content
