@@ -40,7 +40,6 @@ from config.extraction_config import CHUNKING_CONFIG
 
 # Local
 from src.processing.chunks.semantic_chunker import SemanticChunker
-from src.processing.chunks.chunk_deduplicator import ChunkDeduplicator
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +51,7 @@ DEFAULT_MIN_COHERENCE = CHUNKING_CONFIG.get('min_coherence', 0.30)
 DEFAULT_MIN_TOKENS = CHUNKING_CONFIG.get('min_tokens', 15)
 DEFAULT_MIN_TOKENS_PER_SENTENCE = CHUNKING_CONFIG.get('min_tokens_per_sentence', 10)
 DEFAULT_DEDUP_THRESHOLD = CHUNKING_CONFIG.get('dedup_threshold', 0.95)
+DEFAULT_MERGE_THRESHOLD = CHUNKING_CONFIG.get('merge_threshold', 0.98)
 
 
 class ChunkProcessor:
@@ -59,8 +59,8 @@ class ChunkProcessor:
     Orchestrates document chunking pipeline.
     
     Modes:
-        - local: Chunking only (BGE-small), outputs chunks.jsonl
-        - server: Chunking + BGE-M3 embedding + dedup, outputs chunks_embedded.jsonl
+        - local: Chunking + merge only (BGE-small), outputs chunks.jsonl
+        - server: Chunking + merge + BGE-M3 embedding, outputs chunks_embedded.jsonl
     
     Parameters loaded from CHUNKING_CONFIG (extraction_config.py):
         threshold: Sentence similarity threshold for boundaries
@@ -69,7 +69,8 @@ class ChunkProcessor:
         min_coherence: Minimum coherence score to keep chunk
         min_tokens: Minimum tokens for single-sentence chunks
         min_tokens_per_sentence: Below this + no header = garbage
-        dedup_threshold: Cosine similarity for deduplication (server mode)
+        merge_threshold: Cosine similarity for merging duplicates (default 0.98)
+        dedup_threshold: Legacy - now handled by merge
     """
     
     def __init__(
@@ -81,13 +82,15 @@ class ChunkProcessor:
         min_tokens: int = DEFAULT_MIN_TOKENS,
         min_tokens_per_sentence: float = DEFAULT_MIN_TOKENS_PER_SENTENCE,
         mode: str = 'local',
-        dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD
+        merge_threshold: float = DEFAULT_MERGE_THRESHOLD,
+        dedup_threshold: float = DEFAULT_DEDUP_THRESHOLD  # Legacy, kept for compat
     ):
         self.threshold = threshold
         self.min_coherence = min_coherence
         self.min_tokens = min_tokens
         self.min_tokens_per_sentence = min_tokens_per_sentence
         self.mode = mode
+        self.merge_threshold = merge_threshold
         self.dedup_threshold = dedup_threshold
         
         # Paths
@@ -100,7 +103,7 @@ class ChunkProcessor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.report_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize chunker
+        # Initialize chunker (has BGE-small model for boundaries AND merge)
         self.chunker = SemanticChunker(
             threshold=threshold,
             min_sentences=min_sentences,
@@ -110,20 +113,18 @@ class ChunkProcessor:
             min_tokens_per_sentence=min_tokens_per_sentence
         )
         
-        # Server mode: load embedder and deduplicator
+        # Server mode: load BGE-M3 embedder
         self.embedder = None
-        self.deduplicator = None
         if mode == 'server':
             from src.utils.embedder import BGEEmbedder
             logger.info("Loading BGE-M3 embedder for server mode...")
             self.embedder = BGEEmbedder()
-            self.deduplicator = ChunkDeduplicator(threshold=dedup_threshold)
         
         logger.info(
             f"ChunkProcessor initialized: mode={mode}, threshold={threshold}, "
             f"min_coherence={min_coherence}, min_tokens={min_tokens}, "
             f"min_tokens_per_sentence={min_tokens_per_sentence}, "
-            f"dedup_threshold={dedup_threshold}"
+            f"merge_threshold={merge_threshold}"
         )
     
     def load_documents(
@@ -220,10 +221,13 @@ class ChunkProcessor:
             f"({len(all_discards)} discarded)"
         )
         
-        # Server mode: embed and deduplicate
-        dedup_stats = {}
+        # Merge duplicate chunks (uses BGE-small from chunker)
+        merge_stats = {}
+        all_chunks, merge_stats = self._merge_duplicates(all_chunks)
+        
+        # Server mode: embed with BGE-M3
         if self.mode == 'server':
-            all_chunks, dedup_stats = self._embed_and_deduplicate(all_chunks)
+            all_chunks = self._embed_chunks(all_chunks)
         
         # Save outputs
         self._save_chunks(all_chunks)
@@ -231,24 +235,149 @@ class ChunkProcessor:
         
         # Generate and save report
         report = self._generate_report(
-            all_chunks, all_discards, doc_stats, dedup_stats, sample, seed
+            all_chunks, all_discards, doc_stats, merge_stats, sample, seed
         )
         self._save_report(report)
         
         return report
     
-    def _embed_and_deduplicate(
+    def _merge_duplicates(
         self,
-        chunks: List[Chunk]
+        chunks: List[Chunk],
     ) -> tuple:
         """
-        Embed chunks with BGE-M3 and deduplicate.
+        Merge near-duplicate chunks (sim > merge_threshold).
+        
+        Uses BGE-small embeddings from chunker for efficiency.
+        Merged chunks keep first text but aggregate provenance.
         
         Args:
             chunks: List of Chunk objects
             
         Returns:
-            Tuple of (embedded_chunks, dedup_stats)
+            Tuple of (merged_chunks, merge_stats)
+        """
+        from sklearn.metrics.pairwise import cosine_similarity
+        from scipy.sparse.csgraph import connected_components
+        from scipy.sparse import csr_matrix
+        
+        if len(chunks) < 2:
+            return chunks, {'original_count': len(chunks), 'merged_count': len(chunks), 'duplicates_merged': 0}
+        
+        logger.info(f"Computing embeddings for {len(chunks)} chunks (BGE-small)...")
+        texts = [c.text for c in chunks]
+        embeddings = self.chunker.model.encode(texts, show_progress_bar=True, batch_size=64)
+        
+        logger.info(f"Finding duplicates (threshold={self.merge_threshold})...")
+        
+        # Build sparse adjacency matrix for chunks above threshold
+        # Only compute upper triangle to save memory
+        n = len(chunks)
+        rows, cols = [], []
+        
+        # Process in batches to avoid memory issues
+        batch_size = 500
+        for i in range(0, n, batch_size):
+            i_end = min(i + batch_size, n)
+            for j in range(i, n, batch_size):
+                j_end = min(j + batch_size, n)
+                
+                # Compute similarities for this block
+                sims = cosine_similarity(embeddings[i:i_end], embeddings[j:j_end])
+                
+                # Find pairs above threshold
+                for bi, ii in enumerate(range(i, i_end)):
+                    for bj, jj in enumerate(range(j, j_end)):
+                        if ii < jj and sims[bi, bj] >= self.merge_threshold:
+                            rows.append(ii)
+                            cols.append(jj)
+        
+        if not rows:
+            logger.info("No duplicates found above threshold")
+            # Initialize chunk_ids and document_ids for all chunks
+            for chunk in chunks:
+                chunk.chunk_ids = [chunk.chunk_id]
+                chunk.document_ids = [chunk.document_id]
+            return chunks, {'original_count': n, 'merged_count': n, 'duplicates_merged': 0}
+        
+        # Build symmetric adjacency matrix
+        data = [1] * len(rows) * 2
+        rows_sym = rows + cols
+        cols_sym = cols + rows
+        adj = csr_matrix((data, (rows_sym, cols_sym)), shape=(n, n))
+        
+        # Find connected components (clusters of duplicates)
+        n_components, labels = connected_components(adj, directed=False)
+        
+        logger.info(f"Found {n_components} unique chunks from {n} total ({n - n_components} duplicates)")
+        
+        # Merge clusters
+        merged_chunks = []
+        cluster_map = {}  # label -> list of chunk indices
+        
+        for idx, label in enumerate(labels):
+            if label not in cluster_map:
+                cluster_map[label] = []
+            cluster_map[label].append(idx)
+        
+        for label, indices in cluster_map.items():
+            if len(indices) == 1:
+                # Single chunk, no merge needed
+                chunk = chunks[indices[0]]
+                chunk.chunk_ids = [chunk.chunk_id]
+                chunk.document_ids = [chunk.document_id]
+                merged_chunks.append(chunk)
+            else:
+                # Merge multiple chunks - keep first as canonical
+                canonical = chunks[indices[0]]
+                
+                # Collect all chunk_ids and document_ids
+                all_chunk_ids = [chunks[i].chunk_id for i in indices]
+                all_doc_ids = [chunks[i].document_id for i in indices]
+                
+                # Collect all jurisdictions for regulations
+                all_jurisdictions = []
+                for i in indices:
+                    j = chunks[i].jurisdiction
+                    if j and j not in all_jurisdictions:
+                        all_jurisdictions.append(j)
+                
+                # Update canonical chunk with merged provenance
+                canonical.chunk_ids = all_chunk_ids
+                canonical.document_ids = all_doc_ids
+                
+                # Add jurisdictions to metadata if present
+                if all_jurisdictions:
+                    canonical.metadata['jurisdictions'] = all_jurisdictions
+                
+                merged_chunks.append(canonical)
+        
+        merge_stats = {
+            'original_count': n,
+            'merged_count': len(merged_chunks),
+            'duplicates_merged': n - len(merged_chunks),
+            'merge_threshold': self.merge_threshold
+        }
+        
+        logger.info(
+            f"Merged {n} -> {len(merged_chunks)} chunks "
+            f"({merge_stats['duplicates_merged']} duplicates merged)"
+        )
+        
+        return merged_chunks, merge_stats
+    
+    def _embed_chunks(
+        self,
+        chunks: List[Chunk]
+    ) -> List[EmbeddedChunk]:
+        """
+        Embed chunks with BGE-M3.
+        
+        Args:
+            chunks: List of Chunk objects
+            
+        Returns:
+            List of EmbeddedChunk objects
         """
         logger.info(f"Embedding {len(chunks)} chunks with BGE-M3...")
         
@@ -268,20 +397,15 @@ class ChunkProcessor:
                 token_count=chunk.token_count,
                 section_header=chunk.section_header,
                 metadata=chunk.metadata,
+                chunk_ids=chunk.chunk_ids,
+                document_ids=chunk.document_ids,
                 embedding=embedding
             )
             embedded_chunks.append(embedded)
         
-        # Deduplicate
-        logger.info("Running deduplication...")
-        filtered_chunks, dedup_stats = self.deduplicator.deduplicate(embedded_chunks)
+        logger.info(f"Embedded {len(embedded_chunks)} chunks")
         
-        logger.info(
-            f"Deduplication: {len(embedded_chunks)} -> {len(filtered_chunks)} "
-            f"({dedup_stats['duplicates_removed']} duplicates removed)"
-        )
-        
-        return filtered_chunks, dedup_stats
+        return embedded_chunks
     
     def _save_chunks(self, chunks: List) -> None:
         """Save chunks to appropriate output file."""
@@ -313,7 +437,7 @@ class ChunkProcessor:
         chunks: List,
         discards: List[Dict],
         doc_stats: Dict,
-        dedup_stats: Dict,
+        merge_stats: Dict,
         sample: int,
         seed: Optional[int]
     ) -> Dict:
@@ -321,6 +445,9 @@ class ChunkProcessor:
         token_counts = [c.token_count for c in chunks]
         sentence_counts = [c.sentence_count for c in chunks]
         coherence_scores = [c.metadata.get('coherence', 0) for c in chunks]
+        
+        # Count merged chunks
+        merged_chunks = [c for c in chunks if hasattr(c, 'chunk_ids') and len(c.chunk_ids) > 1]
         
         # Group by source type
         by_source = {}
@@ -344,7 +471,7 @@ class ChunkProcessor:
             'parameters': {
                 'threshold': self.threshold,
                 'min_coherence': self.min_coherence,
-                'dedup_threshold': self.dedup_threshold if self.mode == 'server' else None,
+                'merge_threshold': self.merge_threshold,
                 'sample': sample,
                 'seed': seed,
             },
@@ -380,9 +507,9 @@ class ChunkProcessor:
             'discard_reasons': discard_reasons,
         }
         
-        # Add dedup stats if server mode
-        if dedup_stats:
-            report['deduplication'] = dedup_stats
+        # Add merge stats
+        if merge_stats:
+            report['merge'] = merge_stats
         
         return report
     
@@ -411,8 +538,8 @@ class ChunkProcessor:
         print(f"\nDiscard reasons:")
         for reason, count in report['discard_reasons'].items():
             print(f"  {reason}: {count}")
-        if 'deduplication' in report:
-            print(f"\nDeduplication: {report['deduplication']['duplicates_removed']} duplicates removed")
+        if 'merge' in report:
+            print(f"\nMerge: {report['merge']['original_count']} -> {report['merge']['merged_count']} ({report['merge']['duplicates_merged']} duplicates merged)")
         print("=" * 60 + "\n")
 
 
@@ -435,23 +562,23 @@ Defaults from CHUNKING_CONFIG:
     min-coherence:          {DEFAULT_MIN_COHERENCE}
     min-tokens:             {DEFAULT_MIN_TOKENS}
     min-tokens-per-sentence:{DEFAULT_MIN_TOKENS_PER_SENTENCE}
-    dedup-threshold:        {DEFAULT_DEDUP_THRESHOLD}
+    merge-threshold:        {DEFAULT_MERGE_THRESHOLD}
 
 Examples:
-    # Local mode (chunking only)
+    # Local mode (chunking + merge)
     python -m src.processing.chunks.chunk_processor --mode local
     
     # Sample for testing
     python -m src.processing.chunks.chunk_processor --mode local --sample 10 --seed 42
     
-    # Server mode (with BGE-M3 embedding + dedup)
+    # Server mode (chunking + merge + BGE-M3 embedding)
     python -m src.processing.chunks.chunk_processor --mode server
         """
     )
     
     parser.add_argument(
         '--mode', type=str, choices=['local', 'server'], default='local',
-        help='Processing mode: local (chunking only) or server (with embedding + dedup)'
+        help='Processing mode: local (chunking + merge) or server (+ BGE-M3 embedding)'
     )
     parser.add_argument(
         '--threshold', type=float, default=DEFAULT_THRESHOLD,
@@ -478,8 +605,8 @@ Examples:
         help=f'Below this + no header = garbage (default: {DEFAULT_MIN_TOKENS_PER_SENTENCE})'
     )
     parser.add_argument(
-        '--dedup-threshold', type=float, default=DEFAULT_DEDUP_THRESHOLD,
-        help=f'Deduplication threshold (server mode, default: {DEFAULT_DEDUP_THRESHOLD})'
+        '--merge-threshold', type=float, default=DEFAULT_MERGE_THRESHOLD,
+        help=f'Cosine similarity for merging duplicates (default: {DEFAULT_MERGE_THRESHOLD})'
     )
     parser.add_argument(
         '--sample', type=int, default=0,
@@ -519,6 +646,7 @@ def main():
     logger.info(f"Min sentences: {args.min_sentences}")
     logger.info(f"Min coherence: {args.min_coherence}")
     logger.info(f"Min tokens/sentence: {args.min_tokens_per_sentence}")
+    logger.info(f"Merge threshold: {args.merge_threshold}")
     logger.info(f"Sample: {args.sample if args.sample > 0 else 'all'}")
     logger.info("=" * 60)
     
@@ -531,7 +659,7 @@ def main():
         min_tokens=args.min_tokens,
         min_tokens_per_sentence=args.min_tokens_per_sentence,
         mode=args.mode,
-        dedup_threshold=args.dedup_threshold
+        merge_threshold=args.merge_threshold
     )
     
     # Run pipeline

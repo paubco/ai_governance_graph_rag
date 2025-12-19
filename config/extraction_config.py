@@ -84,8 +84,11 @@ CHUNKING_CONFIG = {
     # Low density + no header = likely reference list / NLTK artifacts
     'min_tokens_per_sentence': 10,    # Below this + orphan = garbage
     
-    # Deduplication (server mode only, uses BGE-M3 embeddings)
-    'dedup_threshold': 0.95,
+    # Merge duplicates (BGE-small similarity)
+    # Near-identical chunks across jurisdictions get merged with provenance
+    'merge_threshold': 0.98,          # Above this = merge (keep provenance)
+    
+    # Legacy - kept for compatibility
     'dedup_threshold': 0.95,
     
     # Source-type aware header detection

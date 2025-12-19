@@ -9,13 +9,14 @@ v1.1 Changes:
 - Simplified PreEntity (flat, no nesting, no confidence)
 - Added aliases field to Entity
 - Standardized Relation to use IDs not names
+- Added merge support to Chunk (chunk_ids, document_ids lists)
 
 Example:
     from src.utils.dataclasses import Entity, PreEntity, Relation, Chunk
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any, Union
 from enum import Enum
 import numpy as np
 
@@ -50,19 +51,42 @@ class RetrievalMode(Enum):
 @dataclass
 class Chunk:
     """
-    Text chunk from document.
+    Text chunk from document, with optional merge provenance.
     
-    Metadata is stored inline (not normalized) for query-time simplicity.
-    ~12MB duplication cost is acceptable vs. join complexity.
+    Single chunk:
+        chunk_id = "reg_EU_CHUNK_0042"
+        document_id = "reg_EU"
+        chunk_ids = None (or empty)
+        document_ids = None (or empty)
+    
+    Merged chunk (duplicates across jurisdictions):
+        chunk_id = "reg_AT_CHUNK_0000"  (canonical - first seen)
+        document_id = "reg_AT"           (canonical)
+        chunk_ids = ["reg_AT_CHUNK_0000", "reg_BE_CHUNK_0000", "reg_BG_CHUNK_0000"]
+        document_ids = ["reg_AT", "reg_BE", "reg_BG"]
     """
-    chunk_id: str                           # e.g., "reg_EU_CHUNK_0042"
-    document_id: str                        # e.g., "reg_EU" or "paper_042"
+    chunk_id: str                           # Canonical ID
+    document_id: str                        # Canonical doc ID
     text: str
     position: int                           # 0-indexed position in document
     sentence_count: int
     token_count: int
-    section_header: Optional[str] = None    # This chunk's section
-    metadata: Dict[str, Any] = field(default_factory=dict)  # Inline doc metadata
+    section_header: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    # Merge provenance (populated for deduplicated chunks)
+    chunk_ids: List[str] = field(default_factory=list)       # All merged chunk IDs
+    document_ids: List[str] = field(default_factory=list)    # All merged doc IDs
+    
+    @property
+    def is_merged(self) -> bool:
+        """Check if this chunk represents merged duplicates."""
+        return len(self.chunk_ids) > 1
+    
+    @property
+    def merge_count(self) -> int:
+        """Number of chunks merged (1 if not merged)."""
+        return len(self.chunk_ids) if self.chunk_ids else 1
     
     @property
     def doc_type(self) -> str:
@@ -81,6 +105,21 @@ class Chunk:
             if len(parts) >= 2:
                 return parts[1]
         return None
+    
+    @property
+    def jurisdictions(self) -> List[str]:
+        """Get all jurisdictions for merged regulation chunks."""
+        if not self.document_ids:
+            j = self.jurisdiction
+            return [j] if j else []
+        
+        jurisdictions = []
+        for doc_id in self.document_ids:
+            if doc_id.startswith("reg_"):
+                parts = doc_id.split("_")
+                if len(parts) >= 2:
+                    jurisdictions.append(parts[1])
+        return jurisdictions
 
 
 @dataclass
