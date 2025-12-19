@@ -115,28 +115,24 @@ PREPROCESSING_CONFIG = {
 # ============================================================================
 
 SEMANTIC_ENTITY_TYPES = {
-    # Concepts (domain-fused)
-    "RegulatoryConcept": "Legal/compliance ideas (governance, privacy, requirements)",
-    "TechnicalConcept": "AI/ML ideas (training data, model architecture, algorithms)",
-    "PoliticalConcept": "Governance ideas (policy frameworks, institutional design)",
-    # Processes (domain-fused)
-    "RegulatoryProcess": "Compliance procedures (conformity assessment, auditing)",
-    "TechnicalProcess": "Technical procedures (model training, evaluation)",
-    "PoliticalProcess": "Policy procedures (legislative process, consultation)",
+    # Concepts (domain-fused, includes procedures and principles)
+    "RegulatoryConcept": "Compliance ideas and principles (governance, transparency, accountability, conformity assessment)",
+    "TechnicalConcept": "AI/ML ideas and methods (training, evaluation, model architecture, algorithms)",
+    "PoliticalConcept": "Policy/governance ideas (institutional design, legislative process)",
+    "EconomicConcept": "Financial/market ideas (portfolio management, asset allocation, market risk)",
     # Core types
     "Regulation": "Legally binding documents (EU AI Act, GDPR, Article 5)",
     "Technology": "AI systems/tools/models (ChatGPT, BERT, neural networks)",
     "Organization": "Formal institutions (European Commission, NIST)",
-    "Location": "Geographic/jurisdictional (EU, California, China)",
-    # Values and concerns
-    "EthicalPrinciple": "Normative values (transparency, fairness, accountability, human dignity)",
+    "Location": "Geographic/jurisdictional ONLY (EU, California, China) NOT languages",
     "Risk": "Adverse outcomes regulations address (bias, discrimination, safety, cybersecurity)",
 }
 
 ACADEMIC_ENTITY_TYPES = {
-    "Citation": "In-text references: 'Author (Year)', 'Author et al. (Year)'",
-    "Author": "Named researchers (full names only)",
-    "Journal": "Publication venues, conferences",
+    "Citation": "In-text references: 'Author (Year)', 'Author et al. (Year)', [1], [2]",
+    "Author": "Researcher names ONLY, NOT organizations or AI tools",
+    "Journal": "Publication venues ONLY (Nature, Science) NOT affiliations",
+    "Affiliation": "Institutional affiliations (universities, research centers, companies)",
 }
 
 # Convenience lists for validation

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Dict
 
 # Academic types (no domain prefix)
-ACADEMIC_TYPES = {"Citation", "Author", "Journal"}
+ACADEMIC_TYPES = {"Citation", "Author", "Journal", "Affiliation"}
 
 
 def load_entities(filepath: Path) -> List[Dict]:

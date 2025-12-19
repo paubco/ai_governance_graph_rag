@@ -27,21 +27,19 @@ Extract named entities. Use ONLY these types:
 {_SEMANTIC_TYPES_LIST}
 
 # Rules
-- Split compounds: "AI and ML" → extract "AI" AND "ML" separately
-- Regulation = law itself (EU AI Act, Article 5)
-- RegulatoryConcept = ideas about law (compliance, governance)
-- EthicalPrinciple = normative values (transparency, fairness, accountability)
-- Risk = threats/harms law addresses (bias, discrimination, cybersecurity)
+- MUST split compounds: "AI and ML" → extract "AI" AND "ML" as separate entities
+- Regulation = law documents (EU AI Act, Article 5)
+- RegulatoryConcept = compliance ideas AND principles (governance, transparency, accountability)
 
 # NEVER EXTRACT
-- Citations, authors, journals, DOIs, page numbers
+- Citations, authors, journals, affiliations, DOIs
 
 # Examples
-Input: "The EU AI Act requires conformity assessment."
-Output: {{{{"entities": [{{{{"name": "EU AI Act", "type": "Regulation", "description": "EU AI law"}}}}, {{{{"name": "conformity assessment", "type": "RegulatoryProcess", "description": "Compliance procedure"}}}}]}}}}
+Input: "The EU AI Act requires transparency and conformity assessment."
+Output: {{{{"entities": [{{{{"name": "EU AI Act", "type": "Regulation", "description": "EU AI law"}}}}, {{{{"name": "transparency", "type": "RegulatoryConcept", "description": "Regulatory principle"}}}}, {{{{"name": "conformity assessment", "type": "RegulatoryConcept", "description": "Compliance procedure"}}}}]}}}}
 
-Input: "Cybersecurity risks require accountability mechanisms."
-Output: {{{{"entities": [{{{{"name": "cybersecurity risks", "type": "Risk", "description": "Security threat"}}}}, {{{{"name": "accountability", "type": "EthicalPrinciple", "description": "Ethical value"}}}}]}}}}
+Input: "Cybersecurity risks in AI and ML systems."
+Output: {{{{"entities": [{{{{"name": "cybersecurity risks", "type": "Risk", "description": "Security threat"}}}}, {{{{"name": "AI", "type": "Technology", "description": "Artificial intelligence"}}}}, {{{{"name": "ML", "type": "Technology", "description": "Machine learning"}}}}]}}}}
 
 # Text
 {{chunk_text}}
@@ -60,15 +58,16 @@ Extract academic references. Use ONLY these types:
 
 # Rules
 - Citation: "Author (Year)", [1], [2]
-- Author: Full researcher names only
-- Journal: Publication venues
+- Author: Researcher names ONLY
+- Journal: Publication venues ONLY (Nature, Science)
+- Affiliation: Universities, research centers, companies
 
 # NEVER EXTRACT
 - Concepts, regulations, technologies, organizations, locations
 
 # Examples
-Input: "Floridi (2018) published in Nature examines AI ethics."
-Output: {{{{"entities": [{{{{"name": "Floridi (2018)", "type": "Citation", "description": "Floridi 2018 work"}}}}, {{{{"name": "Nature", "type": "Journal", "description": "Scientific venue"}}}}]}}}}
+Input: "Floridi (2018) from Oxford published in Nature."
+Output: {{{{"entities": [{{{{"name": "Floridi (2018)", "type": "Citation", "description": "Floridi 2018 work"}}}}, {{{{"name": "Oxford", "type": "Affiliation", "description": "University"}}}}, {{{{"name": "Nature", "type": "Journal", "description": "Scientific venue"}}}}]}}}}
 
 Input: "ChatGPT demonstrates remarkable capabilities."
 Output: {{{{"entities": []}}}}
