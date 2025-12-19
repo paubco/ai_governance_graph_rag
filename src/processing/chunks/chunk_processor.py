@@ -166,7 +166,8 @@ class ChunkProcessor:
     def process(
         self,
         sample: int = 0,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        resume: bool = False
     ) -> Dict:
         """
         Run full chunking pipeline.
@@ -174,10 +175,56 @@ class ChunkProcessor:
         Args:
             sample: Number of documents to sample (0 = all)
             seed: Random seed for reproducible sampling
+            resume: If True, load existing chunks and skip to embedding
             
         Returns:
             Processing report dict
         """
+        all_discards = []
+        doc_stats = {}
+        merge_stats = {}
+        
+        # Resume mode: load existing chunks, skip to embedding
+        if resume and self.mode == 'server':
+            chunks_file = self.output_dir / 'chunks.jsonl'
+            if chunks_file.exists():
+                logger.info(f"RESUME MODE: Loading existing chunks from {chunks_file}")
+                chunk_dicts = load_jsonl(chunks_file)
+                
+                # Convert dicts back to Chunk objects
+                all_chunks = []
+                for cd in chunk_dicts:
+                    chunk = Chunk(
+                        chunk_ids=cd.get('chunk_ids', [cd.get('chunk_id')]),
+                        document_ids=cd.get('document_ids', [cd.get('document_id')]),
+                        text=cd['text'],
+                        position=cd['position'],
+                        sentence_count=cd['sentence_count'],
+                        token_count=cd['token_count'],
+                        section_header=cd.get('section_header'),
+                        metadata=cd.get('metadata', {})
+                    )
+                    all_chunks.append(chunk)
+                
+                logger.info(f"Loaded {len(all_chunks)} chunks, skipping to embedding")
+                
+                # Embed with BGE-M3
+                all_chunks = self._embed_chunks(all_chunks)
+                
+                # Save embedded chunks
+                self._save_chunks(all_chunks)
+                
+                # Generate minimal report
+                report = {
+                    'mode': 'resume',
+                    'chunks_loaded': len(all_chunks),
+                    'timestamp': datetime.now().isoformat()
+                }
+                self._save_report(report)
+                return report
+            else:
+                logger.warning(f"Resume requested but {chunks_file} not found, running full pipeline")
+        
         # Load documents
         documents = self.load_documents(sample=sample, seed=seed)
         
@@ -637,6 +684,10 @@ Examples:
         '--log-level', type=str, choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO',
         help='Logging level (default: INFO)'
     )
+    parser.add_argument(
+        '--resume', action='store_true',
+        help='Resume from existing chunks.jsonl (skip chunking, only embed)'
+    )
     
     return parser.parse_args()
 
@@ -659,6 +710,7 @@ def main():
     logger.info("PHASE 1A: SEMANTIC CHUNKING")
     logger.info("=" * 60)
     logger.info(f"Mode: {args.mode}")
+    logger.info(f"Resume: {args.resume}")
     logger.info(f"Threshold: {args.threshold}")
     logger.info(f"Min sentences: {args.min_sentences}")
     logger.info(f"Min coherence: {args.min_coherence}")
@@ -682,7 +734,8 @@ def main():
     # Run pipeline
     report = processor.process(
         sample=args.sample if args.sample > 0 else 0,
-        seed=args.seed
+        seed=args.seed,
+        resume=args.resume
     )
     
     logger.info("Pipeline completed successfully")

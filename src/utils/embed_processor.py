@@ -312,19 +312,29 @@ class EmbedProcessor:
         if not checkpoints:
             return {}
         
-        latest = checkpoints[-1]
-        logger.info(f"Loading checkpoint: {latest.name}")
+        # Try loading from newest to oldest until one works
+        for checkpoint in reversed(checkpoints):
+            try:
+                logger.info(f"Loading checkpoint: {checkpoint.name}")
+                with open(checkpoint, 'r', encoding='utf-8') as f:
+                    items = json.load(f)
+                
+                # Convert embedding lists back to numpy arrays
+                for item_id, data in items.items():
+                    if 'embedding' in data and isinstance(data['embedding'], list):
+                        items[item_id]['embedding'] = np.array(data['embedding'])
+                
+                logger.info(f"Loaded {len(items)} items from checkpoint")
+                return items
+                
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Corrupted checkpoint {checkpoint.name}: {e}")
+                # Delete corrupted checkpoint
+                checkpoint.unlink()
+                logger.info(f"Deleted corrupted checkpoint: {checkpoint.name}")
+                continue
         
-        with open(latest, 'r', encoding='utf-8') as f:
-            items = json.load(f)
-        
-        # Convert embedding lists back to numpy arrays
-        for item_id, data in items.items():
-            if 'embedding' in data and isinstance(data['embedding'], list):
-                items[item_id]['embedding'] = np.array(data['embedding'])
-        
-        logger.info(f"Loaded {len(items)} items from checkpoint")
-        return items
+        return {}
 
     def verify_embeddings(self, items: Dict) -> Dict:
         """
