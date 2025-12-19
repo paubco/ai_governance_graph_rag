@@ -118,41 +118,46 @@ class DualPassEntityExtractor:
         chunk_id: str,
     ) -> List[PreEntity]:
         """
-        Pass 1: Extract semantic entities with Type x Domain schema.
-        
-        Args:
-            chunk_text: Text content
-            chunk_id: Chunk identifier
-            
-        Returns:
-            List of PreEntity with domain and embedding_text set
+        Pass 1: Extract semantic entities with domain-fused types.
+        Retries once if >50% entities are rejected (type validation failures).
         """
-        prompt = SEMANTIC_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
+        max_attempts = 2
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
-                response_format={"type": "json_object"},
-            )
+        for attempt in range(max_attempts):
+            prompt = SEMANTIC_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
             
-            content = response.choices[0].message.content
-            raw_entities = self._parse_json_response(content, chunk_id, "semantic")
-            
-            # Convert to PreEntity with validation
-            entities = []
-            for raw in raw_entities:
-                entity = self._create_semantic_entity(raw, chunk_id)
-                if entity:
-                    entities.append(entity)
-            
-            return entities
-            
-        except Exception as e:
-            logger.error(f"Semantic extraction failed for {chunk_id}: {e}")
-            return []
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
+                    response_format={"type": "json_object"},
+                )
+                
+                content = response.choices[0].message.content
+                raw_entities = self._parse_json_response(content, chunk_id, "semantic")
+                
+                # Convert to PreEntity with validation
+                entities = []
+                for raw in raw_entities:
+                    entity = self._create_semantic_entity(raw, chunk_id)
+                    if entity:
+                        entities.append(entity)
+                
+                # Retry if too many rejections
+                if raw_entities and len(entities) / len(raw_entities) < 0.5:
+                    if attempt == 0:
+                        logger.warning(f"Low valid ratio for {chunk_id} ({len(entities)}/{len(raw_entities)}), retrying...")
+                        continue
+                
+                return entities
+                
+            except Exception as e:
+                logger.error(f"Semantic extraction failed for {chunk_id}: {e}")
+                return []
+        
+        return entities
     
     def _extract_academic(
         self,
@@ -161,40 +166,45 @@ class DualPassEntityExtractor:
     ) -> List[PreEntity]:
         """
         Pass 2: Extract academic entities (citations, authors, journals).
-        
-        Args:
-            chunk_text: Text content
-            chunk_id: Chunk identifier
-            
-        Returns:
-            List of PreEntity with domain=None and academic embedding_text
+        Retries once if >50% entities are rejected.
         """
-        prompt = ACADEMIC_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
+        max_attempts = 2
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
-                response_format={"type": "json_object"},
-            )
+        for attempt in range(max_attempts):
+            prompt = ACADEMIC_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
             
-            content = response.choices[0].message.content
-            raw_entities = self._parse_json_response(content, chunk_id, "academic")
-            
-            # Convert to PreEntity with validation
-            entities = []
-            for raw in raw_entities:
-                entity = self._create_academic_entity(raw, chunk_id)
-                if entity:
-                    entities.append(entity)
-            
-            return entities
-            
-        except Exception as e:
-            logger.error(f"Academic extraction failed for {chunk_id}: {e}")
-            return []
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    max_tokens=ENTITY_EXTRACTION_CONFIG['max_tokens'],
+                    response_format={"type": "json_object"},
+                )
+                
+                content = response.choices[0].message.content
+                raw_entities = self._parse_json_response(content, chunk_id, "academic")
+                
+                # Convert to PreEntity with validation
+                entities = []
+                for raw in raw_entities:
+                    entity = self._create_academic_entity(raw, chunk_id)
+                    if entity:
+                        entities.append(entity)
+                
+                # Retry if too many rejections
+                if raw_entities and len(entities) / len(raw_entities) < 0.5:
+                    if attempt == 0:
+                        logger.warning(f"Low valid ratio (academic) for {chunk_id} ({len(entities)}/{len(raw_entities)}), retrying...")
+                        continue
+                
+                return entities
+                
+            except Exception as e:
+                logger.error(f"Academic extraction failed for {chunk_id}: {e}")
+                return []
+        
+        return entities
     
     def _create_semantic_entity(
         self,

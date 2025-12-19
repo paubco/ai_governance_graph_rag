@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Extraction quality analysis for Phase 1B pre-entities.
-
-Manual evaluation utilities for inspecting entity extraction results.
-Not automated tests - these are for human review during development.
+Extraction quality analysis for Phase 1B pre-entities (v1.2).
 
 Run:
     python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --crosstab
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --sample Citation 10
-
-References:
-    - Phase 1B spec
+    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --sample-type Citation --n 15
 """
 
 import argparse
@@ -19,7 +12,10 @@ import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
+
+# Academic types (no domain prefix)
+ACADEMIC_TYPES = {"Citation", "Author", "Journal", "Self-Reference"}
 
 
 def load_entities(filepath: Path) -> List[Dict]:
@@ -39,54 +35,48 @@ def type_distribution(entities: List[Dict]) -> None:
     types = Counter(e.get('type', 'MISSING') for e in entities)
     
     print("\n=== TYPE DISTRIBUTION ===")
-    print(f"{'Type':<20} {'Count':>8} {'Pct':>8}")
-    print("-" * 40)
+    print(f"{'Type':<25} {'Count':>8} {'Pct':>8}")
+    print("-" * 45)
     
     total = len(entities)
     for t, c in types.most_common():
         pct = 100 * c / total if total > 0 else 0
-        print(f"{t:<20} {c:>8} {pct:>7.1f}%")
+        print(f"{t:<25} {c:>8} {pct:>7.1f}%")
     
-    print("-" * 40)
-    print(f"{'TOTAL':<20} {total:>8}")
+    print("-" * 45)
+    print(f"{'TOTAL':<25} {total:>8}")
 
 
-def domain_distribution(entities: List[Dict]) -> None:
-    """Print domain distribution."""
-    domains = Counter(e.get('domain') or 'NO_DOMAIN' for e in entities)
-    
-    print("\n=== DOMAIN DISTRIBUTION ===")
-    print(f"{'Domain':<20} {'Count':>8} {'Pct':>8}")
-    print("-" * 40)
+def pass_distribution(entities: List[Dict]) -> None:
+    """Print semantic vs academic pass distribution."""
+    semantic = [e for e in entities if e.get('type') not in ACADEMIC_TYPES]
+    academic = [e for e in entities if e.get('type') in ACADEMIC_TYPES]
     
     total = len(entities)
-    for d, c in domains.most_common():
-        pct = 100 * c / total if total > 0 else 0
-        print(f"{d:<20} {c:>8} {pct:>7.1f}%")
+    
+    print("\n=== PASS DISTRIBUTION ===")
+    print(f"{'Pass':<15} {'Count':>8} {'Pct':>8}")
+    print("-" * 35)
+    print(f"{'Semantic':<15} {len(semantic):>8} {100*len(semantic)/total:>7.1f}%")
+    print(f"{'Academic':<15} {len(academic):>8} {100*len(academic)/total:>7.1f}%")
+    print("-" * 35)
+    print(f"{'TOTAL':<15} {total:>8}")
 
 
-def type_domain_crosstab(entities: List[Dict]) -> None:
-    """Print type x domain crosstab matrix."""
-    cross = Counter()
-    for e in entities:
-        t = e.get('type', 'MISSING')
-        d = e.get('domain') or 'NO_DOMAIN'
-        cross[(t, d)] += 1
+def type_by_pass(entities: List[Dict]) -> None:
+    """Print types grouped by pass."""
+    semantic = [e for e in entities if e.get('type') not in ACADEMIC_TYPES]
+    academic = [e for e in entities if e.get('type') in ACADEMIC_TYPES]
     
-    # Get unique domains and types
-    domains = ['Regulatory', 'Political', 'Technical', 'General', 'NO_DOMAIN']
-    types = sorted(set(t for t, d in cross.keys()))
+    print("\n=== SEMANTIC TYPES ===")
+    types = Counter(e.get('type') for e in semantic)
+    for t, c in types.most_common():
+        print(f"  {t:<25} {c:>6}")
     
-    print("\n=== TYPE x DOMAIN CROSSTAB ===")
-    header = f"{'Type':<15} | " + " | ".join(f"{d:<10}" for d in domains) + " | Total"
-    print(header)
-    print("-" * len(header))
-    
-    for t in types:
-        row = [cross.get((t, d), 0) for d in domains]
-        row_total = sum(row)
-        row_str = " | ".join(f"{c:<10}" for c in row)
-        print(f"{t:<15} | {row_str} | {row_total}")
+    print("\n=== ACADEMIC TYPES ===")
+    types = Counter(e.get('type') for e in academic)
+    for t, c in types.most_common():
+        print(f"  {t:<25} {c:>6}")
 
 
 def sample_by_type(entities: List[Dict], type_name: str, n: int = 10) -> None:
@@ -96,34 +86,14 @@ def sample_by_type(entities: List[Dict], type_name: str, n: int = 10) -> None:
     print(f"\n=== SAMPLE: {type_name} ({len(filtered)} total, showing {min(n, len(filtered))}) ===")
     
     for e in filtered[:n]:
-        domain = e.get('domain') or 'NO_DOMAIN'
         name = e.get('name', '')[:60]
-        desc = (e.get('description') or '')[:80]
+        desc = (e.get('description') or '')[:70]
         chunk = e.get('_chunk_id', '')
         
-        print(f"\n  [{domain}] {name}")
+        print(f"\n  {name}")
         if desc:
             print(f"    desc: {desc}...")
         print(f"    chunk: {chunk}")
-
-
-def sample_by_domain(entities: List[Dict], domain_name: str, n: int = 10) -> None:
-    """Show sample entities of a given domain."""
-    if domain_name == 'NO_DOMAIN':
-        filtered = [e for e in entities if not e.get('domain')]
-    else:
-        filtered = [e for e in entities if e.get('domain') == domain_name]
-    
-    print(f"\n=== SAMPLE: {domain_name} ({len(filtered)} total, showing {min(n, len(filtered))}) ===")
-    
-    for e in filtered[:n]:
-        t = e.get('type', 'MISSING')
-        name = e.get('name', '')[:60]
-        desc = (e.get('description') or '')[:80]
-        
-        print(f"\n  [{t}] {name}")
-        if desc:
-            print(f"    desc: {desc}...")
 
 
 def show_duplicates(entities: List[Dict], min_count: int = 2) -> None:
@@ -153,83 +123,36 @@ def show_short_entities(entities: List[Dict], max_len: int = 3) -> None:
         by_type[e.get('type', 'MISSING')].append(e.get('name', ''))
     
     for t, names in sorted(by_type.items(), key=lambda x: -len(x[1])):
-        print(f"\n  {t}: {names[:20]}")
+        print(f"  {t}: {names[:15]}")
+
+
+def show_rejected_types(entities: List[Dict]) -> None:
+    """Show types that were invalid (for debugging prompt issues)."""
+    # This would need the raw extraction log - skip for now
+    pass
 
 
 def full_report(entities: List[Dict]) -> None:
     """Print full analysis report."""
     print(f"\n{'='*70}")
-    print(f"EXTRACTION QUALITY REPORT")
+    print(f"EXTRACTION QUALITY REPORT (v1.2)")
     print(f"Total entities: {len(entities)}")
     print(f"{'='*70}")
     
     type_distribution(entities)
-    domain_distribution(entities)
-    type_domain_crosstab(entities)
+    pass_distribution(entities)
+    type_by_pass(entities)
     show_duplicates(entities)
     show_short_entities(entities)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Extraction quality analysis for Phase 1B',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Full report
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl
-    
-    # Just crosstab
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --crosstab
-    
-    # Sample specific type
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --sample-type Citation --n 15
-    
-    # Sample specific domain
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --sample-domain Regulatory --n 10
-    
-    # Show duplicates
-    python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --duplicates
-        """
-    )
-    
-    parser.add_argument(
-        '--file', '-f',
-        type=str,
-        required=True,
-        help='Path to pre_entities JSONL file'
-    )
-    parser.add_argument(
-        '--crosstab',
-        action='store_true',
-        help='Show type x domain crosstab only'
-    )
-    parser.add_argument(
-        '--sample-type',
-        type=str,
-        help='Show samples of specific type'
-    )
-    parser.add_argument(
-        '--sample-domain',
-        type=str,
-        help='Show samples of specific domain'
-    )
-    parser.add_argument(
-        '--n',
-        type=int,
-        default=10,
-        help='Number of samples to show (default: 10)'
-    )
-    parser.add_argument(
-        '--duplicates',
-        action='store_true',
-        help='Show duplicate entity names'
-    )
-    parser.add_argument(
-        '--short',
-        action='store_true',
-        help='Show suspiciously short entity names'
-    )
+    parser = argparse.ArgumentParser(description='Extraction quality analysis')
+    parser.add_argument('--file', '-f', required=True, help='Path to pre_entities JSONL')
+    parser.add_argument('--sample-type', '-t', help='Sample entities of this type')
+    parser.add_argument('--n', type=int, default=10, help='Number of samples')
+    parser.add_argument('--duplicates', action='store_true', help='Show duplicates only')
+    parser.add_argument('--short', action='store_true', help='Show short entities only')
     
     args = parser.parse_args()
     
@@ -241,12 +164,8 @@ Examples:
     entities = load_entities(filepath)
     print(f"Loaded {len(entities)} entities from {filepath}")
     
-    if args.crosstab:
-        type_domain_crosstab(entities)
-    elif args.sample_type:
+    if args.sample_type:
         sample_by_type(entities, args.sample_type, args.n)
-    elif args.sample_domain:
-        sample_by_domain(entities, args.sample_domain, args.n)
     elif args.duplicates:
         show_duplicates(entities)
     elif args.short:
@@ -255,5 +174,5 @@ Examples:
         full_report(entities)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

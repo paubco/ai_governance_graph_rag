@@ -56,7 +56,7 @@ from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
 from src.utils.dataclasses import PreEntity
 from src.utils.io import load_jsonl, save_jsonl
 from src.utils.logger import setup_logging
-from config.extraction_config import ENTITY_EXTRACTION_CONFIG
+from config.extraction_config import ENTITY_EXTRACTION_CONFIG, ACADEMIC_TYPE_NAMES
 
 # Load environment
 load_dotenv(PROJECT_ROOT / '.env')
@@ -209,8 +209,8 @@ class PreEntityProcessor:
                     # Update stats
                     entities = record.get('entities', [])
                     self.stats['total_entities'] += len(entities)
-                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('domain'))
-                    self.stats['academic_entities'] += sum(1 for e in entities if not e.get('domain'))
+                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in ACADEMIC_TYPE_NAMES)
+                    self.stats['academic_entities'] += sum(1 for e in entities if e.get('type') in ACADEMIC_TYPE_NAMES)
             
             self.stats['chunks_processed'] = len(self.processed_chunk_ids)
             
@@ -389,8 +389,8 @@ class PreEntityProcessor:
                     chunks_this_run += 1
                     self.stats['chunks_processed'] += 1
                     self.stats['total_entities'] += len(entities)
-                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('domain'))
-                    self.stats['academic_entities'] += sum(1 for e in entities if not e.get('domain'))
+                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in ACADEMIC_TYPE_NAMES)
+                    self.stats['academic_entities'] += sum(1 for e in entities if e.get('type') in ACADEMIC_TYPE_NAMES)
                     
                     # Progress logging
                     if chunks_this_run % 50 == 0:
