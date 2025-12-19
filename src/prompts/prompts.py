@@ -3,73 +3,119 @@
 LLM prompt templates for entity extraction, disambiguation, and relation extraction.
 
 Centralized prompt templates for Phases 1B (entity extraction), 1C (disambiguation),
-1D (relation extraction), and 3 (query parsing) with standardized formats. Contains:
-- ENTITY_EXTRACTION_PROMPT: Phase 1B free-type entity discovery from chunks
-- SAMEJUDGE_PROMPT: Phase 1C entity verification
-- RELATION_EXTRACTION_PROMPT: Phase 1D OpenIE-style triplet extraction
-- ACADEMIC_ENTITY_EXTRACTION_PROMPT: Phase 1D subject-constrained extraction
-- QUERY_ENTITY_EXTRACTION_PROMPT: Phase 3 query entity extraction with type enforcement
+1D (relation extraction), and 3 (query parsing) with standardized formats.
+
+v1.1 Changes:
+- Replaced free-type ENTITY_EXTRACTION_PROMPT with constrained dual-pass prompts
+- SEMANTIC_EXTRACTION_PROMPT: 12 types x 4 domains with disambiguation rules
+- ACADEMIC_EXTRACTION_PROMPT: 4 types, no domain, citation-focused
 """
 
 # ============================================================================
-# PHASE 0: ENTITY EXTRACTION
+# PHASE 1B: SEMANTIC ENTITY EXTRACTION (v1.1)
 # ============================================================================
 
-# Prompt used for selecting the rellevant papers froms scopus
-# Not used in the actual pipeline but for manual dowload of the csv and pdfs 
-SCOPUS_SEARCH_QUERY = """
+SEMANTIC_EXTRACTION_PROMPT = """Extract entities from the following text chunk.
 
-TITLE ( ( "AI" OR "artificial intelligence" ) 
-      AND ( "governance" OR "regulation" OR "risk management" OR "policy" ) )  
-      AND ( DOCTYPE ( ar ) OR DOCTYPE ( cp ) ) 
-      AND PUBYEAR = 2023 
-      AND ( LIMIT-TO ( OA , "all" ) )
-"""
-# ============================================================================
-# PHASE 1B: ENTITY EXTRACTION
-# ============================================================================
+TYPES (choose exactly one):
+- Concept: Abstract ideas, principles, terms (NOT processes, NOT normative principles)
+- Regulation: Legally binding documents, laws, directives
+- Technology: AI systems, models, algorithms, tools
+- Organization: Institutions, companies, agencies with formal structure
+- Person: Named individuals
+- Location: Geographic/jurisdictional entities
+- Process: Procedures, methodologies with defined steps
+- Document: Reports, standards, non-binding publications
+- Group: Collectives, categories without formal structure
+- Metric: Measurable quantities, KPIs
+- Principle: Normative values, rights, ethical concepts
+- Event: Conferences, milestones, temporal occurrences
 
-# Prompt for extracting entities from text chunks using free-type methodology.
-# Used by RAKGEntityExtractor to discover entities with LLM-determined types.
-# Instructs model to extract all significant entities including academic citations.
-# Output: JSON list of entities with name, type, and description fields.
-QUERY_ENTITY_EXTRACTION_PROMPT = """Extract entities explicitly mentioned in the user's query.
+DOMAINS (choose exactly one):
+- Regulatory: Legal requirements, compliance, policy rules
+- Political: Governance actors, policy-making bodies
+- Technical: AI/ML systems, methods, algorithms
+- General: Domain-agnostic or cross-cutting
 
-Query: {query}
+TYPE DISAMBIGUATION:
+- Concept vs Principle: Has normative/ethical weight? -> Principle. Otherwise -> Concept.
+- Concept vs Process: Has defined steps/stages? -> Process. Otherwise -> Concept.
+- Regulation vs Document: Is it legally binding? -> Regulation. Otherwise -> Document.
+- Technology vs Process: Is it a thing you use, or steps you follow? Thing -> Technology. Steps -> Process.
+- Organization vs Group: Has formal structure (leadership, legal entity)? -> Organization. Otherwise -> Group.
 
-RULES:
-- Extract ONLY entities that appear verbatim or paraphrased in the query text
-- DO NOT infer related concepts, background knowledge, or implicit connections
-- DO NOT expand acronyms unless query contains both forms
-- Assign types from this list: {entity_types}
+DOMAIN DISAMBIGUATION:
+- LAW, DIRECTIVE, REQUIREMENT, LEGAL OBLIGATION -> Regulatory
+- GOVERNMENT, MINISTRY, COMMISSION, POLITICAL BODY -> Political
+- AI SYSTEM, ALGORITHM, MODEL, TECHNICAL METHOD -> Technical
+- Could apply to multiple domains equally -> General
+- Regulatory = the rule itself. Political = the body that makes/enforces rules.
 
-Output JSON only (no markdown, no explanation):
-{{
-  "entities": [
-    {{"name": "entity as written in query", "type": "type from list"}}
-  ]
-}}
+TEXT:
+{chunk_text}
+
+OUTPUT (JSON array only, no other text):
+[
+  {{
+    "name": "entity name (canonical form)",
+    "type": "one of the 12 types above",
+    "domain": "one of the 4 domains above",
+    "description": "brief description of this entity in context"
+  }}
+]
 
 JSON:"""
+
+
+# ============================================================================
+# PHASE 1B: ACADEMIC ENTITY EXTRACTION (v1.1)
+# ============================================================================
+
+ACADEMIC_EXTRACTION_PROMPT = """Extract academic entities (citations, authors, journals) from the following text chunk.
+
+TYPES (choose exactly one):
+- Citation: In-text references like "Author (Year)" or "Author et al. (Year)"
+- Author: Named researchers or writers
+- Journal: Publication venues, conference proceedings
+- Self-Reference: References to current work ("this study", "the authors", "we propose")
+
+TEXT:
+{chunk_text}
+
+OUTPUT (JSON array only, no other text):
+[
+  {{
+    "name": "entity name",
+    "type": "one of the 4 types above",
+    "description": "brief description"
+  }}
+]
+
+RULES:
+- Extract citations in standard form: "LastName (Year)" or "LastName et al. (Year)"
+- For authors, use full name if available
+- Self-references should capture the exact phrase used
+- If no academic entities found, return empty array: []
+
+JSON:"""
+
 
 # ============================================================================
 # PHASE 1C: ENTITY DISAMBIGUATION
 # ============================================================================
 
-# Prompt for determining if two entities refer to the same real-world entity.
-# Used by SameJudge to perform pairwise entity comparison during disambiguation.
-# Returns boolean result plus canonical name/type if entities match.
-# Critical for clustering duplicate entities discovered across different chunks.
 SAMEJUDGE_PROMPT = """Are these two entities the SAME real-world entity?
 
 Entity 1:
 - Name: {entity1_name}
 - Type: {entity1_type}
+- Domain: {entity1_domain}
 - Description: {entity1_desc}
 
 Entity 2:
 - Name: {entity2_name}
 - Type: {entity2_type}
+- Domain: {entity2_domain}
 - Description: {entity2_desc}
 
 Respond ONLY with valid JSON:
@@ -87,11 +133,6 @@ JSON:"""
 # PHASE 1D: RELATION EXTRACTION (OPENIE)
 # ============================================================================
 
-# Prompt for extracting semantic relations using OpenIE methodology (Track 1).
-# Used for semantic entities to discover relationships between co-occurring entities.
-# Allows free-form predicates (not constrained to predefined relation types).
-# Target entity can appear as either subject or object of relations.
-# Output: Relations with subject, predicate, object, and chunk_id provenance.
 RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in OpenIE (Open Information Extraction).
 
 TARGET ENTITY:
@@ -136,12 +177,7 @@ JSON:"""
 # PHASE 1D: ACADEMIC ENTITY EXTRACTION (Subject-Constrained)
 # ============================================================================
 
-# Prompt for extracting what concepts academic entities discuss (Track 2).
-# Used for academic entities (citations, authors, journals) with fixed subject.
-# Subject is always the academic entity; predicate is always "discusses".
-# Object must be a concept from the co-occurring semantic entities.
-# Enables mapping academic literature to the concepts they address.
-ACADEMIC_ENTITY_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in academic literature mapping.
+ACADEMIC_RELATION_EXTRACTION_PROMPT = """You are a knowledge graph construction expert specializing in academic literature mapping.
 
 TARGET ACADEMIC ENTITY:
 Name: {entity_name}
@@ -184,11 +220,6 @@ JSON:"""
 # PHASE 3: QUERY ENTITY EXTRACTION
 # ============================================================================
 
-# Prompt for extracting entities from user queries with type enforcement.
-# Used by QueryParser (Phase 3) to identify entities in natural language questions.
-# Unlike Phase 1B which uses free-form types, this enforces predefined entity types
-# from the knowledge graph schema for consistent matching and resolution.
-# Output: JSON array of entities with name and type (type must be from allowed list).
 QUERY_ENTITY_EXTRACTION_PROMPT = """Extract ONLY entities explicitly mentioned in the query text.
 
 Query: {query}
@@ -208,18 +239,16 @@ Return JSON (no other text):
 }}
 
 Examples:
-Query: "What is the EU AI Act?" → [{{"name": "EU AI Act", "type": "Regulation"}}]
-Query: "Compare GDPR and CCPA" → [{{"name": "GDPR", "type": "Regulation"}}, {{"name": "CCPA", "type": "Regulation"}}]
+Query: "What is the EU AI Act?" -> [{{"name": "EU AI Act", "type": "Regulation"}}]
+Query: "Compare GDPR and CCPA" -> [{{"name": "GDPR", "type": "Regulation"}}, {{"name": "CCPA", "type": "Regulation"}}]
 
 JSON:"""
+
 
 # ============================================================================
 # PHASE 3.3.4: ANSWER GENERATION
 # ============================================================================
 
-# System prompt for Claude to generate answers from retrieval results.
-# Establishes role as AI governance expert with emphasis on citation and precision.
-# Output: Structured answer with citations, graph insights, and jurisdictional comparisons.
 ANSWER_GENERATION_SYSTEM_PROMPT = """You are an AI governance expert assistant. Your role is to answer questions about AI regulations and research using a knowledge graph and source documents.
 
 KEY PRINCIPLES:
@@ -242,9 +271,7 @@ STRUCTURE YOUR ANSWER:
 4. Cross-jurisdictional comparisons (if relevant)
 5. Caveats or limitations"""
 
-# User prompt template for formatting query with retrieval context.
-# Combines query, graph structure, entity context, and source documents.
-# Instructs model to use citations and highlight graph relationships.
+
 ANSWER_GENERATION_USER_PROMPT = """# QUESTION
 {query}
 

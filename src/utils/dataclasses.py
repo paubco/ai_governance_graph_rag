@@ -9,14 +9,14 @@ v1.1 Changes:
 - Simplified PreEntity (flat, no nesting, no confidence)
 - Added aliases field to Entity
 - Standardized Relation to use IDs not names
-- Added merge support to Chunk (chunk_ids, document_ids lists)
+- Added domain and embedding_text to PreEntity for Type×Domain schema
 
 Example:
     from src.utils.dataclasses import Entity, PreEntity, Relation, Chunk
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Literal, Dict, Any, Union
+from typing import List, Optional, Literal, Dict, Any
 from enum import Enum
 import numpy as np
 
@@ -51,53 +51,23 @@ class RetrievalMode(Enum):
 @dataclass
 class Chunk:
     """
-    Text chunk from document(s).
+    Text chunk from document.
     
-    Uses lists for IDs to handle both single-source and merged chunks uniformly.
-    Properties provide backward-compatible access to canonical (first) values.
-    
-    Single chunk:
-        chunk_ids = ["reg_EU_CHUNK_0042"]
-        document_ids = ["reg_EU"]
-    
-    Merged chunk (duplicates across jurisdictions):
-        chunk_ids = ["reg_AT_CHUNK_0000", "reg_BE_CHUNK_0000", "reg_BG_CHUNK_0000"]
-        document_ids = ["reg_AT", "reg_BE", "reg_BG"]
+    Metadata is stored inline (not normalized) for query-time simplicity.
+    ~12MB duplication cost is acceptable vs. join complexity.
     """
-    chunk_ids: List[str]                    # All chunk IDs (first = canonical)
-    document_ids: List[str]                 # All document IDs (first = canonical)
+    chunk_id: str                           # e.g., "reg_EU_CHUNK_0042"
+    document_id: str                        # e.g., "reg_EU" or "paper_042"
     text: str
-    position: int                           # Position in canonical document
+    position: int                           # 0-indexed position in document
     sentence_count: int
     token_count: int
-    section_header: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    # ---- Backward-compatible properties (canonical = first in list) ----
-    
-    @property
-    def chunk_id(self) -> str:
-        """Canonical chunk ID (first in list)."""
-        return self.chunk_ids[0]
-    
-    @property
-    def document_id(self) -> str:
-        """Canonical document ID (first in list)."""
-        return self.document_ids[0]
-    
-    @property
-    def is_merged(self) -> bool:
-        """True if this chunk represents merged duplicates."""
-        return len(self.chunk_ids) > 1
-    
-    @property
-    def merge_count(self) -> int:
-        """Number of original chunks (1 if not merged)."""
-        return len(self.chunk_ids)
+    section_header: Optional[str] = None    # This chunk's section
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Inline doc metadata
     
     @property
     def doc_type(self) -> str:
-        """Infer document type from canonical ID prefix."""
+        """Infer document type from ID prefix."""
         if self.document_id.startswith("reg_"):
             return "regulation"
         elif self.document_id.startswith("paper_"):
@@ -106,23 +76,12 @@ class Chunk:
     
     @property
     def jurisdiction(self) -> Optional[str]:
-        """Jurisdiction code from canonical regulation ID."""
+        """Extract jurisdiction code from regulation document ID."""
         if self.doc_type == "regulation":
             parts = self.document_id.split("_")
             if len(parts) >= 2:
                 return parts[1]
         return None
-    
-    @property
-    def jurisdictions(self) -> List[str]:
-        """All jurisdictions for merged regulation chunks."""
-        result = []
-        for doc_id in self.document_ids:
-            if doc_id.startswith("reg_"):
-                parts = doc_id.split("_")
-                if len(parts) >= 2 and parts[1] not in result:
-                    result.append(parts[1])
-        return result
 
 
 @dataclass
@@ -143,12 +102,29 @@ class PreEntity:
     Flat structure - one record per extraction. Multiple PreEntities
     may refer to the same real-world entity (resolved in Phase 1C).
     
-    v1.1: Simplified - no nesting, no confidence score.
+    v1.1 Changes:
+    - Added domain field for Type×Domain schema (None for academic entities)
+    - Added embedding_text for pre-computed embedding format
+    
+    Embedding formats:
+    - Semantic: "{name}({domain} {type})" e.g. "conformity assessment(Regulatory Process)"
+    - Academic: "{name}({type})" e.g. "Floridi (2018)(Citation)"
     """
     name: str
     type: str
     description: str
     chunk_id: str
+    domain: Optional[str] = None              # None for academic entities
+    embedding_text: Optional[str] = None      # Pre-computed embedding string
+    
+    def compute_embedding_text(self) -> str:
+        """Compute embedding text based on entity type."""
+        if self.domain:
+            # Semantic entity: "{name}({domain} {type})"
+            return f"{self.name}({self.domain} {self.type})"
+        else:
+            # Academic entity: "{name}({type})"
+            return f"{self.name}({self.type})"
 
 
 # ============================================================================
@@ -164,13 +140,15 @@ class Entity:
     may have been merged into this single canonical form.
     
     v1.1: Added aliases field for surface form mapping.
+    v1.1: Added domain field for Type×Domain schema.
     """
     entity_id: str                          # ent_<12-char-hash>
     name: str                               # Canonical name (best form)
     type: str                               # Entity type
     description: str                        # Best description from merges
     chunk_ids: List[str]                    # All source chunks
-    aliases: List[str] = field(default_factory=list)  # Surface forms
+    domain: Optional[str] = None            # None for academic entities
+    aliases: List[str] = field(default_factory=list)  # Surface forms (captured during merge)
     merge_count: int = 1                    # PreEntities merged into this
 
 

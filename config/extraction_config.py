@@ -6,11 +6,12 @@ Purpose: Configuration for extraction phases (1A-1D, 2A)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-18
-Modified: 2025-12-18
+Modified: 2025-12-19
 
 References:
-    - ARCHITECTURE.md § 3-4 (Phases 1-2)
-    - ARCHITECTURE.md § 7.5 (Type normalization)
+    - ARCHITECTURE.md Section 3-4 (Phases 1-2)
+    - ARCHITECTURE.md Section 7.5 (Type normalization)
+    - Phase 1B spec: Type x Domain schema
 """
 
 import os
@@ -27,39 +28,110 @@ SCOPUS_API_KEY = os.getenv('SCOPUS_API_KEY')
 
 
 # ============================================================================
-# v1.1 TYPE SYSTEM (TBD - pending empirical testing)
+# v1.1 TYPE SYSTEM - Type x Domain Matrix
 # ============================================================================
-# Design: Type × Domain matrix for semantic extraction
-# All entities get Type × Domain treatment; exact values TBD after testing
+# Design: Semantic entities get Type x Domain treatment
+# Academic entities use simpler single-dimension schema (no domain)
 #
-# Candidate domains: Regulatory, Technical, General
-# Candidate base types: Concept, Document, Process, Organization, Person, 
-#                       Location, Technology, Group
-#
-# Academic extraction uses separate simpler schema (single-dimension, TBD)
+# Embedding formats:
+#   Semantic: "{name}({domain} {type})" -> "conformity assessment(Regulatory Process)"
+#   Academic: "{name}({type})" -> "Floridi (2018)(Citation)"
 # ============================================================================
 
-# Placeholder - will be populated after type matrix testing
-SEMANTIC_ENTITY_TYPES = []  # TBD: e.g., ["Regulatory Concept", "Technical Concept", ...]
-SEMANTIC_DOMAINS = []       # TBD: e.g., ["Regulatory", "Technical", "General"]
-
-# Academic entity types (separate extraction pass)
-ACADEMIC_ENTITY_TYPES = [
-    "Citation",      # e.g., "Floridi (2018)", "Zhang et al. 2025"
-    "Self-Reference", # e.g., "the authors", "this study"
-    "Publication",   # e.g., "Nature", "NeurIPS"
+# -----------------------------------------------------------------------------
+# DOMAINS (4) - For semantic entities only
+# -----------------------------------------------------------------------------
+SEMANTIC_DOMAINS = [
+    "Regulatory",   # Legal requirements, compliance, policy rules
+    "Political",    # Governance actors, policy-making bodies
+    "Technical",    # AI/ML systems, methods, algorithms, tools
+    "General",      # Domain-agnostic or cross-cutting concepts
 ]
+
+# Domain descriptions for prompt context
+DOMAIN_DESCRIPTIONS = {
+    "Regulatory": "Legal requirements, compliance, policy rules - laws, directives, requirements, legal obligations",
+    "Political": "Governance actors, policy-making bodies - governments, ministries, commissions, political entities",
+    "Technical": "AI/ML systems, methods, algorithms, tools - models, algorithms, software, technical processes",
+    "General": "Domain-agnostic or cross-cutting concepts - abstract principles that span multiple domains",
+}
+
+# -----------------------------------------------------------------------------
+# SEMANTIC TYPES (12) - Used with domains
+# -----------------------------------------------------------------------------
+SEMANTIC_ENTITY_TYPES = [
+    "Concept",       # Abstract ideas, principles, terms (NOT processes, NOT normative principles)
+    "Regulation",    # Legally binding documents, laws, directives
+    "Technology",    # AI systems, models, algorithms, tools
+    "Organization",  # Institutions, companies, agencies with formal structure
+    "Person",        # Named individuals
+    "Location",      # Geographic/jurisdictional entities
+    "Process",       # Procedures, methodologies with defined steps
+    "Document",      # Reports, standards, non-binding publications
+    "Group",         # Collectives, categories without formal structure
+    "Metric",        # Measurable quantities, KPIs
+    "Principle",     # Normative values, rights, ethical concepts
+    "Event",         # Conferences, milestones, temporal occurrences
+]
+
+# Type descriptions with disambiguation hints
+TYPE_DESCRIPTIONS = {
+    "Concept": "Abstract ideas, principles, terms. NOT a Process (no steps), NOT a Principle (not normative).",
+    "Regulation": "Legally binding documents, laws, directives. NOT Document (must be legally binding).",
+    "Technology": "AI systems, models, algorithms, tools. NOT Process (it's a thing, not steps).",
+    "Organization": "Institutions, companies, agencies with formal structure. NOT Group (has formal structure).",
+    "Person": "Named individuals. NOT Organization, NOT Role.",
+    "Location": "Geographic/jurisdictional entities. NOT Organization (it's a place).",
+    "Process": "Procedures, methodologies with defined steps. NOT Concept (has defined steps).",
+    "Document": "Reports, standards, non-binding publications. NOT Regulation (not legally binding).",
+    "Group": "Collectives, categories without formal structure. NOT Organization (no formal structure).",
+    "Metric": "Measurable quantities, KPIs. NOT Concept (must be quantifiable).",
+    "Principle": "Normative values, rights, ethical concepts. NOT Concept (has normative/ethical weight).",
+    "Event": "Conferences, milestones, temporal occurrences. NOT Process (point in time, not steps).",
+}
+
+# -----------------------------------------------------------------------------
+# ACADEMIC TYPES (4) - No domain, used for paper chunks
+# -----------------------------------------------------------------------------
+ACADEMIC_ENTITY_TYPES = [
+    "Citation",       # In-text references: "Author (Year)", "Author et al. (Year)"
+    "Author",         # Named researchers/writers from citations or author lists
+    "Journal",        # Publication venues, conference proceedings
+    "Self-Reference", # Meta-references: "this study", "the authors", "our approach", "we"
+]
+
+ACADEMIC_TYPE_DESCRIPTIONS = {
+    "Citation": "In-text references like 'Author (Year)' or 'Author et al. (Year)'",
+    "Author": "Named researchers or writers - full names from citations or author lists",
+    "Journal": "Publication venues, conference proceedings",
+    "Self-Reference": "References to current work: 'this study', 'the authors', 'we propose'",
+}
+
+# -----------------------------------------------------------------------------
+# DISAMBIGUATION RULES (embedded in prompts)
+# -----------------------------------------------------------------------------
+DOMAIN_DISAMBIGUATION_RULES = """
+- If it's a LAW, DIRECTIVE, REQUIREMENT, or LEGAL OBLIGATION -> Regulatory
+- If it's a GOVERNMENT, MINISTRY, COMMISSION, or POLITICAL BODY -> Political
+- If it's an AI SYSTEM, ALGORITHM, MODEL, or TECHNICAL METHOD -> Technical
+- If it could apply to multiple domains equally -> General
+- When in doubt between Regulatory and Political:
+  - Regulatory = the rule itself
+  - Political = the body that makes/enforces rules
+"""
+
+TYPE_DISAMBIGUATION_RULES = """
+- Concept vs Principle: Does it have normative/ethical weight? -> Principle. Otherwise -> Concept.
+- Concept vs Process: Does it have defined steps/stages? -> Process. Otherwise -> Concept.
+- Regulation vs Document: Is it legally binding? -> Regulation. Otherwise -> Document.
+- Technology vs Process: Is it a thing you use, or steps you follow? Thing -> Technology. Steps -> Process.
+- Organization vs Group: Does it have formal structure (leadership, legal entity)? -> Organization. Otherwise -> Group.
+- Person vs Organization: Is it an individual human? -> Person. Otherwise -> Organization.
+"""
 
 
 # ============================================================================
 # PHASE 1A: CHUNKING (v1.1 - empirically derived from BGE-small analysis)
-# ============================================================================
-# Similarity distribution (BGE-small-en-v1.5 on 10 papers + 10 regulations):
-#   Papers:      mean=0.629, p5=0.455, p25=0.550, p50=0.632
-#   Regulations: mean=0.666, p5=0.505, p25=0.592, p50=0.666
-# 
-# Threshold at p25 (~0.55) creates meaningful semantic breaks
-# Coherence filter at p5 (~0.40) catches garbage without discarding content
 # ============================================================================
 
 CHUNKING_CONFIG = {
@@ -67,48 +139,41 @@ CHUNKING_CONFIG = {
     'boundary_model': 'BAAI/bge-small-en-v1.5',
     
     # Similarity threshold for chunk boundaries
-    # Set at ~25th percentile: breaks when similarity drops below this
-    # Lower = larger chunks, Higher = smaller chunks
     'similarity_threshold': 0.45,
     
     # Chunk sizing constraints
-    'min_sentences': 3,               # Minimum sentences per chunk
-    'max_tokens': 1500,               # Maximum tokens per chunk
+    'min_sentences': 3,
+    'max_tokens': 1500,
     
-    # Coherence filtering (mean adjacent-sentence similarity)
-    # Set at ~5th percentile: only discards true garbage
+    # Coherence filtering
     'min_coherence': 0.30,
-    'min_tokens': 15,                 # Discard tiny single-sentence chunks
+    'min_tokens': 15,
     
-    # Density filtering (tokens per sentence)
-    # Low density + no header = likely reference list / NLTK artifacts
-    'min_tokens_per_sentence': 10,    # Below this + orphan = garbage
+    # Density filtering
+    'min_tokens_per_sentence': 10,
     
-    # Merge duplicates (BGE-small similarity)
-    # Near-identical chunks across jurisdictions get merged with provenance
-    'merge_threshold': 0.98,          # Above this = merge (keep provenance)
-    
-    # Legacy - kept for compatibility
+    # Merge duplicates
+    'merge_threshold': 0.98,
     'dedup_threshold': 0.95,
     
-    # Source-type aware header detection
+    # Header patterns
     'header_patterns': {
         'regulation': [
-            r'^#{1,6}\s+.+$',           # Markdown headers
-            r'^Article\s+\d+',          # Article 5
-            r'^Section\s+\d+',          # Section 3
-            r'^\d+\.\s+[A-Z]',          # 1. Title
-            r'^[A-Z][A-Z\s]{3,}$',      # ALL CAPS
+            r'^#{1,6}\s+.+$',
+            r'^Article\s+\d+',
+            r'^Section\s+\d+',
+            r'^\d+\.\s+[A-Z]',
+            r'^[A-Z][A-Z\s]{3,}$',
         ],
         'paper': [
-            r'^#\s+\d+(?:\.\d+)*\.?\s+.+$',  # Numbered: # 1. Introduction
+            r'^#\s+\d+(?:\.\d+)*\.?\s+.+$',
             r'^#\s+(?:Introduction|Conclusion|Discussion|Results|Methods|'
             r'Methodology|Background|Literature|Related\s+Work|Theoretical|'
             r'Empirical|Analysis|Findings|Implications|Limitations|Future).*$',
         ],
     },
     
-    # Garbage headers to skip entirely (papers)
+    # Garbage headers to skip
     'garbage_headers': {
         'ARTICLEINFO', 'ARTICLE INFO', 'KEYWORDS', 'ORCID', 'OPEN ACCESS',
         'ACKNOWLEDGMENTS', 'ACKNOWLEDGEMENTS', 'Acknowledgments', 'Acknowledgements',
@@ -126,45 +191,47 @@ CHUNKING_CONFIG = {
 # ============================================================================
 
 EMBEDDING_CONFIG = {
-    # Final embeddings (retrieval, deduplication)
     'model_name': 'BAAI/bge-m3',
     'dimension': 1024,
     'batch_size': 32,
-    'device': 'cuda',                # or 'cpu'
-    'normalize': True,               # L2 normalize embeddings
+    'device': 'cuda',
+    'normalize': True,
     
-    # Entity embedding format: "{name}({type})"
-    # Per RAKG methodology - description NOT included in embedding
-    'entity_format': '{name}({type})',
+    # Entity embedding formats (v1.1)
+    'semantic_format': '{name}({domain} {type})',   # e.g., "EU AI Act(Regulatory Regulation)"
+    'academic_format': '{name}({type})',            # e.g., "Floridi (2018)(Citation)"
 }
 
 
 # ============================================================================
-# PHASE 1B: ENTITY EXTRACTION
+# PHASE 1B: ENTITY EXTRACTION (v1.1)
 # ============================================================================
 
 ENTITY_EXTRACTION_CONFIG = {
-    # Model
-    'model_name': 'Qwen/Qwen2.5-72B-Instruct-Turbo',  # v1.0 used this
-    # 'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',  # v1.1 recommendation
+    # Model - v1.1 uses Mistral-7B (better JSON, lower cost)
+    'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
     # LLM parameters
     'temperature': 0.0,              # Deterministic for consistency
-    'max_tokens': 4096,              # Response limit
+    'max_tokens': 4096,
     'top_p': 0.95,
     
+    # Dual-pass extraction
+    'semantic_pass': True,           # Always run for all chunks
+    'academic_pass': True,           # Only for paper chunks
+    
     # Batch processing
-    'batch_size': 10,                # Chunks per API call
-    'max_workers': 4,                # Parallel API calls
+    'batch_size': 10,
+    'max_workers': 4,
     'retry_attempts': 3,
-    'retry_delay': 2.0,              # seconds
+    'retry_delay': 2.0,
     
     # Rate limiting
     'requests_per_minute': 60,
     'tokens_per_minute': 100000,
     
     # Checkpointing
-    'checkpoint_frequency': 100,     # Save every N chunks
+    'checkpoint_frequency': 100,
 }
 
 
@@ -173,25 +240,24 @@ ENTITY_EXTRACTION_CONFIG = {
 # ============================================================================
 
 DISAMBIGUATION_CONFIG = {
-    # Model (for SameJudge refinement)
-    'model_name': 'Qwen/Qwen2-7B-Instruct',  # v1.0
-    # 'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',  # v1.1 recommendation
+    # Model - v1.1 uses Mistral-7B for consistency
+    'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
     # FAISS blocking
-    'similarity_threshold': 0.85,    # Minimum cosine for candidate pairs
-    'top_k_candidates': 20,          # Max candidates per entity
+    'similarity_threshold': 0.85,
+    'top_k_candidates': 20,
     
     # Tiered thresholds (RAKG-inspired)
-    'auto_merge_threshold': 0.95,    # Above this: auto-merge without LLM
-    'llm_review_threshold': 0.85,    # Between 0.85-0.95: LLM decides
-    'reject_threshold': 0.85,        # Below this: definitely different
+    'auto_merge_threshold': 0.95,
+    'llm_review_threshold': 0.85,
+    'reject_threshold': 0.85,
     
     # LLM parameters
     'temperature': 0.0,
     'max_tokens': 256,
     
     # Batch processing
-    'batch_size': 50,                # Entity pairs per batch
+    'batch_size': 50,
     'max_workers': 4,
     'checkpoint_frequency': 500,
 }
@@ -202,28 +268,25 @@ DISAMBIGUATION_CONFIG = {
 # ============================================================================
 
 RELATION_EXTRACTION_CONFIG = {
-    # Model (Mistral works better for JSON than Qwen)
     'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
-    # LLM parameters
     'temperature': 0.0,
     'max_tokens': 2048,
     
     # Corpus retrospective retrieval
-    'chunks_per_entity': 10,         # Max chunks to retrieve per entity
-    'mmr_lambda': 0.7,               # Diversity vs relevance balance
-    'similarity_threshold': 0.6,     # Min similarity for chunk retrieval
+    'chunks_per_entity': 10,
+    'mmr_lambda': 0.7,
+    'similarity_threshold': 0.6,
     
-    # Two-track extraction (v1.0)
-    'semantic_track': True,          # Full OpenIE for semantic entities
-    'citation_track': True,          # Constrained extraction for citations
+    # Two-track extraction
+    'semantic_track': True,
+    'citation_track': True,
     
     # Batch processing
-    'batch_size': 5,                 # Entities per batch
-    'max_workers': 2,                # Lower for rate limiting
+    'batch_size': 5,
+    'max_workers': 2,
     'checkpoint_frequency': 50,
     
-    # Rate limiting
     'requests_per_minute': 30,
 }
 
@@ -233,15 +296,10 @@ RELATION_EXTRACTION_CONFIG = {
 # ============================================================================
 
 ENRICHMENT_CONFIG = {
-    # Citation matching
-    'citation_match_threshold': 0.8,  # Fuzzy match score
+    'citation_match_threshold': 0.8,
     'author_match_threshold': 0.9,
-    
-    # L1 → L2 matching
     'title_similarity_threshold': 0.85,
     'doi_exact_match': True,
-    
-    # Metadata extraction
     'extract_authors': True,
     'extract_journals': True,
     'extract_references': True,
@@ -258,9 +316,7 @@ NEO4J_CONFIG = {
     'user': os.getenv('NEO4J_USER', 'neo4j'),
     'password': os.getenv('NEO4J_PASSWORD'),
     'database': 'neo4j',
-    
-    # Import settings
-    'batch_size': 1000,              # Nodes/relations per transaction
+    'batch_size': 1000,
     'use_periodic_commit': True,
 }
 
@@ -271,7 +327,7 @@ NEO4J_CONFIG = {
 
 SCRAPER_CONFIG = {
     'base_url': 'https://intelligence.dlapiper.com/artificial-intelligence/',
-    'delay_between_requests': 2,     # seconds
+    'delay_between_requests': 2,
     'timeout': 10,
     'retry_attempts': 3,
     'headers': {
