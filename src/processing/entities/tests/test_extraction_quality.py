@@ -96,6 +96,25 @@ def sample_by_type(entities: List[Dict], type_name: str, n: int = 10) -> None:
         print(f"    chunk: {chunk}")
 
 
+def sample_all_types(entities: List[Dict], n: int = 5) -> None:
+    """Show n sample entities for EACH type - full quality review."""
+    types = sorted(set(e.get('type', 'MISSING') for e in entities))
+    
+    print(f"\n{'='*70}")
+    print(f"FULL TYPE REVIEW - {n} samples per type")
+    print(f"{'='*70}")
+    
+    for t in types:
+        filtered = [e for e in entities if e.get('type') == t]
+        print(f"\n--- {t} ({len(filtered)} total) ---")
+        for e in filtered[:n]:
+            name = e.get('name', '')[:50]
+            desc = (e.get('description') or '')[:50]
+            print(f"  • {name}")
+            if desc:
+                print(f"    {desc}")
+
+
 def show_duplicates(entities: List[Dict], min_count: int = 2) -> None:
     """Show entity names that appear multiple times."""
     name_counts = Counter(e.get('name', '') for e in entities)
@@ -150,6 +169,7 @@ def main():
     parser = argparse.ArgumentParser(description='Extraction quality analysis')
     parser.add_argument('--file', '-f', required=True, help='Path to pre_entities JSONL')
     parser.add_argument('--sample-type', '-t', help='Sample entities of this type')
+    parser.add_argument('--all-types', '-a', action='store_true', help='Sample 5 of each type')
     parser.add_argument('--n', type=int, default=10, help='Number of samples')
     parser.add_argument('--duplicates', action='store_true', help='Show duplicates only')
     parser.add_argument('--short', action='store_true', help='Show short entities only')
@@ -166,6 +186,8 @@ def main():
     
     if args.sample_type:
         sample_by_type(entities, args.sample_type, args.n)
+    elif args.all_types:
+        sample_all_types(entities, args.n if args.n != 10 else 5)
     elif args.duplicates:
         show_duplicates(entities)
     elif args.short:

@@ -116,19 +116,21 @@ PREPROCESSING_CONFIG = {
 
 SEMANTIC_ENTITY_TYPES = {
     # Concepts (domain-fused)
-    "RegulatoryConcept": "Legal/compliance ideas (data governance, privacy, requirements)",
+    "RegulatoryConcept": "Legal/compliance ideas (governance, privacy, requirements)",
     "TechnicalConcept": "AI/ML ideas (training data, model architecture, algorithms)",
     "PoliticalConcept": "Governance ideas (policy frameworks, institutional design)",
     # Processes (domain-fused)
-    "RegulatoryProcess": "Compliance procedures (conformity assessment, auditing, certification)",
-    "TechnicalProcess": "Technical procedures (data analysis, model training, evaluation)",
-    "PoliticalProcess": "Policy procedures (legislative process, public consultation)",
-    # Flat types
-    "Regulation": "Legally binding documents (EU AI Act, GDPR, directives)",
+    "RegulatoryProcess": "Compliance procedures (conformity assessment, auditing)",
+    "TechnicalProcess": "Technical procedures (model training, evaluation)",
+    "PoliticalProcess": "Policy procedures (legislative process, consultation)",
+    # Core types
+    "Regulation": "Legally binding documents (EU AI Act, GDPR, Article 5)",
     "Technology": "AI systems/tools/models (ChatGPT, BERT, neural networks)",
-    "Organization": "Formal institutions (European Commission, NIST, UNESCO)",
+    "Organization": "Formal institutions (European Commission, NIST)",
     "Location": "Geographic/jurisdictional (EU, California, China)",
-    "Principle": "ONLY ethical/normative values (transparency, fairness, accountability, human dignity, privacy)",
+    # Values and concerns
+    "EthicalPrinciple": "Normative values (transparency, fairness, accountability, human dignity)",
+    "Risk": "Adverse outcomes regulations address (bias, discrimination, safety, cybersecurity)",
 }
 
 ACADEMIC_ENTITY_TYPES = {

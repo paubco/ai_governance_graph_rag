@@ -30,7 +30,8 @@ Extract named entities. Use ONLY these types:
 - Split compounds: "AI and ML" → extract "AI" AND "ML" separately
 - Regulation = law itself (EU AI Act, Article 5)
 - RegulatoryConcept = ideas about law (compliance, governance)
-- Principle = ONLY ethical values (transparency, fairness) NOT metrics/skills
+- EthicalPrinciple = normative values (transparency, fairness, accountability)
+- Risk = threats/harms law addresses (bias, discrimination, cybersecurity)
 
 # NEVER EXTRACT
 - Citations, authors, journals, DOIs, page numbers
@@ -39,8 +40,8 @@ Extract named entities. Use ONLY these types:
 Input: "The EU AI Act requires conformity assessment."
 Output: {{{{"entities": [{{{{"name": "EU AI Act", "type": "Regulation", "description": "EU AI law"}}}}, {{{{"name": "conformity assessment", "type": "RegulatoryProcess", "description": "Compliance procedure"}}}}]}}}}
 
-Input: "AI and ML enable automated decision-making."
-Output: {{{{"entities": [{{{{"name": "AI", "type": "Technology", "description": "Artificial intelligence"}}}}, {{{{"name": "ML", "type": "Technology", "description": "Machine learning"}}}}]}}}}
+Input: "Cybersecurity risks require accountability mechanisms."
+Output: {{{{"entities": [{{{{"name": "cybersecurity risks", "type": "Risk", "description": "Security threat"}}}}, {{{{"name": "accountability", "type": "EthicalPrinciple", "description": "Ethical value"}}}}]}}}}
 
 # Text
 {{chunk_text}}
