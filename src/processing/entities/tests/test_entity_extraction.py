@@ -31,7 +31,6 @@ load_dotenv(PROJECT_ROOT / '.env')
 from src.utils.dataclasses import PreEntity
 from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,
-    SEMANTIC_DOMAINS,
     ACADEMIC_ENTITY_TYPES,
 )
 
@@ -44,12 +43,6 @@ from config.extraction_config import (
 def semantic_types() -> set:
     """Valid semantic entity types."""
     return set(SEMANTIC_ENTITY_TYPES)
-
-
-@pytest.fixture
-def semantic_domains() -> set:
-    """Valid semantic domains."""
-    return set(SEMANTIC_DOMAINS)
 
 
 @pytest.fixture
@@ -87,37 +80,32 @@ def sample_paper_chunk() -> Dict:
 
 @pytest.fixture
 def mock_semantic_response() -> str:
-    """Mock LLM response for semantic extraction."""
+    """Mock LLM response for semantic extraction (v1.2 - domain-fused types)."""
     return json.dumps({"entities": [
         {
             "name": "EU AI Act",
             "type": "Regulation",
-            "domain": "Regulatory",
             "description": "European Union regulation establishing rules for AI systems"
         },
         {
             "name": "conformity assessment",
-            "type": "Process",
-            "domain": "Regulatory",
+            "type": "RegulatoryProcess",
             "description": "Procedure to verify AI system compliance with requirements"
         },
         {
             "name": "European Commission",
             "type": "Organization",
-            "domain": "Political",
             "description": "Executive branch of the European Union"
         },
         {
-            "name": "European Artificial Intelligence Board",
-            "type": "Organization",
-            "domain": "Political",
-            "description": "Advisory body for AI regulation coordination"
+            "name": "data governance",
+            "type": "RegulatoryConcept",
+            "description": "Framework for managing data in compliance with regulations"
         },
         {
-            "name": "high-risk AI systems",
-            "type": "Group",
-            "domain": "Technical",
-            "description": "Category of AI systems subject to strict requirements"
+            "name": "neural networks",
+            "type": "Technology",
+            "description": "AI architecture for pattern recognition"
         },
     ]})
 
@@ -145,33 +133,24 @@ def mock_academic_response() -> str:
 
 
 # ============================================================================
-# UNIT TESTS - TYPE/DOMAIN VALIDATION
+# UNIT TESTS - TYPE VALIDATION
 # ============================================================================
 
 class TestTypeValidation:
-    """Tests for type and domain validation."""
+    """Tests for type validation (v1.2 - domain-fused types)."""
     
     def test_semantic_types_count(self, semantic_types):
-        """Verify we have exactly 10 semantic types."""
-        assert len(semantic_types) == 10
+        """Verify we have exactly 11 semantic types."""
+        assert len(semantic_types) == 11
     
     def test_semantic_types_expected(self, semantic_types):
         """Verify expected semantic types are present."""
         expected = {
-            "Concept", "Regulation", "Technology", "Organization",
-            "Person", "Location", "Process", "Document",
-            "Group", "Principle"
+            "RegulatoryConcept", "TechnicalConcept", "PoliticalConcept",
+            "RegulatoryProcess", "TechnicalProcess", "PoliticalProcess",
+            "Regulation", "Technology", "Organization", "Location", "Principle"
         }
         assert semantic_types == expected
-    
-    def test_semantic_domains_count(self, semantic_domains):
-        """Verify we have exactly 4 domains."""
-        assert len(semantic_domains) == 4
-    
-    def test_semantic_domains_expected(self, semantic_domains):
-        """Verify expected domains are present."""
-        expected = {"Regulatory", "Political", "Technical", "General"}
-        assert semantic_domains == expected
     
     def test_academic_types_count(self, academic_types):
         """Verify we have exactly 4 academic types."""
@@ -188,65 +167,47 @@ class TestTypeValidation:
 # ============================================================================
 
 class TestPreEntityDataclass:
-    """Tests for PreEntity dataclass."""
+    """Tests for PreEntity dataclass (v1.2 - no domain field)."""
     
     def test_semantic_preentity_creation(self):
-        """Test creating semantic PreEntity with domain."""
+        """Test creating semantic PreEntity."""
         entity = PreEntity(
             name="EU AI Act",
             type="Regulation",
             description="European AI regulation",
             chunk_id="reg_EU_chunk_001",
-            domain="Regulatory",
-            embedding_text="EU AI Act(Regulatory Regulation)",
+            embedding_text="EU AI Act(Regulation)",
         )
         
         assert entity.name == "EU AI Act"
         assert entity.type == "Regulation"
-        assert entity.domain == "Regulatory"
-        assert entity.embedding_text == "EU AI Act(Regulatory Regulation)"
+        assert entity.embedding_text == "EU AI Act(Regulation)"
     
     def test_academic_preentity_creation(self):
-        """Test creating academic PreEntity without domain."""
+        """Test creating academic PreEntity."""
         entity = PreEntity(
             name="Floridi (2018)",
             type="Citation",
             description="Reference to Floridi's work",
             chunk_id="paper_042_chunk_015",
-            domain=None,
             embedding_text="Floridi (2018)(Citation)",
         )
         
         assert entity.name == "Floridi (2018)"
         assert entity.type == "Citation"
-        assert entity.domain is None
         assert entity.embedding_text == "Floridi (2018)(Citation)"
     
-    def test_compute_embedding_text_semantic(self):
-        """Test embedding text computation for semantic entities."""
+    def test_compute_embedding_text(self):
+        """Test embedding text computation."""
         entity = PreEntity(
             name="conformity assessment",
-            type="Process",
+            type="RegulatoryProcess",
             description="Compliance procedure",
             chunk_id="reg_EU_chunk_001",
-            domain="Regulatory",
         )
         
-        computed = entity.compute_embedding_text()
-        assert computed == "conformity assessment(Regulatory Process)"
-    
-    def test_compute_embedding_text_academic(self):
-        """Test embedding text computation for academic entities."""
-        entity = PreEntity(
-            name="Jobin et al. (2019)",
-            type="Citation",
-            description="AI ethics survey",
-            chunk_id="paper_042_chunk_015",
-            domain=None,
-        )
-        
-        computed = entity.compute_embedding_text()
-        assert computed == "Jobin et al. (2019)(Citation)"
+        result = entity.compute_embedding_text()
+        assert result == "conformity assessment(RegulatoryProcess)"
 
 
 # ============================================================================
@@ -263,10 +224,9 @@ class TestJSONParsing:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
-            content = '{"entities": [{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]}'
+            content = '{"entities": [{"name": "test", "type": "RegulatoryConcept", "description": "desc"}]}'
             result = extractor._parse_json_response(content, "chunk_001", "semantic")
             
             assert len(result) == 1
@@ -279,10 +239,10 @@ class TestJSONParsing:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
+            
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
-            content = '```json\n{"entities": [{"name": "test", "type": "Concept", "domain": "General", "description": "desc"}]}\n```'
+            content = '```json\n{"entities": [{"name": "test", "type": "RegulatoryConcept", "description": "desc"}]}\n```'
             result = extractor._parse_json_response(content, "chunk_001", "semantic")
             
             assert len(result) == 1
@@ -295,7 +255,7 @@ class TestJSONParsing:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
+            
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
             # Test empty array
@@ -313,7 +273,7 @@ class TestJSONParsing:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
+            
             extractor.academic_types = set(ACADEMIC_ENTITY_TYPES)
             
             result = extractor._parse_json_response("not valid json", "chunk_001", "semantic")
@@ -334,23 +294,8 @@ class TestEntityValidation:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             
-            raw = {"name": "test", "type": "InvalidType", "domain": "General", "description": "desc"}
-            result = extractor._create_semantic_entity(raw, "chunk_001")
-            
-            assert result is None
-    
-    def test_reject_invalid_domain(self):
-        """Test that invalid domains are rejected."""
-        from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
-        
-        with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
-            extractor = DualPassEntityExtractor()
-            extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
-            
-            raw = {"name": "test", "type": "Concept", "domain": "InvalidDomain", "description": "desc"}
+            raw = {"name": "test", "type": "InvalidType", "description": "desc"}
             result = extractor._create_semantic_entity(raw, "chunk_001")
             
             assert result is None
@@ -362,16 +307,14 @@ class TestEntityValidation:
         with patch.object(DualPassEntityExtractor, '__init__', lambda x, **kw: None):
             extractor = DualPassEntityExtractor()
             extractor.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-            extractor.semantic_domains = set(SEMANTIC_DOMAINS)
             
-            raw = {"name": "EU AI Act", "type": "Regulation", "domain": "Regulatory", "description": "EU law"}
+            raw = {"name": "EU AI Act", "type": "Regulation", "description": "EU law"}
             result = extractor._create_semantic_entity(raw, "chunk_001")
             
             assert result is not None
             assert result.name == "EU AI Act"
             assert result.type == "Regulation"
-            assert result.domain == "Regulatory"
-            assert result.embedding_text == "EU AI Act(Regulatory Regulation)"
+            assert result.embedding_text == "EU AI Act(Regulation)"
     
     def test_accept_valid_academic_entity(self):
         """Test that valid academic entities are accepted."""
@@ -387,7 +330,6 @@ class TestEntityValidation:
             assert result is not None
             assert result.name == "Floridi (2018)"
             assert result.type == "Citation"
-            assert result.domain is None
             assert result.embedding_text == "Floridi (2018)(Citation)"
 
 
@@ -460,7 +402,6 @@ class TestIntegrationMocked:
             
             # Should only have semantic entities (no academic pass for regulations)
             assert len(entities) == 5
-            assert all(e.domain is not None for e in entities)
             
             # Verify specific entities
             names = {e.name for e in entities}
@@ -493,8 +434,9 @@ class TestIntegrationMocked:
             )
             
             # Should have both semantic and academic entities
-            semantic_entities = [e for e in entities if e.domain is not None]
-            academic_entities = [e for e in entities if e.domain is None]
+            # Use type to distinguish (academic types: Citation, Author, Journal, Self-Reference)
+            semantic_entities = [e for e in entities if e.type not in ACADEMIC_ENTITY_TYPES]
+            academic_entities = [e for e in entities if e.type in ACADEMIC_ENTITY_TYPES]
             
             assert len(semantic_entities) == 5
             assert len(academic_entities) == 3
@@ -530,10 +472,10 @@ class TestLiveAPI:
         # Should extract entities
         assert len(entities) > 0
         
-        # All should have valid types and domains
+        # All should have valid types and embedding_text
+        all_types = set(SEMANTIC_ENTITY_TYPES) | set(ACADEMIC_ENTITY_TYPES)
         for e in entities:
-            assert e.type in SEMANTIC_ENTITY_TYPES
-            assert e.domain in SEMANTIC_DOMAINS
+            assert e.type in all_types
             assert e.embedding_text is not None
     
     def test_live_academic_extraction(self, sample_paper_chunk):
@@ -548,8 +490,8 @@ class TestLiveAPI:
         )
         
         # Should have both semantic and academic entities
-        semantic = [e for e in entities if e.domain is not None]
-        academic = [e for e in entities if e.domain is None]
+        semantic = [e for e in entities if e.type not in ACADEMIC_ENTITY_TYPES]
+        academic = [e for e in entities if e.type in ACADEMIC_ENTITY_TYPES]
         
         assert len(semantic) > 0
         assert len(academic) > 0

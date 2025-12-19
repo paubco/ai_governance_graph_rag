@@ -2,25 +2,12 @@
 """
 Module: pre_entity_extractor.py
 Package: src.processing.entities
-Purpose: Dual-pass entity extraction using Mistral-7B for Type x Domain schema
+Purpose: Dual-pass entity extraction using Mistral-7B
 
-Author: Pau Barba i Colomer
-Created: 2025-12-19
-
-Extracts pre-entities from text chunks using constrained type/domain vocabulary.
-Follows RAKG methodology with v1.1 improvements:
-- Dual-pass: semantic (12 types x 4 domains) + academic (4 types, no domain)
-- Mistral-7B-Instruct-v0.3 (better JSON output, lower cost than Qwen-72B)
-- Returns PreEntity dataclass with embedding_text pre-computed
-
-Example:
-    extractor = DualPassEntityExtractor(api_key="your_key")
-    entities = extractor.extract_entities(chunk_text, chunk_id, doc_type="paper")
-    # Returns: List[PreEntity]
-
-References:
-    - ARCHITECTURE.md Section 3.1.2
-    - Phase 1B spec: Type x Domain schema
+v1.2: Domain-fused types (RegulatoryConcept, TechnicalProcess, etc.)
+- Semantic pass: 11 domain-fused types
+- Academic pass: 4 types (Citation, Author, Journal, Self-Reference)
+- No separate domain field
 """
 
 # Standard library
@@ -45,7 +32,6 @@ from src.utils.dataclasses import PreEntity
 from config.extraction_config import (
     ENTITY_EXTRACTION_CONFIG,
     SEMANTIC_ENTITY_TYPES,
-    SEMANTIC_DOMAINS,
     ACADEMIC_ENTITY_TYPES,
 )
 from src.prompts.prompts import (
@@ -64,15 +50,8 @@ class DualPassEntityExtractor:
     """
     Extract pre-entities using dual-pass methodology.
     
-    Pass 1 (Semantic): All chunks -> 12 types x 4 domains
-    Pass 2 (Academic): Paper chunks only -> 4 types, no domain
-    
-    Attributes:
-        client: Together.ai API client
-        model: LLM model identifier
-        semantic_types: Valid semantic entity types
-        semantic_domains: Valid semantic domains
-        academic_types: Valid academic entity types
+    Pass 1 (Semantic): All chunks -> 11 domain-fused types
+    Pass 2 (Academic): Paper chunks only -> 4 types
     """
     
     def __init__(
@@ -97,9 +76,8 @@ class DualPassEntityExtractor:
         self.client = Together(api_key=api_key)
         self.model = model or ENTITY_EXTRACTION_CONFIG['model_name']
         
-        # Valid types and domains
+        # Valid types (v1.2 - no separate domain)
         self.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-        self.semantic_domains = set(SEMANTIC_DOMAINS)
         self.academic_types = set(ACADEMIC_ENTITY_TYPES)
         
         logger.info(f"DualPassEntityExtractor initialized with {self.model}")
@@ -226,16 +204,15 @@ class DualPassEntityExtractor:
         """
         Create PreEntity from raw semantic extraction with validation.
         
-        Validates type and domain against allowed values.
-        Computes embedding_text as "{name}({domain} {type})".
+        v1.2: No domain field - domain is baked into type name.
+        Computes embedding_text as "{name}({type})".
         """
         name = raw.get('name', '').strip()
         entity_type = raw.get('type', '').strip()
-        domain = raw.get('domain', '').strip()
         description = raw.get('description', '').strip()
         
         # Validate required fields
-        if not name or not entity_type or not domain:
+        if not name or not entity_type:
             logger.warning(f"Missing fields in semantic entity: {raw}")
             return None
         
@@ -244,20 +221,14 @@ class DualPassEntityExtractor:
             logger.warning(f"Invalid type '{entity_type}' for entity '{name}', skipping")
             return None
         
-        # Validate domain
-        if domain not in self.semantic_domains:
-            logger.warning(f"Invalid domain '{domain}' for entity '{name}', skipping")
-            return None
-        
-        # Compute embedding text: "{name}({domain} {type})"
-        embedding_text = f"{name}({domain} {entity_type})"
+        # Compute embedding text: "{name}({type})"
+        embedding_text = f"{name}({entity_type})"
         
         return PreEntity(
             name=name,
             type=entity_type,
             description=description,
             chunk_id=chunk_id,
-            domain=domain,
             embedding_text=embedding_text,
         )
     
@@ -294,7 +265,6 @@ class DualPassEntityExtractor:
             type=entity_type,
             description=description,
             chunk_id=chunk_id,
-            domain=None,  # Academic entities have no domain
             embedding_text=embedding_text,
         )
     

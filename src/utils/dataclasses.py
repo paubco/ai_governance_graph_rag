@@ -113,29 +113,19 @@ class PreEntity:
     Flat structure - one record per extraction. Multiple PreEntities
     may refer to the same real-world entity (resolved in Phase 1C).
     
-    v1.1 Changes:
-    - Added domain field for Type×Domain schema (None for academic entities)
-    - Added embedding_text for pre-computed embedding format
-    
-    Embedding formats:
-    - Semantic: "{name}({domain} {type})" e.g. "conformity assessment(Regulatory Process)"
-    - Academic: "{name}({type})" e.g. "Floridi (2018)(Citation)"
+    v1.2 Changes:
+    - Removed domain field (now baked into type name: RegulatoryConcept, etc.)
+    - Simplified embedding_text: "{name}({type})"
     """
     name: str
     type: str
     description: str
     chunk_id: str
-    domain: Optional[str] = None              # None for academic entities
-    embedding_text: Optional[str] = None      # Pre-computed embedding string
+    embedding_text: Optional[str] = None
     
     def compute_embedding_text(self) -> str:
-        """Compute embedding text based on entity type."""
-        if self.domain:
-            # Semantic entity: "{name}({domain} {type})"
-            return f"{self.name}({self.domain} {self.type})"
-        else:
-            # Academic entity: "{name}({type})"
-            return f"{self.name}({self.type})"
+        """Compute embedding text: '{name}({type})'."""
+        return f"{self.name}({self.type})"
 
 
 # ============================================================================
@@ -150,17 +140,15 @@ class Entity:
     Represents a unique real-world entity. Multiple PreEntities
     may have been merged into this single canonical form.
     
-    v1.1: Added aliases field for surface form mapping.
-    v1.1: Added domain field for Type×Domain schema.
+    v1.2: Removed domain field (now baked into type name).
     """
     entity_id: str                          # ent_<12-char-hash>
     name: str                               # Canonical name (best form)
-    type: str                               # Entity type
+    type: str                               # Entity type (domain-fused: RegulatoryConcept, etc.)
     description: str                        # Best description from merges
     chunk_ids: List[str]                    # All source chunks
-    domain: Optional[str] = None            # None for academic entities
-    aliases: List[str] = field(default_factory=list)  # Surface forms (captured during merge)
-    merge_count: int = 1                    # PreEntities merged into this
+    aliases: List[str] = field(default_factory=list)
+    merge_count: int = 1
 
 
 @dataclass 
