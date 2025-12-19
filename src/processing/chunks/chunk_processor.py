@@ -379,10 +379,7 @@ class ChunkProcessor:
         # Use index as key since chunk_id may be a list
         items = {}
         for i, chunk in enumerate(chunks):
-            items[i] = {
-                'text': chunk.text,
-                'chunk': chunk  # Keep original for conversion back
-            }
+            items[i] = {'text': chunk.text}
         
         # Set up checkpoint directory
         checkpoint_dir = self.output_dir / 'checkpoints' / 'embedding'
