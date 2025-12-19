@@ -294,10 +294,7 @@ class ChunkProcessor:
         
         if not rows:
             logger.info("No duplicates found above threshold")
-            # Initialize chunk_ids and document_ids for all chunks
-            for chunk in chunks:
-                chunk.chunk_ids = [chunk.chunk_id]
-                chunk.document_ids = [chunk.document_id]
+            # Chunks already have list structure from creation
             return chunks, {'original_count': n, 'merged_count': n, 'duplicates_merged': 0}
         
         # Build symmetric adjacency matrix
@@ -322,33 +319,20 @@ class ChunkProcessor:
         
         for label, indices in cluster_map.items():
             if len(indices) == 1:
-                # Single chunk, no merge needed
-                chunk = chunks[indices[0]]
-                chunk.chunk_ids = [chunk.chunk_id]
-                chunk.document_ids = [chunk.document_id]
-                merged_chunks.append(chunk)
+                # Single chunk, already has list structure
+                merged_chunks.append(chunks[indices[0]])
             else:
                 # Merge multiple chunks - keep first as canonical
                 canonical = chunks[indices[0]]
                 
-                # Collect all chunk_ids and document_ids
-                all_chunk_ids = [chunks[i].chunk_id for i in indices]
-                all_doc_ids = [chunks[i].document_id for i in indices]
+                # Extend lists with IDs from other chunks
+                for i in indices[1:]:
+                    canonical.chunk_ids.extend(chunks[i].chunk_ids)
+                    canonical.document_ids.extend(chunks[i].document_ids)
                 
-                # Collect all jurisdictions for regulations
-                all_jurisdictions = []
-                for i in indices:
-                    j = chunks[i].jurisdiction
-                    if j and j not in all_jurisdictions:
-                        all_jurisdictions.append(j)
-                
-                # Update canonical chunk with merged provenance
-                canonical.chunk_ids = all_chunk_ids
-                canonical.document_ids = all_doc_ids
-                
-                # Add jurisdictions to metadata if present
-                if all_jurisdictions:
-                    canonical.metadata['jurisdictions'] = all_jurisdictions
+                # Add jurisdictions to metadata
+                if canonical.jurisdictions:
+                    canonical.metadata['jurisdictions'] = canonical.jurisdictions
                 
                 merged_chunks.append(canonical)
         
@@ -389,16 +373,14 @@ class ChunkProcessor:
         embedded_chunks = []
         for chunk, embedding in zip(chunks, embeddings):
             embedded = EmbeddedChunk(
-                chunk_id=chunk.chunk_id,
-                document_id=chunk.document_id,
+                chunk_ids=chunk.chunk_ids,
+                document_ids=chunk.document_ids,
                 text=chunk.text,
                 position=chunk.position,
                 sentence_count=chunk.sentence_count,
                 token_count=chunk.token_count,
                 section_header=chunk.section_header,
                 metadata=chunk.metadata,
-                chunk_ids=chunk.chunk_ids,
-                document_ids=chunk.document_ids,
                 embedding=embedding
             )
             embedded_chunks.append(embedded)

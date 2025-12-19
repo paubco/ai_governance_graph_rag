@@ -383,9 +383,10 @@ class SemanticChunker:
                     continue
                 
                 # Keep chunk
+                chunk_id = generate_chunk_id(document_id, chunk_position)
                 chunk = Chunk(
-                    chunk_id=generate_chunk_id(document_id, chunk_position),
-                    document_id=document_id,
+                    chunk_ids=[chunk_id],
+                    document_ids=[document_id],
                     text=chunk_text,
                     position=chunk_position,
                     sentence_count=sentence_count,
