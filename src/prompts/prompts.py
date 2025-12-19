@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 LLM prompt templates - all types/descriptions from config.
+
+Note: Prompts use f-strings for type lists, then .format() for chunk_text.
+JSON examples need {{{{ to survive both: f-string ({{->{{) then .format ({{->{).
 """
 
 from config.extraction_config import (
@@ -42,7 +45,7 @@ TEXT:
 {{chunk_text}}
 
 JSON only:
-{{{{"entities": [{{"name": "...", "type": "...", "description": "brief"}}]}}}}"""
+{{{{"entities": [{{{{"name": "...", "type": "...", "description": "brief"}}}}]}}}}"""
 
 
 # ============================================================================
@@ -59,7 +62,7 @@ TEXT:
 {{chunk_text}}
 
 JSON only:
-{{{{"entities": [{{"name": "...", "type": "...", "description": "brief"}}]}}}}"""
+{{{{"entities": [{{{{"name": "...", "type": "...", "description": "brief"}}}}]}}}}"""
 
 
 # ============================================================================
@@ -154,9 +157,7 @@ RULES:
 - NO inferred concepts
 
 JSON only:
-{{{{
-  "entities": [{{{{"name": "exact phrase", "type": "..."}}}}]
-}}}}"""
+{{{{"entities": [{{{{"name": "exact phrase", "type": "..."}}}}]}}}}"""
 
 
 # ============================================================================
