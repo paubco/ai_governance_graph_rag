@@ -588,6 +588,15 @@ class ChunkProcessor:
         print("CHUNKING REPORT")
         print("=" * 60)
         print(f"Mode: {report['mode']}")
+        
+        # Resume mode has minimal report
+        if report['mode'] == 'resume':
+            print(f"Chunks loaded: {report['chunks_loaded']}")
+            print(f"Timestamp: {report['timestamp']}")
+            print("=" * 60 + "\n")
+            return
+        
+        # Full report
         print(f"Threshold: {report['parameters']['threshold']}")
         print(f"Min coherence: {report['parameters']['min_coherence']}")
         print(f"Documents: {report['summary']['total_documents']}")
