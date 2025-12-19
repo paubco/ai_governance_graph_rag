@@ -380,14 +380,21 @@ class ChunkProcessor:
                 # Merge multiple chunks - keep first as canonical
                 canonical = chunks[indices[0]]
                 
+                # Collect all jurisdictions from merged chunks
+                all_jurisdictions = []
+                for i in indices:
+                    j = chunks[i].jurisdiction
+                    if j and j not in all_jurisdictions:
+                        all_jurisdictions.append(j)
+                
                 # Extend lists with IDs from other chunks
                 for i in indices[1:]:
                     canonical.chunk_ids.extend(chunks[i].chunk_ids)
                     canonical.document_ids.extend(chunks[i].document_ids)
                 
-                # Add jurisdictions to metadata
-                if canonical.jurisdictions:
-                    canonical.metadata['jurisdictions'] = canonical.jurisdictions
+                # Add jurisdictions to metadata if present
+                if all_jurisdictions:
+                    canonical.metadata['jurisdictions'] = all_jurisdictions
                 
                 merged_chunks.append(canonical)
         
