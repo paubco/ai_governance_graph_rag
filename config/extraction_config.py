@@ -11,7 +11,7 @@ Modified: 2025-12-20
 References:
     - ARCHITECTURE.md § 3-4 (Phases 1-2)
     - ARCHITECTURE.md § 7.5 (Type normalization)
-    - Phase 1B spec: Type × Domain schema
+    - Phase 1B v2.0: Semantic + Metadata schema
 """
 
 import os
@@ -111,7 +111,7 @@ PREPROCESSING_CONFIG = {
 
 
 # ============================================================================
-# v1.2 TYPE SYSTEM - Domain-Fused (Single Source of Truth)
+# v2.0 TYPE SYSTEM - Semantic + Metadata (Single Source of Truth)
 # ============================================================================
 
 SEMANTIC_ENTITY_TYPES = {
@@ -121,7 +121,7 @@ SEMANTIC_ENTITY_TYPES = {
     "PoliticalConcept": "Policy/governance ideas (institutional design, legislative process)",
     "EconomicConcept": "Financial/market ideas (portfolio management, asset allocation, market risk)",
     # Core types
-    "Regulation": "Legally binding documents (EU AI Act, GDPR, Article 5)",
+    "Regulation": "Legally binding documents (EU AI Act, GDPR)",
     "Technology": "AI systems/tools/models (ChatGPT, BERT, neural networks)",
     "Organization": "Formal institutions (European Commission, NIST)",
     "Location": "Geographic/jurisdictional ONLY (EU, California, China) NOT languages",
@@ -142,6 +142,7 @@ METADATA_ENTITY_TYPES = {
 # Convenience lists for validation
 SEMANTIC_TYPE_NAMES = list(SEMANTIC_ENTITY_TYPES.keys())
 METADATA_TYPE_NAMES = list(METADATA_ENTITY_TYPES.keys())
+
 
 # ============================================================================
 # PHASE 1A: CHUNKING (v1.1 - empirically derived from BGE-small analysis)
@@ -210,14 +211,14 @@ EMBEDDING_CONFIG = {
     'device': 'cuda',
     'normalize': True,
     
-    # Entity embedding formats (v1.1)
-    'semantic_format': '{name}({domain} {type})',   # e.g., "EU AI Act(Regulatory Regulation)"
-    'academic_format': '{name}({type})',            # e.g., "Floridi (2018)(Citation)"
+    # Entity embedding formats (v2.0)
+    'semantic_format': '{name}({type})',    # e.g., "EU AI Act(Regulation)"
+    'metadata_format': '{name}({type})',    # e.g., "Floridi (2018)(Citation)"
 }
 
 
 # ============================================================================
-# PHASE 1B: ENTITY EXTRACTION (v1.1)
+# PHASE 1B: ENTITY EXTRACTION (v2.0)
 # ============================================================================
 
 ENTITY_EXTRACTION_CONFIG = {
@@ -232,9 +233,9 @@ ENTITY_EXTRACTION_CONFIG = {
     # JSON mode - Together.ai supports response_format={"type": "json_object"}
     'use_json_mode': True,
     
-    # Dual-pass extraction
+    # Dual-pass extraction (v2.0: semantic + metadata)
     'semantic_pass': True,           # Always run for all chunks
-    'academic_pass': True,           # Only for paper chunks
+    'metadata_pass': True,           # Run for all chunks (was academic_pass)
     
     # Batch processing
     'batch_size': 10,
