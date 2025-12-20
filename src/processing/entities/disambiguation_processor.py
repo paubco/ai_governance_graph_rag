@@ -273,11 +273,6 @@ class DisambiguationProcessor:
         logger.info("\n[7/7] Summary")
         self._print_summary()
         
-        logger.info("\n" + "=" * 70)
-        logger.info("NEXT STEP: Run embedding phase separately:")
-        logger.info(f"  python -m src.processing.entities.embed_entities")
-        logger.info("=" * 70)
-        
         return self.stats
     
     def _load_pre_entities(self, sample_size: int = None, seed: int = None) -> List[Dict]:
@@ -399,7 +394,14 @@ class DisambiguationProcessor:
             
             judge = SameJudge(model=self.config['llm_model'])
             entity_map = build_entity_map(deduped)
-            llm_approved = judge.judge_pairs(uncertain, entity_map)
+            
+            checkpoint_dir = str(DATA_DIR / 'interim' / 'entities')
+            llm_approved = judge.judge_pairs(
+                uncertain, 
+                entity_map,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_freq=1000
+            )
             
             self.stats['stage4_llm'] = judge.stats
         

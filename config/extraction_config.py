@@ -432,14 +432,14 @@ DISAMBIGUATION_CONFIG = {
     'faiss_ef_search': 64,           # Search quality
     
     # Tiered thresholds (TBD after quintile analysis)
-    'auto_merge_threshold': 0.95,    # >= this â†’ auto-merge
-    'auto_reject_threshold': 0.85,   # < this â†’ auto-reject
-    # Between 0.85-0.95 â†’ LLM decides
+    'auto_merge_threshold': 0.98,    # >= this â†’ auto-merge
+    'auto_reject_threshold': 0.88,   # < this â†’ auto-reject
+    # Between 0.88-0.98 (~21K pairs) â†’ LLM decides
     
     # LLM SameJudge
     'temperature': 0.0,
     'max_tokens': 256,
-    'max_llm_pairs': 1000,           # Cost control limit
+    'max_llm_pairs': 25000,           # Cost control limit
     
     # Batch processing
     'batch_size': 50,

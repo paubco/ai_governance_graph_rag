@@ -503,23 +503,28 @@ class SameJudge:
     Stage 4: LLM-based entity verification.
     
     Uses Mistral-7B (not Qwen due to JSON parsing issues).
+    Integrates with CheckpointManager and RateLimiter from project utils.
     """
     
     def __init__(self, 
                  model: str = "mistralai/Mistral-7B-Instruct-v0.3",
-                 api_key: str = None):
+                 api_key: str = None,
+                 max_rpm: int = 2900):
         """
         Initialize LLM judge.
         
         Args:
             model: Model name for Together API
             api_key: API key (uses env var if not provided)
+            max_rpm: Max requests per minute (default 2900, buffer below 3000 limit)
         """
         import os
         from together import Together
+        from src.utils.rate_limiter import RateLimiter
         
         self.model = model
         self.client = Together(api_key=api_key or os.environ.get('TOGETHER_API_KEY'))
+        self.rate_limiter = RateLimiter(max_calls_per_minute=max_rpm)
         self.stats = {
             'pairs_judged': 0,
             'same_decisions': 0,
@@ -538,6 +543,9 @@ class SameJudge:
             (is_same, reasoning)
         """
         prompt = self._build_prompt(entity1, entity2)
+        
+        # Rate limit
+        self.rate_limiter.acquire()
         
         try:
             response = self.client.chat.completions.create(
@@ -584,34 +592,95 @@ Answer (YES/NO):"""
     
     def judge_pairs(self, 
                    pairs: List[Dict], 
-                   entity_map: Dict[Tuple[str, str], Dict]) -> List[Dict]:
+                   entity_map: Dict[Tuple[str, str], Dict],
+                   checkpoint_dir: str = None,
+                   checkpoint_freq: int = 1000) -> List[Dict]:
         """
         Judge multiple pairs, returning those that should merge.
+        
+        Uses CheckpointManager for resume capability and progress tracking.
         
         Args:
             pairs: List of pair dicts with entity1_key, entity2_key
             entity_map: {(name, type): entity_dict}
+            checkpoint_dir: Directory for checkpoints (enables resume)
+            checkpoint_freq: Save checkpoint every N pairs
             
         Returns:
             List of pairs that should merge
         """
+        from tqdm import tqdm
+        from datetime import datetime
+        from pathlib import Path
+        from src.utils.checkpoint_manager import CheckpointManager
+        from src.utils.io import load_json, save_json
+        
         logger.info(f"Stage 4: Judging {len(pairs)} uncertain pairs...")
         
         merge_pairs = []
+        start_idx = 0
         
-        for pair in pairs:
+        # Setup checkpoint manager if directory provided
+        checkpoint_mgr = None
+        results_file = None
+        
+        if checkpoint_dir:
+            checkpoint_path = Path(checkpoint_dir)
+            checkpoint_path.mkdir(parents=True, exist_ok=True)
+            results_file = checkpoint_path / 'samejudge_results.jsonl'
+            progress_file = checkpoint_path / 'samejudge_progress.json'
+            
+            # Resume from checkpoint if exists
+            if progress_file.exists():
+                progress = load_json(progress_file)
+                start_idx = progress.get('processed', 0)
+                merge_pairs = progress.get('merge_pairs', [])
+                self.stats = progress.get('stats', self.stats)
+                logger.info(f"Resuming from checkpoint: {start_idx}/{len(pairs)} processed")
+        
+        # Process remaining pairs
+        for i, pair in enumerate(tqdm(pairs[start_idx:], 
+                                      initial=start_idx, 
+                                      total=len(pairs),
+                                      desc="SameJudge")):
             key1 = normalize_key(pair['entity1_key'])
             key2 = normalize_key(pair['entity2_key'])
             
             entity1 = entity_map.get(key1, {})
             entity2 = entity_map.get(key2, {})
             
-            is_same, _ = self.judge_pair(entity1, entity2)
+            is_same, reasoning = self.judge_pair(entity1, entity2)
             
             if is_same:
                 merge_pairs.append(pair)
+            
+            # Checkpoint at intervals
+            actual_idx = start_idx + i + 1
+            if checkpoint_dir and actual_idx % checkpoint_freq == 0:
+                save_json({
+                    'processed': actual_idx,
+                    'total': len(pairs),
+                    'merge_pairs': merge_pairs,
+                    'stats': self.stats,
+                    'rate_limiter': self.rate_limiter.get_stats(),
+                    'timestamp': datetime.now().isoformat(),
+                }, str(progress_file))
+                logger.info(f"Checkpoint: {actual_idx}/{len(pairs)}, {len(merge_pairs)} merges")
+        
+        # Final checkpoint
+        if checkpoint_dir:
+            save_json({
+                'processed': len(pairs),
+                'total': len(pairs),
+                'merge_pairs': merge_pairs,
+                'stats': self.stats,
+                'rate_limiter': self.rate_limiter.get_stats(),
+                'complete': True,
+                'timestamp': datetime.now().isoformat(),
+            }, str(progress_file))
         
         logger.info(f"  LLM approved {len(merge_pairs)} merges")
+        logger.info(f"  Rate limiter stats: {self.rate_limiter.get_stats()}")
         return merge_pairs
 
 
