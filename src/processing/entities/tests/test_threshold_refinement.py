@@ -37,16 +37,22 @@ DATA_DIR = Path('data')
 PAIRS_FILE = DATA_DIR / 'interim' / 'entities' / 'candidate_pairs.jsonl'
 SAMPLES_FILE = DATA_DIR / 'interim' / 'entities' / 'threshold_samples.json'
 
-# Similarity bands for threshold tuning
+# Similarity bands for threshold tuning - finer granularity in critical zone
 SIMILARITY_BANDS = [
     ('0.98+', 0.98, 1.01),
-    ('0.95-0.98', 0.95, 0.98),
-    ('0.90-0.95', 0.90, 0.95),
-    ('0.85-0.90', 0.85, 0.90),
-    ('0.80-0.85', 0.80, 0.85),
-    ('0.75-0.80', 0.75, 0.80),
-    ('0.70-0.75', 0.70, 0.75),
+    ('0.96-0.98', 0.96, 0.98),
+    ('0.94-0.96', 0.94, 0.96),
+    ('0.92-0.94', 0.92, 0.94),
+    ('0.90-0.92', 0.90, 0.92),
+    ('0.88-0.90', 0.88, 0.90),
+    ('0.85-0.88', 0.85, 0.88),
+    ('<0.85', 0.70, 0.85),
 ]
+
+# LLM cost estimates (from Phase 1D relation extraction)
+# Mistral-7B via Together.ai: ~0.2s per call, $0.0002 per 1K tokens
+LLM_SECONDS_PER_PAIR = 0.3  # Including network overhead
+LLM_COST_PER_PAIR = 0.0001  # ~500 tokens per pair judgment
 
 
 def analyze_similarity_distribution(pairs: List[Dict]) -> Dict:
@@ -127,30 +133,90 @@ def format_samples_for_review(samples: Dict[str, List[Dict]]) -> str:
         if not band_samples:
             continue
             
-        lines.append(f"\n{'='*70}")
+        lines.append(f"\n{'='*90}")
         lines.append(f"BAND: {band_name} ({len(band_samples)} samples)")
-        lines.append("="*70)
+        lines.append("="*90)
         
         for i, pair in enumerate(band_samples, 1):
-            lines.append(f"\n[{band_name}#{i}] sim={pair['similarity']:.4f}")
-            lines.append(f"  A: {pair['entity1_name']} [{pair['entity1_type']}]")
-            lines.append(f"  B: {pair['entity2_name']} [{pair['entity2_type']}]")
-            lines.append(f"  Label: _______ (SAME / DIFF / UNSURE)")
+            # Handle both formats: entity1_key (list) or entity1_name (string)
+            if 'entity1_key' in pair:
+                name1 = pair['entity1_key'][0] if isinstance(pair['entity1_key'], list) else pair['entity1_key']
+                type1 = pair['entity1_key'][1] if isinstance(pair['entity1_key'], list) else ''
+                name2 = pair['entity2_key'][0] if isinstance(pair['entity2_key'], list) else pair['entity2_key']
+                type2 = pair['entity2_key'][1] if isinstance(pair['entity2_key'], list) else ''
+            else:
+                name1 = pair.get('entity1_name', '')
+                type1 = pair.get('entity1_type', '')
+                name2 = pair.get('entity2_name', '')
+                type2 = pair.get('entity2_type', '')
+            
+            # Truncate long names for side-by-side display
+            name1_disp = name1[:35] + '..' if len(name1) > 37 else name1
+            name2_disp = name2[:35] + '..' if len(name2) > 37 else name2
+            type1_disp = type1[:12]
+            type2_disp = type2[:12]
+            
+            lines.append(f"\n[{i:02d}] {pair['similarity']:.4f}  {name1_disp:<37} [{type1_disp:<12}]  vs  {name2_disp:<37} [{type2_disp:<12}]  → ___")
     
-    lines.append("\n" + "="*70)
-    lines.append("SUMMARY - Fill in after labeling:")
-    lines.append("="*70)
+    lines.append("\n" + "="*90)
+    lines.append("TALLY - Count per band after labeling:")
+    lines.append("="*90)
     lines.append("")
+    lines.append(f"{'Band':<12} {'SAME':>6} {'DIFF':>6} {'UNSURE':>6} {'%SAME':>8}")
+    lines.append("-"*42)
     for band_name, _, _ in SIMILARITY_BANDS:
-        lines.append(f"  {band_name}: SAME=___ DIFF=___ UNSURE=___")
+        lines.append(f"{band_name:<12} {'___':>6} {'___':>6} {'___':>6} {'___':>8}")
     lines.append("")
     lines.append("Recommended thresholds:")
-    lines.append("  auto_merge_threshold:  ____")
-    lines.append("  auto_reject_threshold: ____")
+    lines.append("  auto_merge_threshold:  ____ (lowest band where ~95%+ SAME)")
+    lines.append("  auto_reject_threshold: ____ (highest band where ~95%+ DIFF)")
     lines.append("")
-    lines.append("="*70)
-    lines.append("END OF SAMPLES")
-    lines.append("="*70)
+    lines.append("="*90)
+    
+    return "\n".join(lines)
+
+
+def analyze_threshold_options(pairs: List[Dict]) -> str:
+    """
+    Generate table showing impact of different threshold choices.
+    
+    Shows for each potential auto_merge threshold:
+    - Pairs auto-merged (no LLM)
+    - Pairs in uncertain band (need LLM)
+    - Estimated time and cost
+    """
+    lines = []
+    lines.append("\n" + "="*90)
+    lines.append("THRESHOLD ANALYSIS - Impact of different auto_merge thresholds")
+    lines.append("="*90)
+    lines.append("")
+    lines.append("Assuming auto_reject = 0.85 (below this, pairs are clearly different)")
+    lines.append(f"LLM estimates: {LLM_SECONDS_PER_PAIR}s/pair, ${LLM_COST_PER_PAIR}/pair")
+    lines.append("")
+    
+    # Table header
+    lines.append(f"{'Merge@':>8} {'Auto-Merge':>12} {'Uncertain':>12} {'Auto-Reject':>12} {'LLM Time':>12} {'LLM Cost':>10}")
+    lines.append("-"*70)
+    
+    total = len(pairs)
+    
+    # Test different merge thresholds
+    for merge_thresh in [0.98, 0.96, 0.94, 0.92, 0.90, 0.88, 0.85]:
+        reject_thresh = 0.85
+        
+        auto_merge = sum(1 for p in pairs if p['similarity'] >= merge_thresh)
+        auto_reject = sum(1 for p in pairs if p['similarity'] < reject_thresh)
+        uncertain = total - auto_merge - auto_reject
+        
+        time_hrs = (uncertain * LLM_SECONDS_PER_PAIR) / 3600
+        cost = uncertain * LLM_COST_PER_PAIR
+        
+        lines.append(f"{merge_thresh:>8.2f} {auto_merge:>12,} {uncertain:>12,} {auto_reject:>12,} {time_hrs:>10.1f}h ${cost:>9.2f}")
+    
+    lines.append("")
+    lines.append("Note: Lower merge threshold = more auto-merges but higher false positive risk")
+    lines.append("      Review samples above to find where SAME/DIFF boundary actually falls")
+    lines.append("")
     
     return "\n".join(lines)
 
@@ -224,6 +290,10 @@ Workflow:
     # Sample for tuning
     samples = sample_pairs_for_tuning(pairs, samples_per_band=args.samples, seed=args.seed)
     
+    # Generate threshold analysis
+    threshold_analysis = analyze_threshold_options(pairs)
+    print(threshold_analysis)
+    
     # Save samples as JSON
     SAMPLES_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SAMPLES_FILE, 'w', encoding='utf-8') as f:
@@ -237,30 +307,22 @@ Workflow:
         json.dump(samples_clean, f, ensure_ascii=False, indent=2)
     logger.info(f"Saved samples to {SAMPLES_FILE}")
     
-    # Save human-readable format
+    # Save human-readable format (includes threshold analysis)
     review_file = SAMPLES_FILE.parent / 'threshold_review.txt'
     review_text = format_samples_for_review(samples)
     with open(review_file, 'w', encoding='utf-8') as f:
         f.write(review_text)
+        f.write("\n")
+        f.write(threshold_analysis)
     logger.info(f"Saved review file to {review_file}")
     
     # Print summary
     print("\n" + "="*50)
     print("OUTPUT FILES")
     print("="*50)
-    print(f"All pairs:     {PAIRS_FILE}")
     print(f"Samples JSON:  {SAMPLES_FILE}")
     print(f"Review file:   {review_file}")
-    print("\n" + "="*50)
-    print("NEXT STEPS")
-    print("="*50)
-    print(f"1. Open {review_file}")
-    print("2. Label each pair: SAME / DIFF / UNSURE")
-    print("3. Count results per band")
-    print("4. Determine thresholds:")
-    print("   - auto_merge: lowest band where ~90%+ are SAME")
-    print("   - auto_reject: highest band where ~90%+ are DIFF")
-    print("5. Update ENTITY_DISAMBIGUATION_CONFIG in extraction_config.py")
+    print("\nNEXT: Open threshold_review.txt, label samples, pick thresholds")
 
 
 if __name__ == '__main__':
