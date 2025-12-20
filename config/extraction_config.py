@@ -345,6 +345,9 @@ PRE_ENTITY_FILTER_CONFIG = {
         
         # Single numbers
         r'^\d{1,2}$',
+        
+        # Too short - causes spurious PART_OF matches (v2.0)
+        r'^.{1,3}$',                 # 1-3 char names: DA, NN, RA, RED
     ],
     
     # DocumentSection type: Article 5, Section 3, Annex I — NOT figures/tables
@@ -372,6 +375,9 @@ PRE_ENTITY_FILTER_CONFIG = {
         
         # Single numbers (not valid sections)
         r'^\d{1,2}$',
+        
+        # Too short (v2.0)
+        r'^.{1,3}$',                 # 1-3 char names
     ],
 }
 

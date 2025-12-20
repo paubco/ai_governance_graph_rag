@@ -250,6 +250,7 @@ class MetadataDisambiguator:
             "Article 5 of EU AI Act" → "EU AI Act" ✓
             "Article 5" → "EU AI Act" ✗ (no explicit link in name)
             "Section 3.2 of GDPR" → "GDPR" ✓
+            "audit data" → "DA" ✗ (too short, spurious match)
         """
         if not doc_name or not section_name:
             return False
@@ -259,6 +260,11 @@ class MetadataDisambiguator:
         
         # Skip if same name (not a part-of relationship)
         if section_lower == doc_lower:
+            return False
+        
+        # Skip if doc is too short (spurious substring matches)
+        # Minimum 5 chars to avoid 'DA', 'NN', 'RA' matching everything
+        if len(doc_lower) < 5:
             return False
         
         # Skip if doc is longer than section (parent must be referenced IN child)
