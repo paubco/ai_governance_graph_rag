@@ -253,7 +253,7 @@ ENTITY_EXTRACTION_CONFIG = {
 
 
 # ============================================================================
-# PHASE 1C: PRE-ENTITY FILTERING (v1.1 - tested on 51K entities)
+# PHASE 1C: PRE-ENTITY FILTERING (v2.0 - type-specific)
 # ============================================================================
 
 PRE_ENTITY_FILTER_CONFIG = {
@@ -264,7 +264,7 @@ PRE_ENTITY_FILTER_CONFIG = {
     # Case-SENSITIVE patterns (preserves AI, ML, EU, G20, etc.)
     'blacklist_case_sensitive': [
         r'^\.+$',                    # ... or ..
-        r'^â€¦$',                      # Unicode ellipsis  
+        r'^\u2026$',                 # Unicode ellipsis (…)
         r'^\d+%$',                   # 80%, 41%, 83%
         r'^[a-z]$',                  # Single lowercase letter (k, q)
         r'^[RP]\d+$',                # R12, P9
@@ -297,6 +297,82 @@ PRE_ENTITY_FILTER_CONFIG = {
     
     # Types where numbers ARE valid (skip numeric patterns)
     'numeric_allowed_types': ['Citation'],
+    
+    # =======================================================================
+    # TYPE-SPECIFIC BLACKLISTS (v2.0)
+    # =======================================================================
+    
+    # Document type: Named documents, NOT figures/tables/technologies
+    'document_blacklist': [
+        # PDF artifacts
+        r'^\.+$',                    # ...
+        r'^\u2026$',                 # Unicode ellipsis
+        
+        # Figure/Table references (not documents)
+        r'^Table\s*\d+$',            # Table 1, Table 2
+        r'^Figure\s*\d+$',           # Figure 1, Figure 2
+        r'^Fig\.\s*\d+$',            # Fig. 1, Fig.2
+        r'^Algorithm\s*\d+$',        # Algorithm 1
+        
+        # Technologies misclassified as Document
+        r'^ChatGPT\d*$',             # ChatGPT, ChatGPT3
+        r'^GPT-?\d*$',               # GPT-3, GPT4
+        r'^CNN$',
+        r'^LSTM$',
+        r'^XGBoost$',
+        r'^RF$',
+        r'^DRM$',
+        r'^Chatbot$',
+        
+        # Years (not documents)
+        r'^(2018|2019|2020|2021|2022|2023|2024|2025)$',
+        
+        # Too generic
+        r'^Article$',                # "Article" alone
+        r'^AI$',                     # Too short
+        r'^(this|This)\s+(paper|study)$',  # "this paper", "This study"
+        r'^education$',
+        r'^healthcare$',
+        
+        # Geographic (should be Location)
+        r'^China$',
+        r'^European Union$',
+        
+        # Narrative/Contribution refs
+        r'^Narrative\s*\d+$',
+        r'^Contribution\s*\d+$',
+        r'^Contributions\s*\d+$',
+        
+        # Single numbers
+        r'^\d{1,2}$',
+    ],
+    
+    # DocumentSection type: Article 5, Section 3, Annex I — NOT figures/tables
+    'document_section_blacklist': [
+        # PDF artifacts
+        r'^\.+$',
+        r'^\u2026$',
+        r'^Article\.+$',             # Article...
+        
+        # Figure/Table references
+        r'^Table\s*\d+$',
+        r'^Figure\s*\d+$',
+        r'^Fig\.\s*\d+$',
+        
+        # Meta sections (not document structure)
+        r'^Abstract$',
+        r'^ABSTRACT$',
+        r'^Keywords$',
+        r'^KEYWORDS$',
+        
+        # Too generic
+        r'^Article$',                # "Article" alone (not "Article 5")
+        r'^Article\s*\(not specified\)$',
+        r'^Section$',
+        
+        # Single numbers (not valid sections)
+        r'^\d{1,2}$',
+    ],
 }
 
 

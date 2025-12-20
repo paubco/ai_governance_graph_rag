@@ -49,6 +49,14 @@ _NUMERIC_PATTERNS = [
 _NUMERIC_ALLOWED_TYPES: Set[str] = set(PRE_ENTITY_FILTER_CONFIG['numeric_allowed_types'])
 _PROVENANCE_THRESHOLD: float = PRE_ENTITY_FILTER_CONFIG['provenance_threshold']
 
+# Type-specific blacklists (v2.0)
+_DOCUMENT_PATTERNS = [
+    re.compile(p) for p in PRE_ENTITY_FILTER_CONFIG.get('document_blacklist', [])
+]
+_DOCUMENT_SECTION_PATTERNS = [
+    re.compile(p) for p in PRE_ENTITY_FILTER_CONFIG.get('document_section_blacklist', [])
+]
+
 
 # =============================================================================
 # FILTER FUNCTIONS
@@ -58,7 +66,9 @@ def is_garbage(name: str, entity_type: str = None) -> bool:
     """
     Check if entity name matches garbage patterns.
     
-    Type-aware: numeric patterns only apply outside Citation type.
+    Type-aware filtering:
+        - Numeric patterns only apply outside Citation type
+        - Document/DocumentSection have specific blacklists (v2.0)
     
     Args:
         name: Entity name to check
@@ -84,6 +94,17 @@ def is_garbage(name: str, entity_type: str = None) -> bool:
     # Numeric patterns (skip for allowed types like Citation)
     if entity_type not in _NUMERIC_ALLOWED_TYPES:
         for pattern in _NUMERIC_PATTERNS:
+            if pattern.match(name):
+                return True
+    
+    # Type-specific blacklists (v2.0)
+    if entity_type == 'Document':
+        for pattern in _DOCUMENT_PATTERNS:
+            if pattern.match(name):
+                return True
+    
+    elif entity_type == 'DocumentSection':
+        for pattern in _DOCUMENT_SECTION_PATTERNS:
             if pattern.match(name):
                 return True
     
