@@ -56,7 +56,7 @@ from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
 from src.utils.dataclasses import PreEntity
 from src.utils.io import load_jsonl, save_jsonl
 from src.utils.logger import setup_logging
-from config.extraction_config import ENTITY_EXTRACTION_CONFIG, ACADEMIC_TYPE_NAMES
+from config.extraction_config import ENTITY_EXTRACTION_CONFIG, METADATA_TYPE_NAMES
 
 # Load environment
 load_dotenv(PROJECT_ROOT / '.env')
@@ -134,7 +134,7 @@ class PreEntityProcessor:
             'chunks_processed': 0,
             'total_entities': 0,
             'semantic_entities': 0,
-            'academic_entities': 0,
+            'metadata_entities': 0,
             'errors': 0,
         }
         
@@ -209,8 +209,8 @@ class PreEntityProcessor:
                     # Update stats
                     entities = record.get('entities', [])
                     self.stats['total_entities'] += len(entities)
-                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in ACADEMIC_TYPE_NAMES)
-                    self.stats['academic_entities'] += sum(1 for e in entities if e.get('type') in ACADEMIC_TYPE_NAMES)
+                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in METADATA_TYPE_NAMES)
+                    self.stats['metadata_entities'] += sum(1 for e in entities if e.get('type') in METADATA_TYPE_NAMES)
             
             self.stats['chunks_processed'] = len(self.processed_chunk_ids)
             
@@ -389,8 +389,8 @@ class PreEntityProcessor:
                     chunks_this_run += 1
                     self.stats['chunks_processed'] += 1
                     self.stats['total_entities'] += len(entities)
-                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in ACADEMIC_TYPE_NAMES)
-                    self.stats['academic_entities'] += sum(1 for e in entities if e.get('type') in ACADEMIC_TYPE_NAMES)
+                    self.stats['semantic_entities'] += sum(1 for e in entities if e.get('type') not in METADATA_TYPE_NAMES)
+                    self.stats['metadata_entities'] += sum(1 for e in entities if e.get('type') in METADATA_TYPE_NAMES)
                     
                     # Progress logging
                     if chunks_this_run % 50 == 0:
@@ -430,7 +430,7 @@ class PreEntityProcessor:
         logger.info(f"Total chunks in output: {self.stats['chunks_processed']:,}")
         logger.info(f"Total entities: {self.stats['total_entities']:,}")
         logger.info(f"  - Semantic: {self.stats['semantic_entities']:,}")
-        logger.info(f"  - Academic: {self.stats['academic_entities']:,}")
+        logger.info(f"  - Metadata: {self.stats['metadata_entities']:,}")
         logger.info(f"Average per chunk: {self.stats['total_entities']/max(1, self.stats['chunks_processed']):.1f}")
         logger.info(f"Errors: {self.stats['errors']}")
         logger.info(f"Time: {elapsed/60:.1f} minutes")

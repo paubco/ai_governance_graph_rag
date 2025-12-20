@@ -6,7 +6,7 @@ Purpose: Configuration for all extraction phases (0B, 1A-1D, 2A)
 
 Author: Pau Barba i Colomer
 Created: 2025-12-18
-Modified: 2025-12-19
+Modified: 2025-12-20
 
 References:
     - ARCHITECTURE.md § 3-4 (Phases 1-2)
@@ -128,17 +128,20 @@ SEMANTIC_ENTITY_TYPES = {
     "Risk": "Adverse outcomes regulations address (bias, discrimination, safety, cybersecurity)",
 }
 
-ACADEMIC_ENTITY_TYPES = {
-    "Citation": "In-text references: 'Author (Year)', 'Author et al. (Year)', [1], [2]",
+METADATA_ENTITY_TYPES = {
+    # Bibliographic
+    "Citation": "References to external works: Author (Year), [1], [2]",
     "Author": "Researcher names ONLY, NOT organizations or AI tools",
-    "Journal": "Publication venues ONLY (Nature, Science) NOT affiliations",
+    "Journal": "Publication venues (journals, conferences)",
     "Affiliation": "Institutional affiliations (universities, research centers, companies)",
+    # Document structure
+    "Document": "Named documents referenced structurally (EU AI Act, GDPR, research papers)",
+    "DocumentSection": "Structural parts of documents (Article 5, Section 3, Annex A, page 12)",
 }
 
 # Convenience lists for validation
 SEMANTIC_TYPE_NAMES = list(SEMANTIC_ENTITY_TYPES.keys())
-ACADEMIC_TYPE_NAMES = list(ACADEMIC_ENTITY_TYPES.keys())
-
+METADATA_TYPE_NAMES = list(METADATA_ENTITY_TYPES.keys())
 
 # ============================================================================
 # PHASE 1A: CHUNKING (v1.1 - empirically derived from BGE-small analysis)
@@ -249,25 +252,77 @@ ENTITY_EXTRACTION_CONFIG = {
 
 
 # ============================================================================
-# PHASE 1C: ENTITY DISAMBIGUATION
+# PHASE 1C: PRE-ENTITY FILTERING (v1.1 - tested on 51K entities)
+# ============================================================================
+
+PRE_ENTITY_FILTER_CONFIG = {
+    # Provenance check settings
+    'verify_provenance': True,
+    'provenance_threshold': 0.80,      # rapidfuzz partial_ratio
+    
+    # Case-SENSITIVE patterns (preserves AI, ML, EU, G20, etc.)
+    'blacklist_case_sensitive': [
+        r'^\.+$',                    # ... or ..
+        r'^…$',                      # Unicode ellipsis  
+        r'^\d+%$',                   # 80%, 41%, 83%
+        r'^[a-z]$',                  # Single lowercase letter (k, q)
+        r'^[RP]\d+$',                # R12, P9
+        r'^n_[a-z]$',                # n_s, n_p (math variables)
+        r'^[A-Z][a-z]?$',            # Single upper or Upper+lower (R, Ra, Re)
+        r'^[a-z]+[A-Z]',             # Weird casing like "hEN"
+        r'^[A-Z]\.$',                # Single letter + period (I.)
+        r'^Eq\.$',                   # Equation marker
+        r'^d\*$',                    # d* math notation
+        r'^[a-z]{2}$',               # 2-char lowercase (do)
+        r'^[_a-z]\d$',               # lowercase/underscore + digit (h1, _2)
+        r'^[A-Z]\d$',                # Single uppercase + digit (B1, B2) - NOT G20
+    ],
+    
+    # Case-INSENSITIVE patterns
+    'blacklist_case_insensitive': [
+        r'^N/?A$',                   # N/A, NA, n/a
+        r'^RQ\d*$',                  # RQ, RQ1, RQ2
+        r'^(who|why|how|what|when|use)$',
+        r'^(res|age|fee|unl|tax)$',
+        r'^(law|sex|act|noa)$',
+        r'^ext$',                    # 3-char "ext"
+    ],
+    
+    # Numeric patterns - ONLY apply outside Citation type
+    'numeric_patterns': [
+        r'^\d{1,3}$',                # 1-3 digit numbers (4, 18, 481)
+        r'^\[\d+\]$',                # Bracketed refs [3], [1]
+    ],
+    
+    # Types where numbers ARE valid (skip numeric patterns)
+    'numeric_allowed_types': ['Citation'],
+}
+
+
+# ============================================================================
+# PHASE 1C: ENTITY DISAMBIGUATION (v1.1)
 # ============================================================================
 
 DISAMBIGUATION_CONFIG = {
-    # Model - v1.1 uses Mistral-7B for consistency
+    # Model - Mistral-7B for SameJudge (Qwen has JSON bugs)
     'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
-    # FAISS blocking
-    'similarity_threshold': 0.85,
-    'top_k_candidates': 20,
+    # FAISS blocking (thresholds TBD after quintile analysis)
+    'faiss_k': 50,                   # Neighbors to retrieve
+    'faiss_threshold': 0.70,         # Blocking threshold (permissive)
+    'faiss_M': 32,                   # HNSW connections per node
+    'faiss_ef_construction': 200,    # Build quality
+    'faiss_ef_search': 64,           # Search quality
     
-    # Tiered thresholds (RAKG-inspired)
-    'auto_merge_threshold': 0.95,
-    'llm_review_threshold': 0.85,
-    'reject_threshold': 0.85,
+    # Tiered thresholds (TBD after quintile analysis)
+    'auto_merge_threshold': 0.95,    # >= this → auto-merge
+    'auto_reject_threshold': 0.85,   # < this → auto-reject
+    # Between 0.85-0.95 → LLM decides
     
-    # LLM parameters
+    # LLM SameJudge
     'temperature': 0.0,
     'max_tokens': 256,
+    'max_llm_pairs': 1000,           # Cost control limit
     
     # Batch processing
     'batch_size': 50,

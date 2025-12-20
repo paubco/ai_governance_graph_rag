@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-LLM prompt templates - Mistral-7B optimized, slim version.
+LLM prompt templates - Mistral-7B optimized, v2.0 (semantic + metadata).
 """
 
 from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,
-    ACADEMIC_ENTITY_TYPES,
+    METADATA_ENTITY_TYPES,
     SEMANTIC_TYPE_NAMES,
-    ACADEMIC_TYPE_NAMES,
+    METADATA_TYPE_NAMES,
 )
 
 def _build_type_list(type_dict: dict) -> str:
     return "\n".join(f"- {name}: {desc}" for name, desc in type_dict.items())
 
 _SEMANTIC_TYPES_LIST = _build_type_list(SEMANTIC_ENTITY_TYPES)
-_ACADEMIC_TYPES_LIST = _build_type_list(ACADEMIC_ENTITY_TYPES)
-_ALL_TYPE_NAMES = ", ".join(SEMANTIC_TYPE_NAMES + ACADEMIC_TYPE_NAMES)
+_METADATA_TYPES_LIST = _build_type_list(METADATA_ENTITY_TYPES)
+_ALL_TYPE_NAMES = ", ".join(SEMANTIC_TYPE_NAMES + METADATA_TYPE_NAMES)
 
 
 # ============================================================================
@@ -28,11 +28,12 @@ Extract named entities. Use ONLY these types:
 
 # Rules
 - MUST split compounds: "AI and ML" → extract "AI" AND "ML" as separate entities
-- Regulation = law documents (EU AI Act, Article 5)
+- Regulation = law documents (EU AI Act, GDPR)
 - RegulatoryConcept = compliance ideas AND principles (governance, transparency, accountability)
 
-# NEVER EXTRACT
-- Citations, authors, journals, affiliations, DOIs
+# NEVER EXTRACT (metadata pass handles these)
+- Document structure (Article X, Section Y, Annex Z, page N)
+- Citations, authors, journals, affiliations, DOIs, [1], [2]
 
 # Examples
 Input: "The EU AI Act requires transparency and conformity assessment."
@@ -49,28 +50,30 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 
 
 # ============================================================================
-# PHASE 1B: ACADEMIC ENTITY EXTRACTION
+# PHASE 1B: METADATA ENTITY EXTRACTION
 # ============================================================================
 
-ACADEMIC_EXTRACTION_PROMPT = f"""# Task
-Extract academic references. Use ONLY these types:
-{_ACADEMIC_TYPES_LIST}
+METADATA_EXTRACTION_PROMPT = f"""# Task
+Extract metadata entities. Use ONLY these types:
+{_METADATA_TYPES_LIST}
 
 # Rules
 - Citation: "Author (Year)", [1], [2]
 - Author: Researcher names ONLY
-- Journal: Publication venues ONLY (Nature, Science)
+- Journal: Publication venues (journals, conferences)
 - Affiliation: Universities, research centers, companies
+- Document: Named documents when structurally referenced (EU AI Act, GDPR, research papers)
+- DocumentSection: Structural parts (Article 5, Section 3, Annex A, page 12)
 
-# NEVER EXTRACT
-- Concepts, regulations, technologies, organizations, locations
+# NEVER EXTRACT (semantic pass handles these)
+- Concepts, technologies, risks, organizations, locations
 
 # Examples
-Input: "Floridi (2018) from Oxford published in Nature."
-Output: {{{{"entities": [{{{{"name": "Floridi (2018)", "type": "Citation", "description": "Floridi 2018 work"}}}}, {{{{"name": "Oxford", "type": "Affiliation", "description": "University"}}}}, {{{{"name": "Nature", "type": "Journal", "description": "Scientific venue"}}}}]}}}}
+Input: "Article 5 of the EU AI Act prohibits social scoring."
+Output: {{{{"entities": [{{{{"name": "Article 5", "type": "DocumentSection", "description": "Section of EU AI Act"}}}}, {{{{"name": "EU AI Act", "type": "Document", "description": "EU AI regulation"}}}}]}}}}
 
-Input: "ChatGPT demonstrates remarkable capabilities."
-Output: {{{{"entities": []}}}}
+Input: "AuthorName (2020) discusses this in Section 3.2."
+Output: {{{{"entities": [{{{{"name": "AuthorName (2020)", "type": "Citation", "description": "AuthorName 2020 work"}}}}, {{{{"name": "Section 3.2", "type": "DocumentSection", "description": "Paper section"}}}}]}}}}
 
 # Text
 {{chunk_text}}
@@ -116,7 +119,7 @@ JSON only:
 {{"relations": [{{"subject": "...", "predicate": "...", "object": "...", "chunk_ids": ["..."]}}]}}"""
 
 
-ACADEMIC_RELATION_EXTRACTION_PROMPT = """Extract what this citation discusses.
+METADATA_RELATION_EXTRACTION_PROMPT = """Extract what this citation discusses.
 
 TARGET: {entity_name} ({entity_type})
 

@@ -4,10 +4,9 @@ Module: pre_entity_extractor.py
 Package: src.processing.entities
 Purpose: Dual-pass entity extraction using Mistral-7B
 
-v1.2: Domain-fused types (RegulatoryConcept, TechnicalProcess, etc.)
-- Semantic pass: 11 domain-fused types
-- Academic pass: 4 types (Citation, Author, Journal, Self-Reference)
-- No separate domain field
+v2.0: Semantic + Metadata architecture
+- Semantic pass: 9 types (concepts, regulations, technology, etc.)
+- Metadata pass: 6 types (Citation, Author, Journal, Affiliation, Document, DocumentSection)
 """
 
 # Standard library
@@ -32,11 +31,11 @@ from src.utils.dataclasses import PreEntity
 from config.extraction_config import (
     ENTITY_EXTRACTION_CONFIG,
     SEMANTIC_ENTITY_TYPES,
-    ACADEMIC_ENTITY_TYPES,
+    METADATA_ENTITY_TYPES,
 )
 from src.prompts.prompts import (
     SEMANTIC_EXTRACTION_PROMPT,
-    ACADEMIC_EXTRACTION_PROMPT,
+    METADATA_EXTRACTION_PROMPT,
 )
 
 # Load environment
@@ -76,9 +75,9 @@ class DualPassEntityExtractor:
         self.client = Together(api_key=api_key)
         self.model = model or ENTITY_EXTRACTION_CONFIG['model_name']
         
-        # Valid types (v1.2 - no separate domain)
+        # Valid types (v2.0 - semantic + metadata)
         self.semantic_types = set(SEMANTIC_ENTITY_TYPES)
-        self.academic_types = set(ACADEMIC_ENTITY_TYPES)
+        self.metadata_types = set(METADATA_ENTITY_TYPES)
         
         logger.info(f"DualPassEntityExtractor initialized with {self.model}")
     
@@ -94,7 +93,7 @@ class DualPassEntityExtractor:
         Args:
             chunk_text: Text content of the chunk
             chunk_id: Unique identifier for the chunk
-            doc_type: "regulation" or "paper" - determines if academic pass runs
+            doc_type: "regulation" or "paper" (both run metadata pass in v2.0)
             
         Returns:
             List of PreEntity objects with embedding_text pre-computed
@@ -105,10 +104,9 @@ class DualPassEntityExtractor:
         semantic_entities = self._extract_semantic(chunk_text, chunk_id)
         entities.extend(semantic_entities)
         
-        # Pass 2: Academic extraction (paper chunks only)
-        if doc_type == "paper":
-            academic_entities = self._extract_academic(chunk_text, chunk_id)
-            entities.extend(academic_entities)
+        # Pass 2: Metadata extraction (all chunks in v2.0)
+        metadata_entities = self._extract_metadata(chunk_text, chunk_id)
+        entities.extend(metadata_entities)
         
         return entities
     
@@ -159,19 +157,19 @@ class DualPassEntityExtractor:
         
         return entities
     
-    def _extract_academic(
+    def _extract_metadata(
         self,
         chunk_text: str,
         chunk_id: str,
     ) -> List[PreEntity]:
         """
-        Pass 2: Extract academic entities (citations, authors, journals).
+        Pass 2: Extract metadata entities (citations, authors, documents, sections).
         Retries once if >50% entities are rejected.
         """
         max_attempts = 2
         
         for attempt in range(max_attempts):
-            prompt = ACADEMIC_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
+            prompt = METADATA_EXTRACTION_PROMPT.format(chunk_text=chunk_text)
             
             try:
                 response = self.client.chat.completions.create(
@@ -183,25 +181,25 @@ class DualPassEntityExtractor:
                 )
                 
                 content = response.choices[0].message.content
-                raw_entities = self._parse_json_response(content, chunk_id, "academic")
+                raw_entities = self._parse_json_response(content, chunk_id, "metadata")
                 
                 # Convert to PreEntity with validation
                 entities = []
                 for raw in raw_entities:
-                    entity = self._create_academic_entity(raw, chunk_id)
+                    entity = self._create_metadata_entity(raw, chunk_id)
                     if entity:
                         entities.append(entity)
                 
                 # Retry if too many rejections
                 if raw_entities and len(entities) / len(raw_entities) < 0.5:
                     if attempt == 0:
-                        logger.warning(f"Low valid ratio (academic) for {chunk_id} ({len(entities)}/{len(raw_entities)}), retrying...")
+                        logger.warning(f"Low valid ratio (metadata) for {chunk_id} ({len(entities)}/{len(raw_entities)}), retrying...")
                         continue
                 
                 return entities
                 
             except Exception as e:
-                logger.error(f"Academic extraction failed for {chunk_id}: {e}")
+                logger.error(f"Metadata extraction failed for {chunk_id}: {e}")
                 return []
         
         return entities
@@ -242,16 +240,16 @@ class DualPassEntityExtractor:
             embedding_text=embedding_text,
         )
     
-    def _create_academic_entity(
+    def _create_metadata_entity(
         self,
         raw: Dict,
         chunk_id: str,
     ) -> Optional[PreEntity]:
         """
-        Create PreEntity from raw academic extraction with validation.
+        Create PreEntity from raw metadata extraction with validation.
         
-        Validates type against academic types.
-        Computes embedding_text as "{name}({type})" (no domain).
+        Validates type against metadata types.
+        Computes embedding_text as "{name}({type})".
         """
         name = raw.get('name', '').strip()
         entity_type = raw.get('type', '').strip()
@@ -259,15 +257,15 @@ class DualPassEntityExtractor:
         
         # Validate required fields
         if not name or not entity_type:
-            logger.warning(f"Missing fields in academic entity: {raw}")
+            logger.warning(f"Missing fields in metadata entity: {raw}")
             return None
         
         # Validate type
-        if entity_type not in self.academic_types:
-            logger.warning(f"Invalid type '{entity_type}' for academic entity '{name}', skipping")
+        if entity_type not in self.metadata_types:
+            logger.warning(f"Invalid type '{entity_type}' for metadata entity '{name}', skipping")
             return None
         
-        # Compute embedding text: "{name}({type})" (no domain)
+        # Compute embedding text: "{name}({type})"
         embedding_text = f"{name}({entity_type})"
         
         return PreEntity(
@@ -295,7 +293,7 @@ class DualPassEntityExtractor:
         Args:
             content: Raw LLM response
             chunk_id: Chunk identifier (for logging)
-            pass_type: "semantic" or "academic" (for logging)
+            pass_type: "semantic" or "metadata" (for logging)
             
         Returns:
             List of entity dictionaries
@@ -364,10 +362,10 @@ class DualPassEntityExtractor:
             all_entities.extend(entities)
         
         if verbose:
-            semantic_count = sum(1 for e in all_entities if e.domain is not None)
-            academic_count = len(all_entities) - semantic_count
+            semantic_count = sum(1 for e in all_entities if e.type in self.semantic_types)
+            metadata_count = len(all_entities) - semantic_count
             logger.info(f"Extraction complete: {len(all_entities)} entities "
-                       f"({semantic_count} semantic, {academic_count} academic) "
+                       f"({semantic_count} semantic, {metadata_count} metadata) "
                        f"from {len(chunks)} chunks")
         
         return all_entities

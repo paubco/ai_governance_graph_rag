@@ -14,8 +14,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import List, Dict
 
-# Academic types (no domain prefix)
-ACADEMIC_TYPES = {"Citation", "Author", "Journal", "Affiliation"}
+# Metadata types (bibliographic + document structure)
+METADATA_TYPES = {"Citation", "Author", "Journal", "Affiliation", "Document", "DocumentSection"}
 
 
 def load_entities(filepath: Path) -> List[Dict]:
@@ -48,9 +48,9 @@ def type_distribution(entities: List[Dict]) -> None:
 
 
 def pass_distribution(entities: List[Dict]) -> None:
-    """Print semantic vs academic pass distribution."""
-    semantic = [e for e in entities if e.get('type') not in ACADEMIC_TYPES]
-    academic = [e for e in entities if e.get('type') in ACADEMIC_TYPES]
+    """Print semantic vs metadata pass distribution."""
+    semantic = [e for e in entities if e.get('type') not in METADATA_TYPES]
+    metadata = [e for e in entities if e.get('type') in METADATA_TYPES]
     
     total = len(entities)
     
@@ -58,23 +58,23 @@ def pass_distribution(entities: List[Dict]) -> None:
     print(f"{'Pass':<15} {'Count':>8} {'Pct':>8}")
     print("-" * 35)
     print(f"{'Semantic':<15} {len(semantic):>8} {100*len(semantic)/total:>7.1f}%")
-    print(f"{'Academic':<15} {len(academic):>8} {100*len(academic)/total:>7.1f}%")
+    print(f"{'Metadata':<15} {len(metadata):>8} {100*len(metadata)/total:>7.1f}%")
     print("-" * 35)
     print(f"{'TOTAL':<15} {total:>8}")
 
 
 def type_by_pass(entities: List[Dict]) -> None:
     """Print types grouped by pass."""
-    semantic = [e for e in entities if e.get('type') not in ACADEMIC_TYPES]
-    academic = [e for e in entities if e.get('type') in ACADEMIC_TYPES]
+    semantic = [e for e in entities if e.get('type') not in METADATA_TYPES]
+    metadata = [e for e in entities if e.get('type') in METADATA_TYPES]
     
     print("\n=== SEMANTIC TYPES ===")
     types = Counter(e.get('type') for e in semantic)
     for t, c in types.most_common():
         print(f"  {t:<25} {c:>6}")
     
-    print("\n=== ACADEMIC TYPES ===")
-    types = Counter(e.get('type') for e in academic)
+    print("\n=== METADATA TYPES ===")
+    types = Counter(e.get('type') for e in metadata)
     for t, c in types.most_common():
         print(f"  {t:<25} {c:>6}")
 
