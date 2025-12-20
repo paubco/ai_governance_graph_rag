@@ -53,6 +53,9 @@ _PROVENANCE_THRESHOLD: float = PRE_ENTITY_FILTER_CONFIG['provenance_threshold']
 _DOCUMENT_PATTERNS = [
     re.compile(p) for p in PRE_ENTITY_FILTER_CONFIG.get('document_blacklist', [])
 ]
+_DOCUMENT_PATTERNS_CI = [
+    re.compile(p, re.IGNORECASE) for p in PRE_ENTITY_FILTER_CONFIG.get('document_blacklist_ci', [])
+]
 _DOCUMENT_SECTION_PATTERNS = [
     re.compile(p) for p in PRE_ENTITY_FILTER_CONFIG.get('document_section_blacklist', [])
 ]
@@ -100,6 +103,9 @@ def is_garbage(name: str, entity_type: str = None) -> bool:
     # Type-specific blacklists (v2.0)
     if entity_type == 'Document':
         for pattern in _DOCUMENT_PATTERNS:
+            if pattern.match(name):
+                return True
+        for pattern in _DOCUMENT_PATTERNS_CI:
             if pattern.match(name):
                 return True
     
