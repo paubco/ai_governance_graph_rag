@@ -78,7 +78,6 @@ PRE_ENTITIES_FILE = DATA_DIR / 'interim' / 'entities' / 'pre_entities.jsonl'
 CHUNKS_FILE = DATA_DIR / 'processed' / 'chunks' / 'chunks_embedded.jsonl'
 
 # Outputs (v2.0)
-SEMANTIC_OUTPUT_RAW = DATA_DIR / 'processed' / 'entities' / 'entities_semantic_raw.jsonl'
 SEMANTIC_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_semantic.jsonl'
 METADATA_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_metadata.jsonl'
 ALIASES_FILE = DATA_DIR / 'processed' / 'entities' / 'aliases.json'
@@ -159,7 +158,7 @@ class DisambiguationProcessor:
         logger.info("=" * 70)
         
         # Ensure output directories exist
-        for path in [SEMANTIC_OUTPUT_RAW, METADATA_OUTPUT, ALIASES_FILE, 
+        for path in [SEMANTIC_OUTPUT, METADATA_OUTPUT, ALIASES_FILE, 
                      PART_OF_FILE, SAME_AS_FILE, FILTER_REPORT, HALLUCINATIONS_FILE]:
             path.parent.mkdir(parents=True, exist_ok=True)
         
@@ -248,8 +247,8 @@ class DisambiguationProcessor:
         logger.info("\n[6/7] Saving outputs (raw, without embeddings)...")
         
         # Save semantic entities (raw - will embed separately)
-        save_jsonl(semantic_entities, str(SEMANTIC_OUTPUT_RAW))
-        logger.info(f"  Saved {len(semantic_entities)} semantic entities → {SEMANTIC_OUTPUT_RAW}")
+        save_jsonl(semantic_entities, str(SEMANTIC_OUTPUT))
+        logger.info(f"  Saved {len(semantic_entities)} semantic entities → {SEMANTIC_OUTPUT}")
         
         # Save metadata entities
         save_jsonl(metadata_entities, str(METADATA_OUTPUT))
