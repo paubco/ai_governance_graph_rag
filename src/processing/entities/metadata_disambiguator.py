@@ -1,25 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Academic entity disambiguation for Phase 1C.
+Metadata entity disambiguation for Phase 1C (v2.0).
 
-Handles the ACADEMIC path (4 types):
-    Citation, Author, Journal, Affiliation
+Handles the METADATA path (6 types):
+    Citation, Author, Journal, Affiliation, Document, DocumentSection
 
-Key differences from semantic path:
-    - NO merge (would incorrectly cluster different authors/citations)
-    - Generate entity IDs only
-    - Create PART_OF relations for article/section citations
+Key operations:
+    1. NO merge for most types (Author, Citation, Journal, Affiliation)
+    2. DocumentSection → PART_OF → Document (within metadata path)
+    3. Document ↔ Regulation → SAME_AS (cross-path linking)
 
-PART_OF scope:
-    - "Article 5 of EU AI Act" → PART_OF → "EU AI Act" ✓
-    - "Floridi (2018)" → NO PART_OF (author citation)
-    - "Floridi page 22" → "page 22" PART_OF → "Floridi" ✓ (if found)
-
-Note: No embeddings generated for academic entities (Scopus matching uses fuzzy string).
+v2.0 Changes:
+    - "Academic" → "Metadata" terminology
+    - Added Document and DocumentSection types
+    - PART_OF now links DocumentSection to Document (not Citation to Regulation)
+    - NEW: SAME_AS relations for Document ↔ Regulation linking
 
 Example:
-    disambiguator = AcademicDisambiguator(semantic_entities, chunk_entity_map)
-    academic_entities, part_of_relations = disambiguator.process(academic_raw)
+    disambiguator = MetadataDisambiguator(semantic_entities)
+    metadata_entities, part_of, same_as = disambiguator.process(metadata_raw)
 """
 
 import re
@@ -41,91 +40,74 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # =============================================================================
 
-ACADEMIC_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation'}
+METADATA_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation', 'Document', 'DocumentSection'}
 
-# Pattern for article/section/chapter citations (NOT author citations)
-ARTICLE_SECTION_PATTERN = re.compile(
-    r'(Article|Section|Chapter|Part|Annex|Recital|Title|Paragraph|Clause)\s+\d+',
-    re.IGNORECASE
-)
-
-# Pattern for page references
-PAGE_PATTERN = re.compile(
-    r'(page|pages|p\.|pp\.)\s*\d+',
-    re.IGNORECASE
-)
-
-# Minimum similarity for PART_OF fuzzy matching
-PART_OF_THRESHOLD = 0.80
+# Minimum similarity for fuzzy matching
+SAME_AS_THRESHOLD = 0.85    # Document ↔ Regulation matching
+PART_OF_THRESHOLD = 0.80    # DocumentSection → Document matching
 
 
 # =============================================================================
-# ACADEMIC LINKER
+# METADATA DISAMBIGUATOR
 # =============================================================================
 
-class AcademicDisambiguator:
+class MetadataDisambiguator:
     """
-    Handles academic entities: no merge, generates IDs, creates PART_OF relations.
+    Handles metadata entities: generates IDs, creates PART_OF and SAME_AS relations.
     
     Usage:
-        disambiguator = AcademicDisambiguator(semantic_entities, chunk_entity_map)
-        processed, relations = disambiguator.process(academic_entities)
+        disambiguator = MetadataDisambiguator(semantic_entities)
+        metadata_out, part_of, same_as = disambiguator.process(metadata_entities)
     """
     
-    def __init__(self, 
-                 semantic_entities: List[Dict] = None,
-                 chunk_entity_map: Dict[str, List[Dict]] = None):
+    def __init__(self, semantic_entities: List[Dict] = None):
         """
-        Initialize linker.
+        Initialize disambiguator.
         
         Args:
-            semantic_entities: Already-disambiguated semantic entities
-            chunk_entity_map: {chunk_id: [semantic_entities_in_chunk]}
+            semantic_entities: Disambiguated semantic entities (for SAME_AS matching)
         """
         self.semantic_entities = semantic_entities or []
-        self.chunk_entity_map = chunk_entity_map or {}
         
-        # Build lookup structures
-        self._build_lookups()
+        # Build lookup for Regulation entities (for Document ↔ Regulation SAME_AS)
+        self.regulations = [
+            e for e in self.semantic_entities 
+            if e.get('type') == 'Regulation'
+        ]
         
         self.stats = {
             'input_count': 0,
             'output_count': 0,
+            'documents': 0,
+            'document_sections': 0,
             'part_of_relations': 0,
-            'article_citations': 0,
+            'same_as_relations': 0,
         }
     
-    def _build_lookups(self):
-        """Build efficient lookup structures for semantic entities."""
-        # Name → entity (for fuzzy matching)
-        self.semantic_by_name = {}
-        for entity in self.semantic_entities:
-            name = entity.get('name', '')
-            if name:
-                self.semantic_by_name[name.lower()] = entity
-        
-        logger.info(f"AcademicLinker: {len(self.semantic_by_name)} semantic entities indexed")
-    
-    def process(self, academic_entities: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    def process(self, metadata_entities: List[Dict]) -> Tuple[List[Dict], List[Dict], List[Dict]]:
         """
-        Process academic entities: generate IDs, find PART_OF relations.
+        Process metadata entities: generate IDs, find PART_OF and SAME_AS relations.
         
         Args:
-            academic_entities: Academic pre-entities (no disambiguation)
+            metadata_entities: Metadata pre-entities
             
         Returns:
-            (processed_entities, part_of_relations)
+            (processed_entities, part_of_relations, same_as_relations)
         """
         from src.utils.id_generator import generate_entity_id
         
-        logger.info(f"Processing {len(academic_entities)} academic entities...")
+        logger.info(f"Processing {len(metadata_entities)} metadata entities...")
         
-        self.stats['input_count'] = len(academic_entities)
+        self.stats['input_count'] = len(metadata_entities)
         
         processed = []
-        relations = []
+        part_of_relations = []
+        same_as_relations = []
         
-        for entity in academic_entities:
+        # First pass: process all entities, collect Documents for PART_OF lookup
+        documents_by_chunk = defaultdict(list)  # {chunk_id: [Document entities]}
+        
+        for entity in metadata_entities:
             name = entity.get('name', '')
             entity_type = entity.get('type', '')
             chunk_id = entity.get('chunk_id', '')
@@ -142,91 +124,175 @@ class AcademicDisambiguator:
             }
             processed.append(processed_entity)
             
-            # Check for PART_OF relations (only for article/section citations)
-            if self._is_linkable_citation(name):
-                self.stats['article_citations'] += 1
+            # Track Documents for PART_OF lookup
+            if entity_type == 'Document':
+                self.stats['documents'] += 1
+                documents_by_chunk[chunk_id].append(processed_entity)
                 
-                # Find semantic entities in same chunk
-                chunk_semantics = self.chunk_entity_map.get(chunk_id, [])
+                # Check for SAME_AS with Regulation
+                same_as = self._find_same_as_regulation(name, entity_id)
+                if same_as:
+                    same_as_relations.append(same_as)
+            
+            elif entity_type == 'DocumentSection':
+                self.stats['document_sections'] += 1
+        
+        # Second pass: find PART_OF relations (DocumentSection → Document)
+        for entity in processed:
+            if entity['type'] == 'DocumentSection':
+                chunk_id = entity['chunk_ids'][0] if entity['chunk_ids'] else ''
                 
-                # Also check globally for regulation names in citation
-                for semantic in chunk_semantics:
-                    semantic_name = semantic.get('name', '')
-                    semantic_id = semantic.get('entity_id', '')
-                    
-                    if self._is_part_of(name, semantic_name):
-                        relations.append({
-                            'subject': name,
-                            'subject_id': entity_id,
+                # Look for Document entities in same chunk
+                for doc in documents_by_chunk.get(chunk_id, []):
+                    if self._is_part_of(entity['name'], doc['name']):
+                        part_of_relations.append({
+                            'subject': entity['name'],
+                            'subject_id': entity['entity_id'],
+                            'subject_type': 'DocumentSection',
                             'predicate': 'PART_OF',
-                            'object': semantic_name,
-                            'object_id': semantic_id,
+                            'object': doc['name'],
+                            'object_id': doc['entity_id'],
+                            'object_type': 'Document',
                             'chunk_id': chunk_id,
-                            'source': 'academic_linker',
+                            'source': 'metadata_disambiguator',
                         })
+                
+                # Also check against ALL Documents (not just same chunk)
+                # DocumentSection often appears without parent Document in same chunk
+                for doc_list in documents_by_chunk.values():
+                    for doc in doc_list:
+                        if doc['chunk_ids'] == entity['chunk_ids']:
+                            continue  # Already checked same chunk
+                        if self._is_part_of(entity['name'], doc['name']):
+                            part_of_relations.append({
+                                'subject': entity['name'],
+                                'subject_id': entity['entity_id'],
+                                'subject_type': 'DocumentSection',
+                                'predicate': 'PART_OF',
+                                'object': doc['name'],
+                                'object_id': doc['entity_id'],
+                                'object_type': 'Document',
+                                'chunk_id': chunk_id,
+                                'source': 'metadata_disambiguator_cross_chunk',
+                            })
+        
+        # Deduplicate relations (same pair might be found multiple times)
+        part_of_relations = self._dedupe_relations(part_of_relations)
+        same_as_relations = self._dedupe_relations(same_as_relations)
         
         self.stats['output_count'] = len(processed)
-        self.stats['part_of_relations'] = len(relations)
+        self.stats['part_of_relations'] = len(part_of_relations)
+        self.stats['same_as_relations'] = len(same_as_relations)
         
-        logger.info(f"Academic processing complete:")
-        logger.info(f"  Entities: {len(processed)}")
-        logger.info(f"  Article/section citations: {self.stats['article_citations']}")
-        logger.info(f"  PART_OF relations: {len(relations)}")
+        logger.info(f"Metadata processing complete:")
+        logger.info(f"  Entities: {len(processed):,}")
+        logger.info(f"  Documents: {self.stats['documents']:,}")
+        logger.info(f"  DocumentSections: {self.stats['document_sections']:,}")
+        logger.info(f"  PART_OF relations: {len(part_of_relations):,}")
+        logger.info(f"  SAME_AS relations: {len(same_as_relations):,}")
         
-        return processed, relations
+        return processed, part_of_relations, same_as_relations
     
-    def _is_linkable_citation(self, name: str) -> bool:
+    def _find_same_as_regulation(self, doc_name: str, doc_id: str) -> Optional[Dict]:
         """
-        Check if citation should generate PART_OF relations.
+        Find matching Regulation for a Document entity.
         
-        Returns True for:
-            - Article/section/chapter references
-            - Page references
+        Examples:
+            "EU AI Act" (Document) ↔ "EU AI Act" (Regulation) → SAME_AS
+            "GDPR" (Document) ↔ "GDPR" (Regulation) → SAME_AS
+        """
+        doc_lower = doc_name.lower().strip()
+        
+        for reg in self.regulations:
+            reg_name = reg.get('name', '')
+            reg_lower = reg_name.lower().strip()
             
-        Returns False for:
-            - Author citations like "Floridi (2018)"
+            # Exact match
+            if doc_lower == reg_lower:
+                return {
+                    'subject': doc_name,
+                    'subject_id': doc_id,
+                    'subject_type': 'Document',
+                    'predicate': 'SAME_AS',
+                    'object': reg_name,
+                    'object_id': reg.get('entity_id', ''),
+                    'object_type': 'Regulation',
+                    'confidence': 1.0,
+                    'source': 'metadata_disambiguator',
+                }
+            
+            # Fuzzy match
+            if RAPIDFUZZ_AVAILABLE:
+                score = fuzz.ratio(doc_lower, reg_lower) / 100.0
+                if score >= SAME_AS_THRESHOLD:
+                    return {
+                        'subject': doc_name,
+                        'subject_id': doc_id,
+                        'subject_type': 'Document',
+                        'predicate': 'SAME_AS',
+                        'object': reg_name,
+                        'object_id': reg.get('entity_id', ''),
+                        'object_type': 'Regulation',
+                        'confidence': score,
+                        'source': 'metadata_disambiguator',
+                    }
+        
+        return None
+    
+    def _is_part_of(self, section_name: str, doc_name: str) -> bool:
         """
-        # Check for article/section pattern
-        if ARTICLE_SECTION_PATTERN.search(name):
+        Check if DocumentSection is part of Document.
+        
+        Logic: Section name should contain or reference the Document name,
+        OR Document name should be a meaningful substring of section context.
+        
+        Examples:
+            "Article 5 of EU AI Act" → "EU AI Act" ✓
+            "Article 5" → "EU AI Act" ✗ (no explicit link in name)
+            "Section 3.2 of GDPR" → "GDPR" ✓
+        """
+        if not doc_name or not section_name:
+            return False
+        
+        section_lower = section_name.lower().strip()
+        doc_lower = doc_name.lower().strip()
+        
+        # Skip if same name (not a part-of relationship)
+        if section_lower == doc_lower:
+            return False
+        
+        # Skip if doc is longer than section (parent must be referenced IN child)
+        if len(doc_lower) >= len(section_lower):
+            return False
+        
+        # Fast path: doc name is substring of section name
+        if doc_lower in section_lower:
             return True
         
-        # Check for page pattern
-        if PAGE_PATTERN.search(name):
-            return True
+        # Fuzzy match
+        if RAPIDFUZZ_AVAILABLE:
+            score = fuzz.partial_ratio(doc_lower, section_lower) / 100.0
+            return score >= PART_OF_THRESHOLD
         
         return False
     
-    def _is_part_of(self, academic_name: str, semantic_name: str) -> bool:
-        """
-        Check if academic entity references semantic entity.
+    def _dedupe_relations(self, relations: List[Dict]) -> List[Dict]:
+        """Remove duplicate relations (same subject-predicate-object triple)."""
+        seen = set()
+        unique = []
         
-        Examples:
-            "Article 5 of EU AI Act" contains "EU AI Act" → True
-            "Article 5" + "EU AI Act" → False (no overlap)
-        """
-        if not semantic_name:
-            return False
+        for rel in relations:
+            key = (rel['subject'], rel['predicate'], rel['object'])
+            if key not in seen:
+                seen.add(key)
+                unique.append(rel)
         
-        academic_lower = academic_name.lower()
-        semantic_lower = semantic_name.lower()
-        
-        # Fast path: exact substring containment
-        if semantic_lower in academic_lower:
-            return True
-        
-        # Slow path: fuzzy match for variations
-        if RAPIDFUZZ_AVAILABLE:
-            score = fuzz.partial_ratio(semantic_lower, academic_lower) / 100.0
-            return score >= PART_OF_THRESHOLD
-        else:
-            # Fallback: word overlap
-            semantic_words = set(semantic_lower.split())
-            academic_words = set(academic_lower.split())
-            if not semantic_words:
-                return False
-            overlap = len(semantic_words & academic_words) / len(semantic_words)
-            return overlap >= PART_OF_THRESHOLD
+        return unique
 
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
 
 def build_chunk_entity_map(entities: List[Dict]) -> Dict[str, List[Dict]]:
     """
