@@ -348,6 +348,40 @@ PRE_ENTITY_FILTER_CONFIG = {
         
         # Too short - causes spurious PART_OF matches (v2.0)
         r'^.{1,3}$',                 # 1-3 char names: DA, NN, RA, RED
+        
+        # Generic English words misclassified as Document (case-insensitive patterns below)
+    ],
+    
+    # Case-insensitive document blacklist (generic words)
+    'document_blacklist_ci': [
+        r'^systems?$',               # system, systems
+        r'^graph$',
+        r'^rights?$',                # right, rights
+        r'^learning$',
+        r'^models?$',                # model, models
+        r'^data$',
+        r'^governments?$',           # government, governments
+        r'^regulations?$',           # regulation, regulations
+        r'^education$',
+        r'^research$',
+        r'^safety$',
+        r'^frameworks?$',
+        r'^services?$',
+        r'^study$',
+        r'^health$',
+        r'^content$',
+        r'^ethics$',
+        r'^tools$',
+        r'^papers?$',
+        r'^students?$',
+        r'^impact$',
+        r'^article$',
+        r'^governance$',
+        r'^training$',
+        r'^testing$',
+        r'^industry$',
+        r'^transport$',
+        r'^records?$',
     ],
     
     # DocumentSection type: Article 5, Section 3, Annex I — NOT figures/tables
