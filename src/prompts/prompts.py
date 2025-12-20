@@ -87,33 +87,43 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 # ============================================================================
 
 # Few-shot conversation for Mistral (more effective than single prompt)
-SAMEJUDGE_SYSTEM = """You classify whether two entities are the EXACT SAME real-world thing.
-Answer only YES or NO. Default to NO if uncertain."""
+SAMEJUDGE_SYSTEM = """Classify: are these two entities the EXACT SAME thing with different names?
+Answer YES or NO only."""
 
-# Balance: 8 YES, 10 NO examples
+# Interleaved YES/NO to prevent anchoring bias
 SAMEJUDGE_EXAMPLES = [
-    # YES - same entity, different name (8 examples)
+    # Pattern: abbreviation = full name → YES
     ("GDPR (Regulation)", "General Data Protection Regulation (Regulation)", "YES"),
-    ("USA (Location)", "United States (Location)", "YES"),
-    ("AI (Technology)", "artificial intelligence (Technology)", "YES"),
-    ("EU AI Act (Regulation)", "Artificial Intelligence Act (Regulation)", "YES"),
-    ("EU (Location)", "European Union (Location)", "YES"),
-    ("ML (Technology)", "machine learning (Technology)", "YES"),
-    ("CCPA (Regulation)", "California Consumer Privacy Act (Regulation)", "YES"),
-    ("UK (Location)", "United Kingdom (Location)", "YES"),
-    # NO - specific vs generic (3 examples)
+    # Pattern: specific ≠ generic → NO  
     ("GDPR (Regulation)", "data protection laws (Regulation)", "NO"),
-    ("EU AI Act (Regulation)", "AI regulations (Regulation)", "NO"),
-    ("CCPA (Regulation)", "privacy laws (Regulation)", "NO"),
-    # NO - different identifiers (2 examples)
+    # Pattern: country abbreviation → YES
+    ("USA (Location)", "United States (Location)", "YES"),
+    # Pattern: different numbers → NO
     ("Article 5 (DocumentSection)", "Article 6 (DocumentSection)", "NO"),
-    ("March 2025 (Location)", "April 2025 (Location)", "NO"),
-    # NO - antonyms/opposing (2 examples)
+    # Pattern: tech abbreviation → YES
+    ("AI (Technology)", "artificial intelligence (Technology)", "YES"),
+    # Pattern: antonyms → NO
     ("safety (Risk)", "risk (Risk)", "NO"),
-    ("benefits (EconomicConcept)", "costs (EconomicConcept)", "NO"),
-    # NO - X vs X-issues pattern (2 examples)
+    # Pattern: regulation abbreviation → YES
+    ("EU AI Act (Regulation)", "Artificial Intelligence Act (Regulation)", "YES"),
+    # Pattern: X ≠ X-issues → NO
     ("safety (Risk)", "safety issues (Risk)", "NO"),
+    # Pattern: location abbreviation → YES
+    ("EU (Location)", "European Union (Location)", "YES"),
+    # Pattern: specific ≠ generic → NO
+    ("EU AI Act (Regulation)", "AI regulations (Regulation)", "NO"),
+    # Pattern: tech abbreviation → YES
+    ("ML (Technology)", "machine learning (Technology)", "YES"),
+    # Pattern: related but different → NO
     ("AI safety (Risk)", "AI risks (Risk)", "NO"),
+    # Pattern: law abbreviation → YES
+    ("CCPA (Regulation)", "California Consumer Privacy Act (Regulation)", "YES"),
+    # Pattern: costs ≠ benefits → NO
+    ("benefits (EconomicConcept)", "costs (EconomicConcept)", "NO"),
+    # Pattern: country abbreviation → YES
+    ("UK (Location)", "United Kingdom (Location)", "YES"),
+    # Pattern: specific ≠ generic → NO
+    ("CCPA (Regulation)", "privacy laws (Regulation)", "NO"),
 ]
 
 # Legacy single-prompt format (kept for reference)
