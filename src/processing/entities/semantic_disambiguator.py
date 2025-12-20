@@ -519,8 +519,11 @@ class SameJudge:
             max_rpm: Max requests per minute (default 2900, buffer below 3000 limit)
         """
         import os
+        from dotenv import load_dotenv
         from together import Together
         from src.utils.rate_limiter import RateLimiter
+        
+        load_dotenv()
         
         self.model = model
         self.client = Together(api_key=api_key or os.environ.get('TOGETHER_API_KEY'))
