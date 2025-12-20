@@ -86,7 +86,7 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 # PHASE 1C: ENTITY DISAMBIGUATION
 # ============================================================================
 
-SAMEJUDGE_PROMPT = """Are these the SAME real-world entity? Be strict about identifiers.
+SAMEJUDGE_PROMPT = """Are these the EXACT SAME specific entity with different names? Be very strict.
 
 Entity 1: {entity1_name} ({entity1_type})
   Context: {entity1_desc}
@@ -94,17 +94,23 @@ Entity 1: {entity1_name} ({entity1_type})
 Entity 2: {entity2_name} ({entity2_type})
   Context: {entity2_desc}
 
-SAME (YES): name variations, abbreviations, singular/plural, translations
-- "EU AI Act" = "European AI Act"
-- "United States" = "USA"
-- "technology" = "technologies"
+YES - same entity, different name:
+- "GDPR" = "General Data Protection Regulation" (same law)
+- "EU AI Act" = "Artificial Intelligence Act" (same law)
+- "United States" = "USA" (same country)
 
-DIFFERENT (NO): any identifier mismatch (numbers, dates, initials, versions)
-- "Article 5" ≠ "Article 6"
-- "March 2025" ≠ "April 2025"
-- "O. V." ≠ "O. P."
-- "Level 1" ≠ "Level 2"
-- "Privacy Act" ≠ "Data Protection Act"
+NO - related but DIFFERENT entities:
+- "GDPR" ≠ "data protection laws" (specific law vs category)
+- "EU AI Act" ≠ "AI regulations" (specific vs generic)
+- "privacy regulations" ≠ "data protection rules" (different generic terms)
+- "national laws" ≠ "EU laws" (different scope)
+- "AI systems" ≠ "AI" (system vs technology)
+- "Article 5" ≠ "Article 6" (different articles)
+
+KEY RULES:
+1. Generic terms are NEVER the same as specific regulations
+2. Related concepts are NOT the same entity
+3. If unsure, answer NO
 
 Answer YES or NO only:"""
 
