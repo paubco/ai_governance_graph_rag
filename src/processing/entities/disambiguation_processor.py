@@ -112,6 +112,7 @@ CONFIG = {
     # LLM SameJudge
     'llm_model': 'mistralai/Mistral-7B-Instruct-v0.3',
     'max_llm_pairs': 25000,  # ~21K expected, buffer for safety
+    'max_workers': 8,        # Parallel workers for LLM calls
 }
 
 
@@ -399,7 +400,8 @@ class DisambiguationProcessor:
                 uncertain, 
                 entity_map,
                 checkpoint_dir=checkpoint_dir,
-                checkpoint_freq=1000
+                checkpoint_freq=1000,
+                max_workers=self.config['max_workers']
             )
             
             self.stats['stage4_llm'] = judge.stats

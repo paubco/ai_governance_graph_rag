@@ -591,17 +591,20 @@ class SameJudge:
                    pairs: List[Dict], 
                    entity_map: Dict[Tuple[str, str], Dict],
                    checkpoint_dir: str = None,
-                   checkpoint_freq: int = 1000) -> List[Dict]:
+                   checkpoint_freq: int = 1000,
+                   max_workers: int = 8) -> List[Dict]:
         """
         Judge multiple pairs, returning those that should merge.
         
         Uses CheckpointManager for resume capability and progress tracking.
+        Parallelized with ThreadPoolExecutor.
         
         Args:
             pairs: List of pair dicts with entity1_key, entity2_key
             entity_map: {(name, type): entity_dict}
             checkpoint_dir: Directory for checkpoints (enables resume)
             checkpoint_freq: Save checkpoint every N pairs
+            max_workers: Number of parallel workers
             
         Returns:
             List of pairs that should merge
@@ -609,22 +612,21 @@ class SameJudge:
         from tqdm import tqdm
         from datetime import datetime
         from pathlib import Path
-        from src.utils.checkpoint_manager import CheckpointManager
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from threading import Lock
         from src.utils.io import load_json, save_json
         
-        logger.info(f"Stage 4: Judging {len(pairs)} uncertain pairs...")
+        logger.info(f"Stage 4: Judging {len(pairs)} uncertain pairs (workers={max_workers})...")
         
         merge_pairs = []
         start_idx = 0
+        results_lock = Lock()
         
-        # Setup checkpoint manager if directory provided
-        checkpoint_mgr = None
-        results_file = None
-        
+        # Setup checkpoint if directory provided
+        progress_file = None
         if checkpoint_dir:
             checkpoint_path = Path(checkpoint_dir)
             checkpoint_path.mkdir(parents=True, exist_ok=True)
-            results_file = checkpoint_path / 'samejudge_results.jsonl'
             progress_file = checkpoint_path / 'samejudge_progress.json'
             
             # Resume from checkpoint if exists
@@ -635,11 +637,11 @@ class SameJudge:
                 self.stats = progress.get('stats', self.stats)
                 logger.info(f"Resuming from checkpoint: {start_idx}/{len(pairs)} processed")
         
-        # Process remaining pairs
-        for i, pair in enumerate(tqdm(pairs[start_idx:], 
-                                      initial=start_idx, 
-                                      total=len(pairs),
-                                      desc="SameJudge")):
+        remaining_pairs = pairs[start_idx:]
+        processed_count = start_idx
+        
+        def process_pair(pair):
+            """Process single pair - thread-safe via rate_limiter."""
             key1 = normalize_key(pair['entity1_key'])
             key2 = normalize_key(pair['entity2_key'])
             
@@ -647,22 +649,33 @@ class SameJudge:
             entity2 = entity_map.get(key2, {})
             
             is_same, reasoning = self.judge_pair(entity1, entity2)
+            return pair, is_same
+        
+        # Process with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(process_pair, pair): pair for pair in remaining_pairs}
             
-            if is_same:
-                merge_pairs.append(pair)
-            
-            # Checkpoint at intervals
-            actual_idx = start_idx + i + 1
-            if checkpoint_dir and actual_idx % checkpoint_freq == 0:
-                save_json({
-                    'processed': actual_idx,
-                    'total': len(pairs),
-                    'merge_pairs': merge_pairs,
-                    'stats': self.stats,
-                    'rate_limiter': self.rate_limiter.get_stats(),
-                    'timestamp': datetime.now().isoformat(),
-                }, str(progress_file))
-                logger.info(f"Checkpoint: {actual_idx}/{len(pairs)}, {len(merge_pairs)} merges")
+            with tqdm(total=len(pairs), initial=start_idx, desc="SameJudge") as pbar:
+                for future in as_completed(futures):
+                    pair, is_same = future.result()
+                    
+                    with results_lock:
+                        if is_same:
+                            merge_pairs.append(pair)
+                        processed_count += 1
+                        pbar.update(1)
+                        
+                        # Checkpoint at intervals
+                        if checkpoint_dir and processed_count % checkpoint_freq == 0:
+                            save_json({
+                                'processed': processed_count,
+                                'total': len(pairs),
+                                'merge_pairs': merge_pairs,
+                                'stats': self.stats,
+                                'rate_limiter': self.rate_limiter.get_stats(),
+                                'timestamp': datetime.now().isoformat(),
+                            }, str(progress_file))
+                            logger.info(f"Checkpoint: {processed_count}/{len(pairs)}, {len(merge_pairs)} merges")
         
         # Final checkpoint
         if checkpoint_dir:
