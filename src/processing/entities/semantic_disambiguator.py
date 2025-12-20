@@ -545,7 +545,18 @@ class SameJudge:
         Returns:
             (is_same, reasoning)
         """
-        prompt = self._build_prompt(entity1, entity2)
+        from src.prompts.prompts import SAMEJUDGE_SYSTEM, SAMEJUDGE_EXAMPLES
+        
+        # Build few-shot conversation from prompts.py config
+        messages = [{"role": "system", "content": SAMEJUDGE_SYSTEM}]
+        
+        for entity1_ex, entity2_ex, answer in SAMEJUDGE_EXAMPLES:
+            messages.append({"role": "user", "content": f"Entity 1: {entity1_ex}\nEntity 2: {entity2_ex}"})
+            messages.append({"role": "assistant", "content": answer})
+        
+        # Current query
+        query = f"Entity 1: {entity1.get('name', '')} ({entity1.get('type', '')})\nEntity 2: {entity2.get('name', '')} ({entity2.get('type', '')})"
+        messages.append({"role": "user", "content": query})
         
         # Rate limit
         self.rate_limiter.acquire()
@@ -553,8 +564,8 @@ class SameJudge:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=200,
+                messages=messages,
+                max_tokens=10,  # Only need YES or NO
                 temperature=0.0,
             )
             
@@ -562,7 +573,10 @@ class SameJudge:
             
             self.stats['pairs_judged'] += 1
             
-            if 'YES' in result or 'SAME' in result:
+            # Strict parsing: must START with YES
+            is_yes = result.startswith('YES') or result == 'Y'
+            
+            if is_yes:
                 self.stats['same_decisions'] += 1
                 return True, result
             else:
@@ -573,19 +587,6 @@ class SameJudge:
             self.stats['errors'] += 1
             logger.error(f"SameJudge error: {e}")
             return False, str(e)
-    
-    def _build_prompt(self, entity1: Dict, entity2: Dict) -> str:
-        """Build prompt for same-entity judgment."""
-        from src.prompts.prompts import SAMEJUDGE_PROMPT
-        
-        return SAMEJUDGE_PROMPT.format(
-            entity1_name=entity1.get('name', ''),
-            entity1_type=entity1.get('type', ''),
-            entity1_desc=entity1.get('description', '')[:150] or 'N/A',
-            entity2_name=entity2.get('name', ''),
-            entity2_type=entity2.get('type', ''),
-            entity2_desc=entity2.get('description', '')[:150] or 'N/A',
-        )
     
     def judge_pairs(self, 
                    pairs: List[Dict], 

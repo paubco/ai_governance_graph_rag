@@ -86,33 +86,35 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 # PHASE 1C: ENTITY DISAMBIGUATION
 # ============================================================================
 
-SAMEJUDGE_PROMPT = """Are these the EXACT SAME specific entity with different names? Be very strict.
+# Few-shot conversation for Mistral (more effective than single prompt)
+SAMEJUDGE_SYSTEM = """You classify whether two entities are the EXACT SAME real-world thing.
+Answer only YES or NO. Default to NO if uncertain."""
+
+SAMEJUDGE_EXAMPLES = [
+    # YES - same entity, different name
+    ("GDPR (Regulation)", "General Data Protection Regulation (Regulation)", "YES"),
+    ("USA (Location)", "United States (Location)", "YES"),
+    ("AI (Technology)", "artificial intelligence (Technology)", "YES"),
+    ("EU AI Act (Regulation)", "Artificial Intelligence Act (Regulation)", "YES"),
+    # NO - specific vs generic (CRITICAL distinction)
+    ("GDPR (Regulation)", "data protection laws (Regulation)", "NO"),
+    ("EU AI Act (Regulation)", "AI regulations (Regulation)", "NO"),
+    ("Data Protection Regulation (Regulation)", "national data protection laws (Regulation)", "NO"),
+    # NO - different identifiers
+    ("Article 5 (DocumentSection)", "Article 6 (DocumentSection)", "NO"),
+    ("March 2025 (Location)", "April 2025 (Location)", "NO"),
+    # NO - related but different concepts
+    ("privacy regulations (RegulatoryConcept)", "data protection rules (RegulatoryConcept)", "NO"),
+    ("AI systems (Technology)", "AI (Technology)", "NO"),
+]
+
+# Legacy single-prompt format (kept for reference)
+SAMEJUDGE_PROMPT = """Do these refer to the IDENTICAL entity? Default to NO.
 
 Entity 1: {entity1_name} ({entity1_type})
-  Context: {entity1_desc}
-
 Entity 2: {entity2_name} ({entity2_type})
-  Context: {entity2_desc}
 
-YES - same entity, different name:
-- "GDPR" = "General Data Protection Regulation" (same law)
-- "EU AI Act" = "Artificial Intelligence Act" (same law)
-- "United States" = "USA" (same country)
-
-NO - related but DIFFERENT entities:
-- "GDPR" ≠ "data protection laws" (specific law vs category)
-- "EU AI Act" ≠ "AI regulations" (specific vs generic)
-- "privacy regulations" ≠ "data protection rules" (different generic terms)
-- "national laws" ≠ "EU laws" (different scope)
-- "AI systems" ≠ "AI" (system vs technology)
-- "Article 5" ≠ "Article 6" (different articles)
-
-KEY RULES:
-1. Generic terms are NEVER the same as specific regulations
-2. Related concepts are NOT the same entity
-3. If unsure, answer NO
-
-Answer YES or NO only:"""
+Answer YES or NO:"""
 
 
 # ============================================================================

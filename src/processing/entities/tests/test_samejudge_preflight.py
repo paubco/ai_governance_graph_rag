@@ -20,69 +20,72 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Test pairs - known SAME and DIFF from threshold analysis
+# Test pairs - DIFFERENT from few-shot examples to test generalization
+# The few-shot examples are in prompts.py (SAMEJUDGE_EXAMPLES)
 TEST_PAIRS = [
-    # SAME pairs (should return YES) - exact same entity, different name
+    # YES - same entity, different name (not in examples)
     {
-        'entity1': {'name': 'GDPR', 'type': 'Regulation', 'description': 'EU data protection law'},
-        'entity2': {'name': 'General Data Protection Regulation', 'type': 'Regulation', 'description': 'European privacy regulation'},
+        'entity1': {'name': 'European Union', 'type': 'Location'},
+        'entity2': {'name': 'EU', 'type': 'Location'},
+        'expected': True,
+        'reason': 'same entity, abbreviation'
+    },
+    {
+        'entity1': {'name': 'machine learning', 'type': 'Technology'},
+        'entity2': {'name': 'ML', 'type': 'Technology'},
+        'expected': True,
+        'reason': 'same concept, abbreviation'
+    },
+    {
+        'entity1': {'name': 'California Consumer Privacy Act', 'type': 'Regulation'},
+        'entity2': {'name': 'CCPA', 'type': 'Regulation'},
         'expected': True,
         'reason': 'same law, abbreviation'
     },
     {
-        'entity1': {'name': 'EU AI Act', 'type': 'Regulation', 'description': 'European AI regulation'},
-        'entity2': {'name': 'Artificial Intelligence Act', 'type': 'Regulation', 'description': 'EU law on AI'},
+        'entity1': {'name': 'United Kingdom', 'type': 'Location'},
+        'entity2': {'name': 'UK', 'type': 'Location'},
         'expected': True,
-        'reason': 'same law, different name'
+        'reason': 'same country'
     },
+    # NO - specific vs generic (critical test - not in examples)
     {
-        'entity1': {'name': 'United States', 'type': 'Location', 'description': 'North American country'},
-        'entity2': {'name': 'USA', 'type': 'Location', 'description': 'United States of America'},
-        'expected': True,
-        'reason': 'same country, abbreviation'
-    },
-    {
-        'entity1': {'name': 'AI', 'type': 'Technology', 'description': 'Artificial intelligence'},
-        'entity2': {'name': 'artificial intelligence', 'type': 'Technology', 'description': 'AI technology'},
-        'expected': True,
-        'reason': 'same concept, abbreviation'
-    },
-    # DIFF pairs (should return NO) - related but DIFFERENT
-    {
-        'entity1': {'name': 'GDPR', 'type': 'Regulation', 'description': 'EU data protection law'},
-        'entity2': {'name': 'data protection laws', 'type': 'Regulation', 'description': 'Laws protecting personal data'},
+        'entity1': {'name': 'CCPA', 'type': 'Regulation'},
+        'entity2': {'name': 'privacy laws', 'type': 'Regulation'},
         'expected': False,
         'reason': 'specific law vs generic category'
     },
     {
-        'entity1': {'name': 'EU AI Act', 'type': 'Regulation', 'description': 'European AI regulation'},
-        'entity2': {'name': 'AI regulations', 'type': 'Regulation', 'description': 'Laws governing AI'},
+        'entity1': {'name': 'California', 'type': 'Location'},
+        'entity2': {'name': 'US states', 'type': 'Location'},
         'expected': False,
-        'reason': 'specific law vs generic category'
+        'reason': 'specific vs generic'
+    },
+    # NO - different but related concepts
+    {
+        'entity1': {'name': 'transparency requirements', 'type': 'RegulatoryConcept'},
+        'entity2': {'name': 'accountability rules', 'type': 'RegulatoryConcept'},
+        'expected': False,
+        'reason': 'related but different concepts'
     },
     {
-        'entity1': {'name': 'privacy regulations', 'type': 'RegulatoryConcept', 'description': 'Rules about privacy'},
-        'entity2': {'name': 'data protection rules', 'type': 'RegulatoryConcept', 'description': 'Data protection requirements'},
+        'entity1': {'name': 'neural networks', 'type': 'Technology'},
+        'entity2': {'name': 'deep learning', 'type': 'Technology'},
         'expected': False,
-        'reason': 'related but different generic terms'
+        'reason': 'related but different technologies'
+    },
+    # NO - different identifiers
+    {
+        'entity1': {'name': 'Section 3', 'type': 'DocumentSection'},
+        'entity2': {'name': 'Section 4', 'type': 'DocumentSection'},
+        'expected': False,
+        'reason': 'different sections'
     },
     {
-        'entity1': {'name': 'Data Protection Regulations', 'type': 'Regulation', 'description': 'Data protection law'},
-        'entity2': {'name': 'national data protection laws', 'type': 'Regulation', 'description': 'Country-specific data laws'},
+        'entity1': {'name': 'Chapter 1', 'type': 'DocumentSection'},
+        'entity2': {'name': 'Chapter 2', 'type': 'DocumentSection'},
         'expected': False,
-        'reason': 'specific vs generic scope'
-    },
-    {
-        'entity1': {'name': 'AI systems', 'type': 'Technology', 'description': 'Systems using AI'},
-        'entity2': {'name': 'AI', 'type': 'Technology', 'description': 'Artificial intelligence'},
-        'expected': False,
-        'reason': 'system vs technology itself'
-    },
-    {
-        'entity1': {'name': 'Article 5', 'type': 'DocumentSection', 'description': 'Section of regulation'},
-        'entity2': {'name': 'Article 6', 'type': 'DocumentSection', 'description': 'Section of regulation'},
-        'expected': False,
-        'reason': 'different articles'
+        'reason': 'different chapters'
     },
 ]
 
