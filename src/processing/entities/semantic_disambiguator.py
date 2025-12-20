@@ -576,22 +576,16 @@ class SameJudge:
     
     def _build_prompt(self, entity1: Dict, entity2: Dict) -> str:
         """Build prompt for same-entity judgment."""
-        return f"""Do these two entities refer to the SAME real-world entity?
-
-Entity 1:
-  Name: {entity1.get('name', '')}
-  Type: {entity1.get('type', '')}
-  Description: {entity1.get('description', '')[:200]}
-
-Entity 2:
-  Name: {entity2.get('name', '')}
-  Type: {entity2.get('type', '')}
-  Description: {entity2.get('description', '')[:200]}
-
-Answer YES if they are the same entity, NO if different.
-Consider: name variations, abbreviations, translations.
-
-Answer (YES/NO):"""
+        from src.prompts.prompts import SAMEJUDGE_PROMPT
+        
+        return SAMEJUDGE_PROMPT.format(
+            entity1_name=entity1.get('name', ''),
+            entity1_type=entity1.get('type', ''),
+            entity1_desc=entity1.get('description', '')[:150] or 'N/A',
+            entity2_name=entity2.get('name', ''),
+            entity2_type=entity2.get('type', ''),
+            entity2_desc=entity2.get('description', '')[:150] or 'N/A',
+        )
     
     def judge_pairs(self, 
                    pairs: List[Dict], 

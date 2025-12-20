@@ -24,51 +24,51 @@ logger = logging.getLogger(__name__)
 TEST_PAIRS = [
     # SAME pairs (should return YES)
     {
-        'entity1': {'name': 'privacy and security', 'type': 'Risk', 'description': ''},
-        'entity2': {'name': 'security and privacy', 'type': 'Risk', 'description': ''},
+        'entity1': {'name': 'privacy and security', 'type': 'Risk', 'description': 'Data protection concerns'},
+        'entity2': {'name': 'security and privacy', 'type': 'Risk', 'description': 'Security and data protection'},
         'expected': True,
         'reason': 'word order swap'
     },
     {
-        'entity1': {'name': 'facial recognition technology', 'type': 'Technology', 'description': ''},
-        'entity2': {'name': 'facial recognition technologies', 'type': 'Technology', 'description': ''},
+        'entity1': {'name': 'facial recognition technology', 'type': 'Technology', 'description': 'Biometric identification'},
+        'entity2': {'name': 'facial recognition technologies', 'type': 'Technology', 'description': 'Face recognition systems'},
         'expected': True,
         'reason': 'singular/plural'
     },
     {
-        'entity1': {'name': 'United States', 'type': 'Location', 'description': ''},
-        'entity2': {'name': 'United States of America', 'type': 'Location', 'description': ''},
+        'entity1': {'name': 'United States', 'type': 'Location', 'description': 'North American country'},
+        'entity2': {'name': 'United States of America', 'type': 'Location', 'description': 'USA'},
         'expected': True,
         'reason': 'abbreviation'
     },
     {
-        'entity1': {'name': 'General Data Protection Regulation (GDPR)', 'type': 'Regulation', 'description': ''},
-        'entity2': {'name': 'European General Data Protection Regulation (GDPR)', 'type': 'Regulation', 'description': ''},
+        'entity1': {'name': 'General Data Protection Regulation (GDPR)', 'type': 'Regulation', 'description': 'EU data protection law'},
+        'entity2': {'name': 'European General Data Protection Regulation (GDPR)', 'type': 'Regulation', 'description': 'EU privacy regulation'},
         'expected': True,
         'reason': 'same regulation, different prefix'
     },
     # DIFF pairs (should return NO)
     {
-        'entity1': {'name': 'Turuta O. V.', 'type': 'Organization', 'description': ''},
-        'entity2': {'name': 'Turuta O. P.', 'type': 'Organization', 'description': ''},
+        'entity1': {'name': 'Turuta O. V.', 'type': 'Organization', 'description': 'Author'},
+        'entity2': {'name': 'Turuta O. P.', 'type': 'Organization', 'description': 'Author'},
         'expected': False,
         'reason': 'different people (V vs P)'
     },
     {
-        'entity1': {'name': 'April 2025', 'type': 'Location', 'description': ''},
-        'entity2': {'name': 'March 2025', 'type': 'Location', 'description': ''},
+        'entity1': {'name': 'April 2025', 'type': 'Location', 'description': 'Date reference'},
+        'entity2': {'name': 'March 2025', 'type': 'Location', 'description': 'Date reference'},
         'expected': False,
         'reason': 'different months'
     },
     {
-        'entity1': {'name': 'Level 1', 'type': 'RegulatoryConcept', 'description': ''},
-        'entity2': {'name': 'Level 2', 'type': 'RegulatoryConcept', 'description': ''},
+        'entity1': {'name': 'Level 1', 'type': 'RegulatoryConcept', 'description': 'Risk classification tier'},
+        'entity2': {'name': 'Level 2', 'type': 'RegulatoryConcept', 'description': 'Risk classification tier'},
         'expected': False,
         'reason': 'different levels'
     },
     {
-        'entity1': {'name': 'Data Protection Act', 'type': 'Regulation', 'description': ''},
-        'entity2': {'name': 'Privacy Act', 'type': 'Regulation', 'description': ''},
+        'entity1': {'name': 'Data Protection Act', 'type': 'Regulation', 'description': 'UK data law'},
+        'entity2': {'name': 'Privacy Act', 'type': 'Regulation', 'description': 'US privacy law'},
         'expected': False,
         'reason': 'different regulations'
     },

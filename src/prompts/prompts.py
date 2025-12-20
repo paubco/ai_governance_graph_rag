@@ -27,7 +27,7 @@ Extract named entities. Use ONLY these types:
 {_SEMANTIC_TYPES_LIST}
 
 # Rules
-- MUST split compounds: "AI and ML" → extract "AI" AND "ML" as separate entities
+- MUST split compounds: "AI and ML" â†’ extract "AI" AND "ML" as separate entities
 - Regulation = law documents (EU AI Act, GDPR)
 - RegulatoryConcept = compliance ideas AND principles (governance, transparency, accountability)
 
@@ -86,13 +86,27 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 # PHASE 1C: ENTITY DISAMBIGUATION
 # ============================================================================
 
-SAMEJUDGE_PROMPT = """Are these the SAME real-world entity?
+SAMEJUDGE_PROMPT = """Are these the SAME real-world entity? Be strict about identifiers.
 
-Entity 1: {entity1_name} ({entity1_type}) - {entity1_desc}
-Entity 2: {entity2_name} ({entity2_type}) - {entity2_desc}
+Entity 1: {entity1_name} ({entity1_type})
+  Context: {entity1_desc}
 
-JSON only:
-{{"result": true/false, "canonical_name": "...", "canonical_type": "...", "reasoning": "..."}}"""
+Entity 2: {entity2_name} ({entity2_type})
+  Context: {entity2_desc}
+
+SAME (YES): name variations, abbreviations, singular/plural, translations
+- "EU AI Act" = "European AI Act"
+- "United States" = "USA"
+- "technology" = "technologies"
+
+DIFFERENT (NO): any identifier mismatch (numbers, dates, initials, versions)
+- "Article 5" ≠ "Article 6"
+- "March 2025" ≠ "April 2025"
+- "O. V." ≠ "O. P."
+- "Level 1" ≠ "Level 2"
+- "Privacy Act" ≠ "Data Protection Act"
+
+Answer YES or NO only:"""
 
 
 # ============================================================================
