@@ -282,6 +282,10 @@ def load_chunks_as_dict(chunks_file: str) -> Dict[str, str]:
     """
     Load chunks from JSONL into {chunk_id: text} dict.
     
+    Handles both formats:
+        - chunk_id (string) — old format
+        - chunk_ids (list) — new format (v1.1+)
+    
     Args:
         chunks_file: Path to chunks JSONL file
         
@@ -295,10 +299,26 @@ def load_chunks_as_dict(chunks_file: str) -> Dict[str, str]:
         for line in f:
             if line.strip():
                 chunk = json.loads(line)
-                chunk_id = chunk.get('chunk_id', '')
                 text = chunk.get('text', chunk.get('content', ''))
-                if chunk_id and text:
-                    chunks[chunk_id] = text
+                
+                if not text:
+                    continue
+                
+                # Handle both formats
+                if 'chunk_ids' in chunk:
+                    # New format: chunk_ids is a list
+                    chunk_ids = chunk['chunk_ids']
+                    if isinstance(chunk_ids, list):
+                        for cid in chunk_ids:
+                            if cid:
+                                chunks[cid] = text
+                    elif chunk_ids:
+                        chunks[chunk_ids] = text
+                elif 'chunk_id' in chunk:
+                    # Old format: chunk_id is a string
+                    chunk_id = chunk['chunk_id']
+                    if chunk_id:
+                        chunks[chunk_id] = text
     
     logger.info(f"Loaded {len(chunks)} chunks from {chunks_file}")
     return chunks
