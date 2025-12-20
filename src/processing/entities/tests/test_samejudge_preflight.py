@@ -42,37 +42,38 @@ TEST_PAIRS = [
         'expected': True,
         'reason': 'same law, abbreviation'
     },
+    # NO - antonyms/opposing (CRITICAL - caused 296 alias cascade)
     {
-        'entity1': {'name': 'United Kingdom', 'type': 'Location'},
-        'entity2': {'name': 'UK', 'type': 'Location'},
-        'expected': True,
-        'reason': 'same country'
+        'entity1': {'name': 'security', 'type': 'Risk'},
+        'entity2': {'name': 'threat', 'type': 'Risk'},
+        'expected': False,
+        'reason': 'antonyms - security vs threat'
     },
-    # NO - specific vs generic (critical test - not in examples)
+    {
+        'entity1': {'name': 'opportunities', 'type': 'EconomicConcept'},
+        'entity2': {'name': 'challenges', 'type': 'EconomicConcept'},
+        'expected': False,
+        'reason': 'antonyms - opportunities vs challenges'
+    },
+    # NO - X vs X-issues pattern
+    {
+        'entity1': {'name': 'transparency', 'type': 'RegulatoryConcept'},
+        'entity2': {'name': 'transparency concerns', 'type': 'RegulatoryConcept'},
+        'expected': False,
+        'reason': 'concept vs concerns about concept'
+    },
+    {
+        'entity1': {'name': 'ethics', 'type': 'PoliticalConcept'},
+        'entity2': {'name': 'ethical issues', 'type': 'PoliticalConcept'},
+        'expected': False,
+        'reason': 'concept vs issues'
+    },
+    # NO - specific vs generic
     {
         'entity1': {'name': 'CCPA', 'type': 'Regulation'},
         'entity2': {'name': 'privacy laws', 'type': 'Regulation'},
         'expected': False,
         'reason': 'specific law vs generic category'
-    },
-    {
-        'entity1': {'name': 'California', 'type': 'Location'},
-        'entity2': {'name': 'US states', 'type': 'Location'},
-        'expected': False,
-        'reason': 'specific vs generic'
-    },
-    # NO - different but related concepts
-    {
-        'entity1': {'name': 'transparency requirements', 'type': 'RegulatoryConcept'},
-        'entity2': {'name': 'accountability rules', 'type': 'RegulatoryConcept'},
-        'expected': False,
-        'reason': 'related but different concepts'
-    },
-    {
-        'entity1': {'name': 'neural networks', 'type': 'Technology'},
-        'entity2': {'name': 'deep learning', 'type': 'Technology'},
-        'expected': False,
-        'reason': 'related but different technologies'
     },
     # NO - different identifiers
     {
@@ -81,11 +82,12 @@ TEST_PAIRS = [
         'expected': False,
         'reason': 'different sections'
     },
+    # NO - related technologies
     {
-        'entity1': {'name': 'Chapter 1', 'type': 'DocumentSection'},
-        'entity2': {'name': 'Chapter 2', 'type': 'DocumentSection'},
+        'entity1': {'name': 'neural networks', 'type': 'Technology'},
+        'entity2': {'name': 'deep learning', 'type': 'Technology'},
         'expected': False,
-        'reason': 'different chapters'
+        'reason': 'related but different technologies'
     },
 ]
 

@@ -106,6 +106,15 @@ SAMEJUDGE_EXAMPLES = [
     # NO - related but different concepts
     ("privacy regulations (RegulatoryConcept)", "data protection rules (RegulatoryConcept)", "NO"),
     ("AI systems (Technology)", "AI (Technology)", "NO"),
+    # NO - antonyms or opposing concepts
+    ("safety (Risk)", "risk (Risk)", "NO"),
+    ("safety (Risk)", "risks (Risk)", "NO"),
+    ("benefits (EconomicConcept)", "costs (EconomicConcept)", "NO"),
+    ("compliance (RegulatoryConcept)", "violation (RegulatoryConcept)", "NO"),
+    # NO - X vs X-issues/concerns pattern
+    ("safety (Risk)", "safety issues (Risk)", "NO"),
+    ("privacy (RegulatoryConcept)", "privacy concerns (RegulatoryConcept)", "NO"),
+    ("AI safety (Risk)", "AI risks (Risk)", "NO"),
 ]
 
 # Legacy single-prompt format (kept for reference)
