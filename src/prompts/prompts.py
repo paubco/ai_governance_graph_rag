@@ -90,40 +90,32 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 SAMEJUDGE_SYSTEM = """Classify: are these two entities the EXACT SAME thing with different names?
 Answer YES or NO only."""
 
-# Interleaved YES/NO to prevent anchoring bias
+# Interleaved YES/NO with descriptions for context
 SAMEJUDGE_EXAMPLES = [
     # Pattern: abbreviation = full name → YES
-    ("GDPR (Regulation)", "General Data Protection Regulation (Regulation)", "YES"),
+    ("GDPR (Regulation) - EU data protection law", "General Data Protection Regulation (Regulation) - European privacy regulation", "YES"),
     # Pattern: specific ≠ generic → NO  
-    ("GDPR (Regulation)", "data protection laws (Regulation)", "NO"),
+    ("GDPR (Regulation) - EU data protection law", "data protection laws (Regulation) - laws protecting personal data", "NO"),
     # Pattern: country abbreviation → YES
-    ("USA (Location)", "United States (Location)", "YES"),
+    ("USA (Location) - North American country", "United States (Location) - country in North America", "YES"),
     # Pattern: different numbers → NO
-    ("Article 5 (DocumentSection)", "Article 6 (DocumentSection)", "NO"),
+    ("Article 5 (DocumentSection) - prohibited practices", "Article 6 (DocumentSection) - high-risk systems", "NO"),
     # Pattern: tech abbreviation → YES
-    ("AI (Technology)", "artificial intelligence (Technology)", "YES"),
+    ("AI (Technology) - artificial intelligence", "artificial intelligence (Technology) - machine intelligence", "YES"),
     # Pattern: antonyms → NO
-    ("safety (Risk)", "risk (Risk)", "NO"),
+    ("safety (Risk) - protection from harm", "risk (Risk) - potential for harm", "NO"),
     # Pattern: regulation abbreviation → YES
-    ("EU AI Act (Regulation)", "Artificial Intelligence Act (Regulation)", "YES"),
+    ("EU AI Act (Regulation) - European AI law", "Artificial Intelligence Act (Regulation) - EU regulation on AI", "YES"),
     # Pattern: X ≠ X-issues → NO
-    ("safety (Risk)", "safety issues (Risk)", "NO"),
+    ("safety (Risk) - state of being safe", "safety issues (Risk) - problems with safety", "NO"),
     # Pattern: location abbreviation → YES
-    ("EU (Location)", "European Union (Location)", "YES"),
+    ("EU (Location) - European Union", "European Union (Location) - union of European states", "YES"),
     # Pattern: specific ≠ generic → NO
-    ("EU AI Act (Regulation)", "AI regulations (Regulation)", "NO"),
+    ("EU AI Act (Regulation) - European AI law", "AI regulations (Regulation) - laws governing AI generally", "NO"),
     # Pattern: tech abbreviation → YES
-    ("ML (Technology)", "machine learning (Technology)", "YES"),
+    ("ML (Technology) - machine learning", "machine learning (Technology) - subset of AI", "YES"),
     # Pattern: related but different → NO
-    ("AI safety (Risk)", "AI risks (Risk)", "NO"),
-    # Pattern: law abbreviation → YES
-    ("CCPA (Regulation)", "California Consumer Privacy Act (Regulation)", "YES"),
-    # Pattern: costs ≠ benefits → NO
-    ("benefits (EconomicConcept)", "costs (EconomicConcept)", "NO"),
-    # Pattern: country abbreviation → YES
-    ("UK (Location)", "United Kingdom (Location)", "YES"),
-    # Pattern: specific ≠ generic → NO
-    ("CCPA (Regulation)", "privacy laws (Regulation)", "NO"),
+    ("AI safety (Risk) - ensuring AI is safe", "AI risks (Risk) - dangers from AI", "NO"),
 ]
 
 # Legacy single-prompt format (kept for reference)

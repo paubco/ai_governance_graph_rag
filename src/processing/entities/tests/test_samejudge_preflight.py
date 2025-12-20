@@ -21,71 +21,71 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Test pairs - DIFFERENT from few-shot examples to test generalization
-# Few-shot now includes: GDPR, USA, AI, EU AI Act, EU, ML, CCPA, UK
+# Few-shot now includes: GDPR, USA, AI, EU AI Act, EU, ML
 TEST_PAIRS = [
     # YES - same entity (NOT in few-shot examples)
     {
-        'entity1': {'name': 'NLP', 'type': 'Technology'},
-        'entity2': {'name': 'natural language processing', 'type': 'Technology'},
+        'entity1': {'name': 'NLP', 'type': 'Technology', 'description': 'natural language processing field'},
+        'entity2': {'name': 'natural language processing', 'type': 'Technology', 'description': 'AI subfield for text'},
         'expected': True,
         'reason': 'same concept, abbreviation'
     },
     {
-        'entity1': {'name': 'Germany', 'type': 'Location'},
-        'entity2': {'name': 'Federal Republic of Germany', 'type': 'Location'},
+        'entity1': {'name': 'Germany', 'type': 'Location', 'description': 'European country'},
+        'entity2': {'name': 'Federal Republic of Germany', 'type': 'Location', 'description': 'country in central Europe'},
         'expected': True,
         'reason': 'same country'
     },
     {
-        'entity1': {'name': 'HIPAA', 'type': 'Regulation'},
-        'entity2': {'name': 'Health Insurance Portability and Accountability Act', 'type': 'Regulation'},
+        'entity1': {'name': 'HIPAA', 'type': 'Regulation', 'description': 'US healthcare privacy law'},
+        'entity2': {'name': 'Health Insurance Portability and Accountability Act', 'type': 'Regulation', 'description': 'American health data law'},
         'expected': True,
         'reason': 'same law, abbreviation'
     },
-    # NO - antonyms/opposing (CRITICAL - caused 296 alias cascade)
+    # NO - antonyms/opposing
     {
-        'entity1': {'name': 'security', 'type': 'Risk'},
-        'entity2': {'name': 'threat', 'type': 'Risk'},
+        'entity1': {'name': 'security', 'type': 'Risk', 'description': 'protection from threats'},
+        'entity2': {'name': 'threat', 'type': 'Risk', 'description': 'potential danger'},
         'expected': False,
         'reason': 'antonyms - security vs threat'
     },
     {
-        'entity1': {'name': 'opportunities', 'type': 'EconomicConcept'},
-        'entity2': {'name': 'challenges', 'type': 'EconomicConcept'},
+        'entity1': {'name': 'opportunities', 'type': 'EconomicConcept', 'description': 'favorable circumstances'},
+        'entity2': {'name': 'challenges', 'type': 'EconomicConcept', 'description': 'difficulties to overcome'},
         'expected': False,
         'reason': 'antonyms - opportunities vs challenges'
     },
     # NO - X vs X-issues pattern
     {
-        'entity1': {'name': 'transparency', 'type': 'RegulatoryConcept'},
-        'entity2': {'name': 'transparency concerns', 'type': 'RegulatoryConcept'},
+        'entity1': {'name': 'transparency', 'type': 'RegulatoryConcept', 'description': 'openness and clarity'},
+        'entity2': {'name': 'transparency concerns', 'type': 'RegulatoryConcept', 'description': 'worries about lack of transparency'},
         'expected': False,
         'reason': 'concept vs concerns about concept'
     },
     {
-        'entity1': {'name': 'ethics', 'type': 'PoliticalConcept'},
-        'entity2': {'name': 'ethical issues', 'type': 'PoliticalConcept'},
+        'entity1': {'name': 'ethics', 'type': 'PoliticalConcept', 'description': 'moral principles'},
+        'entity2': {'name': 'ethical issues', 'type': 'PoliticalConcept', 'description': 'moral problems'},
         'expected': False,
         'reason': 'concept vs issues'
     },
-    # NO - specific vs generic (not CCPA since in few-shot)
+    # NO - specific vs generic
     {
-        'entity1': {'name': 'HIPAA', 'type': 'Regulation'},
-        'entity2': {'name': 'health regulations', 'type': 'Regulation'},
+        'entity1': {'name': 'HIPAA', 'type': 'Regulation', 'description': 'US healthcare privacy law'},
+        'entity2': {'name': 'health regulations', 'type': 'Regulation', 'description': 'laws about healthcare'},
         'expected': False,
         'reason': 'specific law vs generic category'
     },
     # NO - different identifiers
     {
-        'entity1': {'name': 'Section 3', 'type': 'DocumentSection'},
-        'entity2': {'name': 'Section 4', 'type': 'DocumentSection'},
+        'entity1': {'name': 'Section 3', 'type': 'DocumentSection', 'description': 'third section'},
+        'entity2': {'name': 'Section 4', 'type': 'DocumentSection', 'description': 'fourth section'},
         'expected': False,
         'reason': 'different sections'
     },
     # NO - related technologies
     {
-        'entity1': {'name': 'neural networks', 'type': 'Technology'},
-        'entity2': {'name': 'deep learning', 'type': 'Technology'},
+        'entity1': {'name': 'neural networks', 'type': 'Technology', 'description': 'brain-inspired computing'},
+        'entity2': {'name': 'deep learning', 'type': 'Technology', 'description': 'multi-layer neural networks'},
         'expected': False,
         'reason': 'related but different technologies'
     },

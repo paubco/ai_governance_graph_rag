@@ -555,7 +555,10 @@ class SameJudge:
             messages.append({"role": "assistant", "content": answer})
         
         # Current query
-        query = f"Entity 1: {entity1.get('name', '')} ({entity1.get('type', '')})\nEntity 2: {entity2.get('name', '')} ({entity2.get('type', '')})"
+        # Current query - include description for context
+        desc1 = entity1.get('description', '')[:100] or 'N/A'
+        desc2 = entity2.get('description', '')[:100] or 'N/A'
+        query = f"Entity 1: {entity1.get('name', '')} ({entity1.get('type', '')}) - {desc1}\nEntity 2: {entity2.get('name', '')} ({entity2.get('type', '')}) - {desc2}"
         messages.append({"role": "user", "content": query})
         
         # Rate limit
