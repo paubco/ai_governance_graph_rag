@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# CONSTANTS
+# CONSTANTS (v2.0 - Semantic + Metadata)
 # =============================================================================
 
-ACADEMIC_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation'}
+METADATA_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation', 'Document', 'DocumentSection'}
 
 SEMANTIC_TYPES = {
     'RegulatoryConcept', 'TechnicalConcept', 'PoliticalConcept', 
@@ -87,25 +87,25 @@ def build_entity_map(entities: List[Dict]) -> Dict[Tuple[str, str], Dict]:
 
 def route_by_type(entities: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """
-    Route entities to semantic or academic path.
+    Route entities to semantic or metadata path.
     
     Args:
         entities: List of entity dicts
         
     Returns:
-        (semantic_entities, academic_entities)
+        (semantic_entities, metadata_entities)
     """
     semantic = []
-    academic = []
+    metadata = []
     
     for entity in entities:
-        if entity.get('type') in ACADEMIC_TYPES:
-            academic.append(entity)
+        if entity.get('type') in METADATA_TYPES:
+            metadata.append(entity)
         else:
             semantic.append(entity)
     
-    logger.info(f"Routed {len(entities)} entities: {len(semantic)} semantic, {len(academic)} academic")
-    return semantic, academic
+    logger.info(f"Routed {len(entities)} entities: {len(semantic)} semantic, {len(metadata)} metadata")
+    return semantic, metadata
 
 
 # =============================================================================
@@ -220,6 +220,9 @@ class ExactDeduplicator:
             
         Returns:
             (merged_entity, list_of_aliases)
+            
+        Note: Only tracks meaningful aliases (not just case variants).
+              Real semantic aliases come from FAISS merge, not hash-dedup.
         """
         # Name selection: most frequent surface form
         name_counts = Counter(e['name'] for e in group)
@@ -229,9 +232,14 @@ class ExactDeduplicator:
         type_counts = Counter(e['type'] for e in group)
         canonical_type = type_counts.most_common(1)[0][0]
         
-        # ALIAS TRACKING: All other names are aliases
+        # ALIAS TRACKING: Only meaningful differences (not case-only)
+        # Hash-dedup aliases are always case variants (by definition of hash)
+        # Real semantic aliases (EU AI Act ↔ European AI Act) come from FAISS merge
         all_names = set(e['name'] for e in group)
-        aliases = sorted([n for n in all_names if n != canonical_name])
+        aliases = sorted([
+            n for n in all_names 
+            if n != canonical_name and n.lower() != canonical_name.lower()
+        ])
         
         # Combine all chunk_ids
         all_chunk_ids = set()

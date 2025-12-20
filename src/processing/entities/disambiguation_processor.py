@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1C Entity Disambiguation - Main Orchestrator.
+Phase 1C Entity Disambiguation - Main Orchestrator (v2.0).
 
 Two-path architecture:
     - Semantic path: FAISS blocking + tiered thresholds + LLM SameJudge
-    - Academic path: No merge, PART_OF relations only
+    - Metadata path: Document/DocumentSection relations, no merge
+
+v2.0 Changes:
+    - "Academic" → "Metadata" terminology
+    - 6 metadata types: Citation, Author, Journal, Affiliation, Document, DocumentSection
+    - NEW: SAME_AS relations (Document ↔ Regulation)
+    - PART_OF now links DocumentSection → Document (not Citation → Regulation)
 
 Usage:
     # Full run
@@ -18,9 +24,10 @@ Usage:
 
 Outputs:
     - data/processed/entities/entities_semantic_raw.jsonl (without embeddings)
-    - data/processed/entities/entities_academic.jsonl
+    - data/processed/entities/entities_metadata.jsonl
     - data/processed/entities/aliases.json
-    - data/processed/relations/part_of_relations.jsonl
+    - data/processed/relations/part_of_relations.jsonl (DocumentSection → Document)
+    - data/processed/relations/same_as_relations.jsonl (Document ↔ Regulation)
     - data/interim/entities/filter_report.json
     - data/interim/entities/hallucinations.jsonl
 """
@@ -43,10 +50,10 @@ from src.processing.entities.pre_entity_filter import (
 )
 from src.processing.entities.semantic_disambiguator import (
     ExactDeduplicator, FAISSBlocker, TieredThresholdFilter, SameJudge,
-    apply_merges, route_by_type, build_entity_map, ACADEMIC_TYPES
+    apply_merges, route_by_type, build_entity_map, METADATA_TYPES
 )
-from src.processing.entities.academic_disambiguator import (
-    AcademicDisambiguator, build_chunk_entity_map
+from src.processing.entities.metadata_disambiguator import (
+    MetadataDisambiguator, build_chunk_entity_map
 )
 from src.utils.io import load_jsonl, save_jsonl, save_json, load_json
 from src.utils.id_generator import generate_entity_id
@@ -70,12 +77,13 @@ DATA_DIR = PROJECT_ROOT / 'data'
 PRE_ENTITIES_FILE = DATA_DIR / 'interim' / 'entities' / 'pre_entities.jsonl'
 CHUNKS_FILE = DATA_DIR / 'processed' / 'chunks' / 'chunks_embedded.jsonl'
 
-# Outputs
+# Outputs (v2.0)
 SEMANTIC_OUTPUT_RAW = DATA_DIR / 'processed' / 'entities' / 'entities_semantic_raw.jsonl'
 SEMANTIC_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_semantic.jsonl'
-ACADEMIC_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_academic.jsonl'
+METADATA_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_metadata.jsonl'
 ALIASES_FILE = DATA_DIR / 'processed' / 'entities' / 'aliases.json'
 PART_OF_FILE = DATA_DIR / 'processed' / 'relations' / 'part_of_relations.jsonl'
+SAME_AS_FILE = DATA_DIR / 'processed' / 'relations' / 'same_as_relations.jsonl'
 
 # Interim
 FILTER_REPORT = DATA_DIR / 'interim' / 'entities' / 'filter_report.json'
@@ -145,8 +153,8 @@ class DisambiguationProcessor:
         logger.info("=" * 70)
         
         # Ensure output directories exist
-        for path in [SEMANTIC_OUTPUT_RAW, ACADEMIC_OUTPUT, ALIASES_FILE, 
-                     PART_OF_FILE, FILTER_REPORT, HALLUCINATIONS_FILE]:
+        for path in [SEMANTIC_OUTPUT_RAW, METADATA_OUTPUT, ALIASES_FILE, 
+                     PART_OF_FILE, SAME_AS_FILE, FILTER_REPORT, HALLUCINATIONS_FILE]:
             path.parent.mkdir(parents=True, exist_ok=True)
         
         # =================================================================
@@ -184,10 +192,10 @@ class DisambiguationProcessor:
         # =================================================================
         logger.info("\n[3/7] Routing by entity type...")
         
-        semantic_raw, academic_raw = route_by_type(clean_entities)
+        semantic_raw, metadata_raw = route_by_type(clean_entities)
         
         self.stats['semantic_raw'] = len(semantic_raw)
-        self.stats['academic_raw'] = len(academic_raw)
+        self.stats['metadata_raw'] = len(metadata_raw)
         
         # =================================================================
         # STEP 4: Semantic disambiguation
@@ -211,21 +219,17 @@ class DisambiguationProcessor:
         self.stats['aliases_count'] = len(self.aliases)
         
         # =================================================================
-        # STEP 5: Academic linking
+        # STEP 5: Metadata processing (Document ↔ Regulation, DocumentSection → Document)
         # =================================================================
-        logger.info("\n[5/7] Processing academic entities + PART_OF relations...")
+        logger.info("\n[5/7] Processing metadata entities + relations...")
         
-        # Build chunk→entity map for PART_OF lookup
-        chunk_entity_map = build_chunk_entity_map(semantic_entities)
+        # MetadataDisambiguator needs semantic entities for SAME_AS matching
+        disambiguator = MetadataDisambiguator(semantic_entities=semantic_entities)
+        metadata_entities, part_of_relations, same_as_relations = disambiguator.process(metadata_raw)
         
-        disambiguator = AcademicDisambiguator(
-            semantic_entities=semantic_entities,
-            chunk_entity_map=chunk_entity_map
-        )
-        academic_entities, part_of_relations = disambiguator.process(academic_raw)
-        
-        self.stats['academic_output'] = len(academic_entities)
+        self.stats['metadata_output'] = len(metadata_entities)
         self.stats['part_of_relations'] = len(part_of_relations)
+        self.stats['same_as_relations'] = len(same_as_relations)
         
         # =================================================================
         # STEP 6: Save outputs (without embeddings)
@@ -236,17 +240,21 @@ class DisambiguationProcessor:
         save_jsonl(semantic_entities, str(SEMANTIC_OUTPUT_RAW))
         logger.info(f"  Saved {len(semantic_entities)} semantic entities → {SEMANTIC_OUTPUT_RAW}")
         
-        # Save academic entities
-        save_jsonl(academic_entities, str(ACADEMIC_OUTPUT))
-        logger.info(f"  Saved {len(academic_entities)} academic entities → {ACADEMIC_OUTPUT}")
+        # Save metadata entities
+        save_jsonl(metadata_entities, str(METADATA_OUTPUT))
+        logger.info(f"  Saved {len(metadata_entities)} metadata entities → {METADATA_OUTPUT}")
         
         # Save aliases
         save_json(self.aliases, str(ALIASES_FILE))
         logger.info(f"  Saved {len(self.aliases)} alias mappings → {ALIASES_FILE}")
         
-        # Save PART_OF relations
+        # Save PART_OF relations (DocumentSection → Document)
         save_jsonl(part_of_relations, str(PART_OF_FILE))
         logger.info(f"  Saved {len(part_of_relations)} PART_OF relations → {PART_OF_FILE}")
+        
+        # Save SAME_AS relations (Document ↔ Regulation)
+        save_jsonl(same_as_relations, str(SAME_AS_FILE))
+        logger.info(f"  Saved {len(same_as_relations)} SAME_AS relations → {SAME_AS_FILE}")
         
         # =================================================================
         # STEP 7: Summary
@@ -372,16 +380,17 @@ class DisambiguationProcessor:
     def _print_summary(self):
         """Print pipeline summary."""
         logger.info("-" * 50)
-        logger.info("PIPELINE SUMMARY")
+        logger.info("PIPELINE SUMMARY (v2.0)")
         logger.info("-" * 50)
         logger.info(f"Input entities:     {self.stats.get('input_entities', 0):,}")
         logger.info(f"After filter:       {self.stats.get('after_filter', 0):,}")
         logger.info(f"  Semantic raw:     {self.stats.get('semantic_raw', 0):,}")
-        logger.info(f"  Academic raw:     {self.stats.get('academic_raw', 0):,}")
+        logger.info(f"  Metadata raw:     {self.stats.get('metadata_raw', 0):,}")
         logger.info(f"Semantic output:    {self.stats.get('semantic_after_dedup', 0):,}")
-        logger.info(f"Academic output:    {self.stats.get('academic_output', 0):,}")
+        logger.info(f"Metadata output:    {self.stats.get('metadata_output', 0):,}")
         logger.info(f"Aliases tracked:    {self.stats.get('aliases_count', 0):,}")
         logger.info(f"PART_OF relations:  {self.stats.get('part_of_relations', 0):,}")
+        logger.info(f"SAME_AS relations:  {self.stats.get('same_as_relations', 0):,}")
         
         if 'filter_stats' in self.stats:
             fs = self.stats['filter_stats']

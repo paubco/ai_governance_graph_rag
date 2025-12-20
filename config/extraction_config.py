@@ -9,8 +9,8 @@ Created: 2025-12-18
 Modified: 2025-12-20
 
 References:
-    - ARCHITECTURE.md § 3-4 (Phases 1-2)
-    - ARCHITECTURE.md § 7.5 (Type normalization)
+    - ARCHITECTURE.md Â§ 3-4 (Phases 1-2)
+    - ARCHITECTURE.md Â§ 7.5 (Type normalization)
     - Phase 1B v2.0: Semantic + Metadata schema
 """
 
@@ -105,7 +105,7 @@ PREPROCESSING_CONFIG = {
         r'doi:\s*\S+',               # DOI references
         r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Emails
         r'Vol\.\s*\d+',              # Volume references
-        r'pp?\.\s*\d+[-–]\d+',       # Page ranges (p. 1-10, pp. 1-10)
+        r'pp?\.\s*\d+[-â€“]\d+',       # Page ranges (p. 1-10, pp. 1-10)
     ],
 }
 
@@ -264,7 +264,7 @@ PRE_ENTITY_FILTER_CONFIG = {
     # Case-SENSITIVE patterns (preserves AI, ML, EU, G20, etc.)
     'blacklist_case_sensitive': [
         r'^\.+$',                    # ... or ..
-        r'^…$',                      # Unicode ellipsis  
+        r'^â€¦$',                      # Unicode ellipsis  
         r'^\d+%$',                   # 80%, 41%, 83%
         r'^[a-z]$',                  # Single lowercase letter (k, q)
         r'^[RP]\d+$',                # R12, P9
@@ -316,9 +316,9 @@ DISAMBIGUATION_CONFIG = {
     'faiss_ef_search': 64,           # Search quality
     
     # Tiered thresholds (TBD after quintile analysis)
-    'auto_merge_threshold': 0.95,    # >= this → auto-merge
-    'auto_reject_threshold': 0.85,   # < this → auto-reject
-    # Between 0.85-0.95 → LLM decides
+    'auto_merge_threshold': 0.95,    # >= this â†’ auto-merge
+    'auto_reject_threshold': 0.85,   # < this â†’ auto-reject
+    # Between 0.85-0.95 â†’ LLM decides
     
     # LLM SameJudge
     'temperature': 0.0,

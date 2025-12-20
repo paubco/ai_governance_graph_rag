@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Tests for Phase 1C entity disambiguation.
+Tests for Phase 1C entity disambiguation (v2.0).
 
 Tests cover:
     - Pre-entity filtering (blacklist + provenance)
     - Semantic disambiguation (dedup, FAISS, thresholds)
-    - Academic disambiguation (PART_OF relations)
+    - Metadata disambiguation (Document/DocumentSection relations)
     - Alias tracking
 
 Run:
@@ -24,10 +24,10 @@ from src.processing.entities.pre_entity_filter import (
 )
 from src.processing.entities.semantic_disambiguator import (
     ExactDeduplicator, TieredThresholdFilter, 
-    route_by_type, apply_merges, get_entity_key, ACADEMIC_TYPES
+    route_by_type, apply_merges, get_entity_key, METADATA_TYPES
 )
-from src.processing.entities.academic_disambiguator import (
-    AcademicDisambiguator, build_chunk_entity_map
+from src.processing.entities.metadata_disambiguator import (
+    MetadataDisambiguator, build_chunk_entity_map
 )
 
 
@@ -65,15 +65,19 @@ def sample_chunks():
 
 
 @pytest.fixture
-def academic_entities():
-    """Sample academic entities for testing."""
+def metadata_entities():
+    """Sample metadata entities for testing (v2.0)."""
     return [
-        {'name': 'Article 5 of the EU AI Act', 'type': 'Citation', 'chunk_id': 'chunk_001',
+        {'name': 'Article 5 of the EU AI Act', 'type': 'DocumentSection', 'chunk_id': 'chunk_001',
          'description': 'Prohibited AI practices'},
-        {'name': 'Floridi (2018)', 'type': 'Author', 'chunk_id': 'chunk_002',
+        {'name': 'EU AI Act', 'type': 'Document', 'chunk_id': 'chunk_001',
+         'description': 'European AI regulation'},
+        {'name': 'Floridi (2018)', 'type': 'Citation', 'chunk_id': 'chunk_002',
          'description': 'Author citation'},
         {'name': 'Nature', 'type': 'Journal', 'chunk_id': 'chunk_003',
          'description': 'Scientific journal'},
+        {'name': 'Section 3.2', 'type': 'DocumentSection', 'chunk_id': 'chunk_002',
+         'description': 'Document section'},
     ]
 
 
@@ -286,28 +290,32 @@ class TestTypeRouting:
     """Test entity type routing."""
     
     def test_route_by_type(self):
-        """Test routing entities to semantic/academic paths."""
+        """Test routing entities to semantic/metadata paths."""
         entities = [
             {'name': 'EU AI Act', 'type': 'Regulation'},
             {'name': 'Floridi (2018)', 'type': 'Citation'},
             {'name': 'AI', 'type': 'Technology'},
             {'name': 'Nature', 'type': 'Journal'},
             {'name': 'MIT', 'type': 'Affiliation'},
+            {'name': 'EU AI Act', 'type': 'Document'},
+            {'name': 'Article 5', 'type': 'DocumentSection'},
         ]
         
-        semantic, academic = route_by_type(entities)
+        semantic, metadata = route_by_type(entities)
         
         assert len(semantic) == 2  # Regulation, Technology
-        assert len(academic) == 3  # Citation, Journal, Affiliation
+        assert len(metadata) == 5  # Citation, Journal, Affiliation, Document, DocumentSection
         
         # Check correct routing
         semantic_types = {e['type'] for e in semantic}
-        academic_types = {e['type'] for e in academic}
+        metadata_types = {e['type'] for e in metadata}
         
         assert 'Regulation' in semantic_types
         assert 'Technology' in semantic_types
-        assert 'Citation' in academic_types
-        assert 'Journal' in academic_types
+        assert 'Citation' in metadata_types
+        assert 'Journal' in metadata_types
+        assert 'Document' in metadata_types
+        assert 'DocumentSection' in metadata_types
 
 
 class TestTieredThresholdFilter:
@@ -353,69 +361,86 @@ class TestTieredThresholdFilter:
 
 
 # =============================================================================
-# ACADEMIC LINKER TESTS
+# METADATA DISAMBIGUATOR TESTS (v2.0)
 # =============================================================================
 
-class TestAcademicDisambiguator:
-    """Test academic entity linking."""
+class TestMetadataDisambiguator:
+    """Test metadata entity disambiguation."""
     
-    def test_article_citation_part_of(self):
-        """Test PART_OF for article citations."""
+    def test_document_section_part_of_document(self):
+        """Test PART_OF for DocumentSection → Document."""
         semantic_entities = [
             {'entity_id': 'ent_001', 'name': 'EU AI Act', 'type': 'Regulation', 
              'chunk_ids': ['chunk_001']},
         ]
         
-        chunk_entity_map = build_chunk_entity_map(semantic_entities)
+        disambiguator = MetadataDisambiguator(semantic_entities=semantic_entities)
         
-        linker = AcademicDisambiguator(
-            semantic_entities=semantic_entities,
-            chunk_entity_map=chunk_entity_map
-        )
-        
-        academic = [
-            {'name': 'Article 5 of the EU AI Act', 'type': 'Citation', 'chunk_id': 'chunk_001'},
+        metadata = [
+            {'name': 'Article 5 of the EU AI Act', 'type': 'DocumentSection', 'chunk_id': 'chunk_001'},
+            {'name': 'EU AI Act', 'type': 'Document', 'chunk_id': 'chunk_001'},
         ]
         
-        processed, relations = linker.process(academic)
+        processed, part_of, same_as = disambiguator.process(metadata)
         
-        assert len(processed) == 1
-        assert len(relations) == 1
-        assert relations[0]['predicate'] == 'PART_OF'
-        assert relations[0]['object'] == 'EU AI Act'
+        assert len(processed) == 2
+        assert len(part_of) == 1
+        assert part_of[0]['predicate'] == 'PART_OF'
+        assert part_of[0]['subject_type'] == 'DocumentSection'
+        assert part_of[0]['object_type'] == 'Document'
     
-    def test_author_citation_no_part_of(self):
-        """Test that author citations don't get PART_OF."""
+    def test_document_same_as_regulation(self):
+        """Test SAME_AS for Document ↔ Regulation."""
+        semantic_entities = [
+            {'entity_id': 'ent_001', 'name': 'EU AI Act', 'type': 'Regulation', 
+             'chunk_ids': ['chunk_001']},
+            {'entity_id': 'ent_002', 'name': 'GDPR', 'type': 'Regulation',
+             'chunk_ids': ['chunk_002']},
+        ]
+        
+        disambiguator = MetadataDisambiguator(semantic_entities=semantic_entities)
+        
+        metadata = [
+            {'name': 'EU AI Act', 'type': 'Document', 'chunk_id': 'chunk_001'},
+            {'name': 'GDPR', 'type': 'Document', 'chunk_id': 'chunk_002'},
+        ]
+        
+        processed, part_of, same_as = disambiguator.process(metadata)
+        
+        assert len(processed) == 2
+        assert len(same_as) == 2
+        assert all(r['predicate'] == 'SAME_AS' for r in same_as)
+        assert all(r['subject_type'] == 'Document' for r in same_as)
+        assert all(r['object_type'] == 'Regulation' for r in same_as)
+    
+    def test_citation_no_relations(self):
+        """Test that Citation entities don't get PART_OF or SAME_AS."""
         semantic_entities = [
             {'entity_id': 'ent_001', 'name': 'AI Ethics', 'type': 'TechnicalConcept',
              'chunk_ids': ['chunk_001']},
         ]
         
-        chunk_entity_map = build_chunk_entity_map(semantic_entities)
+        disambiguator = MetadataDisambiguator(semantic_entities=semantic_entities)
         
-        linker = AcademicDisambiguator(
-            semantic_entities=semantic_entities,
-            chunk_entity_map=chunk_entity_map
-        )
-        
-        academic = [
-            {'name': 'Floridi (2018)', 'type': 'Author', 'chunk_id': 'chunk_001'},
+        metadata = [
+            {'name': 'Floridi (2018)', 'type': 'Citation', 'chunk_id': 'chunk_001'},
         ]
         
-        processed, relations = linker.process(academic)
+        processed, part_of, same_as = disambiguator.process(metadata)
         
         assert len(processed) == 1
-        assert len(relations) == 0  # No PART_OF for author citations
+        assert len(part_of) == 0
+        assert len(same_as) == 0
     
     def test_entity_id_generation(self):
         """Test that entity IDs are generated."""
-        linker = AcademicDisambiguator()
+        disambiguator = MetadataDisambiguator()
         
-        academic = [
+        metadata = [
             {'name': 'Nature', 'type': 'Journal', 'chunk_id': 'chunk_001'},
         ]
         
-        processed, _ = linker.process(academic)
+        processed, _, _ = disambiguator.process(metadata)
         
         assert 'entity_id' in processed[0]
         assert processed[0]['entity_id'].startswith('ent_')
@@ -447,35 +472,35 @@ class TestBuildChunkEntityMap:
 class TestIntegration:
     """Integration tests for full pipeline."""
     
-    def test_full_pipeline_sample(self, sample_entities, sample_chunks, academic_entities):
+    def test_full_pipeline_sample(self, sample_entities, sample_chunks, metadata_entities):
         """Test full pipeline on sample data."""
-        all_entities = sample_entities + academic_entities
+        all_entities = sample_entities + metadata_entities
         
         # Filter
-        garbage_filter = PreEntityFilter(chunks=sample_chunks)
-        clean, _ = garbage_filter.filter(all_entities)
+        pre_filter = PreEntityFilter(chunks=sample_chunks)
+        clean, _ = pre_filter.filter(all_entities)
         
         # Route
-        semantic, academic = route_by_type(clean)
+        semantic, metadata = route_by_type(clean)
         
         # Deduplicate semantic
         dedup = ExactDeduplicator()
         canonical, aliases = dedup.deduplicate(semantic)
         
-        # Process academic (mock ID generator)
-        with patch('src.processing.entities.academic_linker.generate_entity_id') as mock_id:
+        # Add entity IDs for SAME_AS matching
+        for i, e in enumerate(canonical):
+            e['entity_id'] = f'ent_{i:05d}'
+        
+        # Process metadata (mock ID generator)
+        with patch('src.processing.entities.metadata_disambiguator.generate_entity_id') as mock_id:
             mock_id.return_value = 'ent_test123'
             
-            chunk_map = build_chunk_entity_map(canonical)
-            linker = AcademicDisambiguator(
-                semantic_entities=canonical,
-                chunk_entity_map=chunk_map
-            )
-            academic_out, relations = linker.process(academic)
+            disambiguator = MetadataDisambiguator(semantic_entities=canonical)
+            metadata_out, part_of, same_as = disambiguator.process(metadata)
         
         # Assertions
         assert len(canonical) > 0
-        assert len(academic_out) > 0
+        assert len(metadata_out) > 0
         assert isinstance(aliases, dict)
 
 
