@@ -134,17 +134,21 @@ class DisambiguationProcessor:
     def run(self, 
             sample_size: int = None, 
             seed: int = None,
-            skip_llm: bool = False,
-            skip_embedding: bool = False,
+            phase: str = 'faiss',
             resume: bool = False) -> Dict:
         """
-        Run full disambiguation pipeline.
+        Run disambiguation pipeline up to specified phase.
         
         Args:
             sample_size: If set, only process this many entities (for testing)
             seed: Random seed for sampling
-            skip_llm: Skip LLM verification stage
-            skip_embedding: Skip embedding stage (entities must already have embeddings)
+            phase: Pipeline phase to run up to:
+                - 'filter': Pre-entity filtering only
+                - 'dedup': Filter + exact deduplication  
+                - 'embed': Filter + dedup + embedding
+                - 'faiss': Filter + dedup + embed + FAISS blocking
+                - 'full': All above + LLM verification
+            resume: Resume from checkpoint
             resume: Resume from checkpoint
             
         Returns:
@@ -189,6 +193,11 @@ class DisambiguationProcessor:
         self.stats['after_filter'] = len(clean_entities)
         self.stats['filter_stats'] = filter_stats
         
+        if phase == 'filter':
+            logger.info("\nPhase 'filter' complete - stopping before routing")
+            self._print_summary()
+            return self.stats
+        
         # =================================================================
         # STEP 3: Route by type
         # =================================================================
@@ -200,14 +209,13 @@ class DisambiguationProcessor:
         self.stats['metadata_raw'] = len(metadata_raw)
         
         # =================================================================
-        # STEP 4: Semantic disambiguation
+        # STEP 4: Semantic disambiguation (phases: dedup, embed, faiss, full)
         # =================================================================
         logger.info("\n[4/7] Disambiguating semantic entities...")
         
         semantic_entities, self.aliases = self._disambiguate_semantic(
             semantic_raw, 
-            skip_llm=skip_llm,
-            skip_embedding=skip_embedding
+            phase=phase
         )
         
         # Generate entity IDs
@@ -298,34 +306,37 @@ class DisambiguationProcessor:
     
     def _disambiguate_semantic(self, 
                                entities: List[Dict],
-                               skip_llm: bool = False,
-                               skip_embedding: bool = False) -> Tuple[List[Dict], Dict]:
+                               phase: str = 'faiss') -> Tuple[List[Dict], Dict]:
         """
-        Run semantic disambiguation pipeline.
+        Run semantic disambiguation pipeline up to specified phase.
         
-        Stages:
-            1. ExactDeduplicator (hash-based)
-            1.5. Embed entities (if not already embedded)
-            2. FAISSBlocker (embedding similarity)
-            3. TieredThresholdFilter (auto-merge/reject)
-            4. SameJudge (LLM verification for uncertain pairs)
+        Phases:
+            'dedup': ExactDeduplicator only (hash-based)
+            'embed': Dedup + entity embedding
+            'faiss': Dedup + embed + FAISS blocking (outputs pairs)
+            'full':  All above + LLM verification
         """
-        # Stage 1: Exact deduplication
+        # Stage 1: Exact deduplication (always runs)
         deduplicator = ExactDeduplicator()
         deduped, aliases = deduplicator.deduplicate(entities)
         
         self.stats['stage1_dedup'] = deduplicator.stats
         
-        # Stage 1.5: Embed entities if needed
+        if phase == 'dedup':
+            logger.info("Phase 'dedup' complete - stopping before embedding")
+            return deduped, aliases
+        
+        # Stage 1.5: Embed entities
         has_embeddings = any('embedding' in e for e in deduped)
         
-        if not has_embeddings and not skip_embedding:
+        if not has_embeddings:
             logger.info("Embedding entities with BGE-M3...")
             deduped = self._embed_entities(deduped)
-            has_embeddings = True
-        elif not has_embeddings:
-            logger.warning("No embeddings found - skipping FAISS stages")
-            logger.warning("Run with embedding enabled, or entities will only be hash-deduplicated")
+        else:
+            logger.info("Entities already have embeddings - skipping embed")
+        
+        if phase == 'embed':
+            logger.info("Phase 'embed' complete - stopping before FAISS")
             return deduped, aliases
         
         # Stage 2: FAISS blocking
@@ -357,10 +368,28 @@ class DisambiguationProcessor:
         
         self.stats['stage3_threshold'] = threshold_filter.stats
         
-        # Stage 4: LLM verification for uncertain pairs
+        if phase == 'faiss':
+            # Save candidate pairs for threshold tuning
+            pairs_file = DATA_DIR / 'interim' / 'entities' / 'candidate_pairs.jsonl'
+            pairs_file.parent.mkdir(parents=True, exist_ok=True)
+            save_jsonl(pairs, str(pairs_file))
+            logger.info(f"Saved {len(pairs)} candidate pairs → {pairs_file}")
+            logger.info(f"\nPhase 'faiss' complete - run threshold tuning next:")
+            logger.info(f"  python -m src.processing.entities.tests.test_threshold_refinement")
+            
+            # Apply only auto-merges (high confidence), no LLM
+            if filtered['merged']:
+                final_entities, aliases = apply_merges(deduped, filtered['merged'], aliases)
+                self.stats['auto_merges'] = len(filtered['merged'])
+            else:
+                final_entities = deduped
+            
+            return final_entities, aliases
+        
+        # Stage 4: LLM verification for uncertain pairs (phase == 'full')
         llm_approved = []
         
-        if not skip_llm and filtered['uncertain']:
+        if filtered['uncertain']:
             uncertain = filtered['uncertain']
             
             # Limit LLM calls for cost control
@@ -469,9 +498,28 @@ def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         description='Phase 1C Entity Disambiguation',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Phases (cumulative):
+  filter  - Pre-entity filtering only
+  dedup   - Filter + exact deduplication
+  embed   - Filter + dedup + embedding
+  faiss   - Filter + dedup + embed + FAISS blocking (for threshold tuning)
+  full    - All above + LLM verification
+
+Typical workflow:
+  1. python -m ... --phase faiss    # Run up to FAISS, outputs pairs
+  2. python -m ... tests.test_threshold_refinement  # Review pairs, tune thresholds
+  3. Update thresholds in extraction_config.py
+  4. python -m ... --phase full     # Run with LLM on uncertain band
+"""
     )
     
+    parser.add_argument(
+        '--phase', type=str, default='faiss',
+        choices=['filter', 'dedup', 'embed', 'faiss', 'full'],
+        help='Pipeline phase to run up to (default: faiss for threshold tuning)'
+    )
     parser.add_argument(
         '--sample', type=int, default=None,
         help='Sample size for testing (default: full run)'
@@ -479,14 +527,6 @@ def main():
     parser.add_argument(
         '--seed', type=int, default=42,
         help='Random seed for sampling (default: 42)'
-    )
-    parser.add_argument(
-        '--skip-llm', action='store_true',
-        help='Skip LLM verification stage'
-    )
-    parser.add_argument(
-        '--skip-embedding', action='store_true',
-        help='Skip embedding stage (for testing without GPU)'
     )
     parser.add_argument(
         '--skip-provenance', action='store_true',
@@ -509,8 +549,7 @@ def main():
     stats = processor.run(
         sample_size=args.sample,
         seed=args.seed,
-        skip_llm=args.skip_llm,
-        skip_embedding=args.skip_embedding,
+        phase=args.phase,
         resume=args.resume
     )
     
