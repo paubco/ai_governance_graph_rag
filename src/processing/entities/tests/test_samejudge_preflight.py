@@ -21,24 +21,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Test pairs - DIFFERENT from few-shot examples to test generalization
-# The few-shot examples are in prompts.py (SAMEJUDGE_EXAMPLES)
+# Few-shot now includes: GDPR, USA, AI, EU AI Act, EU, ML, CCPA, UK
 TEST_PAIRS = [
-    # YES - same entity, different name (not in examples)
+    # YES - same entity (NOT in few-shot examples)
     {
-        'entity1': {'name': 'European Union', 'type': 'Location'},
-        'entity2': {'name': 'EU', 'type': 'Location'},
-        'expected': True,
-        'reason': 'same entity, abbreviation'
-    },
-    {
-        'entity1': {'name': 'machine learning', 'type': 'Technology'},
-        'entity2': {'name': 'ML', 'type': 'Technology'},
+        'entity1': {'name': 'NLP', 'type': 'Technology'},
+        'entity2': {'name': 'natural language processing', 'type': 'Technology'},
         'expected': True,
         'reason': 'same concept, abbreviation'
     },
     {
-        'entity1': {'name': 'California Consumer Privacy Act', 'type': 'Regulation'},
-        'entity2': {'name': 'CCPA', 'type': 'Regulation'},
+        'entity1': {'name': 'Germany', 'type': 'Location'},
+        'entity2': {'name': 'Federal Republic of Germany', 'type': 'Location'},
+        'expected': True,
+        'reason': 'same country'
+    },
+    {
+        'entity1': {'name': 'HIPAA', 'type': 'Regulation'},
+        'entity2': {'name': 'Health Insurance Portability and Accountability Act', 'type': 'Regulation'},
         'expected': True,
         'reason': 'same law, abbreviation'
     },
@@ -68,10 +68,10 @@ TEST_PAIRS = [
         'expected': False,
         'reason': 'concept vs issues'
     },
-    # NO - specific vs generic
+    # NO - specific vs generic (not CCPA since in few-shot)
     {
-        'entity1': {'name': 'CCPA', 'type': 'Regulation'},
-        'entity2': {'name': 'privacy laws', 'type': 'Regulation'},
+        'entity1': {'name': 'HIPAA', 'type': 'Regulation'},
+        'entity2': {'name': 'health regulations', 'type': 'Regulation'},
         'expected': False,
         'reason': 'specific law vs generic category'
     },

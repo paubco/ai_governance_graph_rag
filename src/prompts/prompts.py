@@ -90,30 +90,29 @@ JSON only: {{{{"entities": [{{{{"name": "...", "type": "...", "description": "..
 SAMEJUDGE_SYSTEM = """You classify whether two entities are the EXACT SAME real-world thing.
 Answer only YES or NO. Default to NO if uncertain."""
 
+# Balance: 8 YES, 10 NO examples
 SAMEJUDGE_EXAMPLES = [
-    # YES - same entity, different name
+    # YES - same entity, different name (8 examples)
     ("GDPR (Regulation)", "General Data Protection Regulation (Regulation)", "YES"),
     ("USA (Location)", "United States (Location)", "YES"),
     ("AI (Technology)", "artificial intelligence (Technology)", "YES"),
     ("EU AI Act (Regulation)", "Artificial Intelligence Act (Regulation)", "YES"),
-    # NO - specific vs generic (CRITICAL distinction)
+    ("EU (Location)", "European Union (Location)", "YES"),
+    ("ML (Technology)", "machine learning (Technology)", "YES"),
+    ("CCPA (Regulation)", "California Consumer Privacy Act (Regulation)", "YES"),
+    ("UK (Location)", "United Kingdom (Location)", "YES"),
+    # NO - specific vs generic (3 examples)
     ("GDPR (Regulation)", "data protection laws (Regulation)", "NO"),
     ("EU AI Act (Regulation)", "AI regulations (Regulation)", "NO"),
-    ("Data Protection Regulation (Regulation)", "national data protection laws (Regulation)", "NO"),
-    # NO - different identifiers
+    ("CCPA (Regulation)", "privacy laws (Regulation)", "NO"),
+    # NO - different identifiers (2 examples)
     ("Article 5 (DocumentSection)", "Article 6 (DocumentSection)", "NO"),
     ("March 2025 (Location)", "April 2025 (Location)", "NO"),
-    # NO - related but different concepts
-    ("privacy regulations (RegulatoryConcept)", "data protection rules (RegulatoryConcept)", "NO"),
-    ("AI systems (Technology)", "AI (Technology)", "NO"),
-    # NO - antonyms or opposing concepts
+    # NO - antonyms/opposing (2 examples)
     ("safety (Risk)", "risk (Risk)", "NO"),
-    ("safety (Risk)", "risks (Risk)", "NO"),
     ("benefits (EconomicConcept)", "costs (EconomicConcept)", "NO"),
-    ("compliance (RegulatoryConcept)", "violation (RegulatoryConcept)", "NO"),
-    # NO - X vs X-issues/concerns pattern
+    # NO - X vs X-issues pattern (2 examples)
     ("safety (Risk)", "safety issues (Risk)", "NO"),
-    ("privacy (RegulatoryConcept)", "privacy concerns (RegulatoryConcept)", "NO"),
     ("AI safety (Risk)", "AI risks (Risk)", "NO"),
 ]
 
