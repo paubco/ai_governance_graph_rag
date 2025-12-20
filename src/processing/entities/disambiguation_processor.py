@@ -135,6 +135,7 @@ class DisambiguationProcessor:
             sample_size: int = None, 
             seed: int = None,
             skip_llm: bool = False,
+            skip_embedding: bool = False,
             resume: bool = False) -> Dict:
         """
         Run full disambiguation pipeline.
@@ -143,6 +144,7 @@ class DisambiguationProcessor:
             sample_size: If set, only process this many entities (for testing)
             seed: Random seed for sampling
             skip_llm: Skip LLM verification stage
+            skip_embedding: Skip embedding stage (entities must already have embeddings)
             resume: Resume from checkpoint
             
         Returns:
@@ -204,7 +206,8 @@ class DisambiguationProcessor:
         
         semantic_entities, self.aliases = self._disambiguate_semantic(
             semantic_raw, 
-            skip_llm=skip_llm
+            skip_llm=skip_llm,
+            skip_embedding=skip_embedding
         )
         
         # Generate entity IDs
@@ -295,12 +298,14 @@ class DisambiguationProcessor:
     
     def _disambiguate_semantic(self, 
                                entities: List[Dict],
-                               skip_llm: bool = False) -> Tuple[List[Dict], Dict]:
+                               skip_llm: bool = False,
+                               skip_embedding: bool = False) -> Tuple[List[Dict], Dict]:
         """
         Run semantic disambiguation pipeline.
         
         Stages:
             1. ExactDeduplicator (hash-based)
+            1.5. Embed entities (if not already embedded)
             2. FAISSBlocker (embedding similarity)
             3. TieredThresholdFilter (auto-merge/reject)
             4. SameJudge (LLM verification for uncertain pairs)
@@ -311,12 +316,16 @@ class DisambiguationProcessor:
         
         self.stats['stage1_dedup'] = deduplicator.stats
         
-        # Check if entities have embeddings
+        # Stage 1.5: Embed entities if needed
         has_embeddings = any('embedding' in e for e in deduped)
         
-        if not has_embeddings:
+        if not has_embeddings and not skip_embedding:
+            logger.info("Embedding entities with BGE-M3...")
+            deduped = self._embed_entities(deduped)
+            has_embeddings = True
+        elif not has_embeddings:
             logger.warning("No embeddings found - skipping FAISS stages")
-            logger.warning("Run embedding first, or entities will only be hash-deduplicated")
+            logger.warning("Run with embedding enabled, or entities will only be hash-deduplicated")
             return deduped, aliases
         
         # Stage 2: FAISS blocking
@@ -397,6 +406,59 @@ class DisambiguationProcessor:
             logger.info(f"\nFilter breakdown:")
             logger.info(f"  Blacklist removed:   {fs.get('blacklist_removed', 0):,}")
             logger.info(f"  Provenance failed:   {fs.get('provenance_failed', 0):,}")
+    
+    def _embed_entities(self, entities: List[Dict], batch_size: int = 64) -> List[Dict]:
+        """
+        Embed entities using existing EmbedProcessor + BGEEmbedder.
+        
+        Format: "{name}({type})" per extraction_config.py
+        
+        Args:
+            entities: List of entity dicts with 'name' and 'type'
+            batch_size: Embedding batch size (64 for GPU)
+            
+        Returns:
+            Entities with 'embedding' field added
+        """
+        from src.utils.embedder import BGEEmbedder
+        from src.utils.embed_processor import EmbedProcessor
+        
+        # Get format from config
+        entity_format = self.config.get('semantic_format', '{name}({type})')
+        
+        logger.info(f"Embedding {len(entities)} entities...")
+        logger.info(f"Format: {entity_format}")
+        
+        # Convert to dict format expected by EmbedProcessor
+        # Add formatted_text field for embedding
+        items = {}
+        for i, e in enumerate(entities):
+            entity_id = e.get('entity_id', f'ent_{i:05d}')
+            e['formatted_text'] = entity_format.format(
+                name=e.get('name', ''), 
+                type=e.get('type', '')
+            )
+            items[entity_id] = e
+        
+        logger.info(f"Sample: '{entities[0].get('formatted_text', '')}'")
+        
+        # Use existing EmbedProcessor
+        embedder = BGEEmbedder(device='cuda')
+        processor = EmbedProcessor(embedder)
+        
+        items = processor.process_items(
+            items, 
+            text_key='formatted_text',
+            batch_size=batch_size
+        )
+        
+        # Convert back to list
+        entities = list(items.values())
+        
+        logger.info(f"✓ Embedded {len(entities)} entities")
+        self.stats['entities_embedded'] = len(entities)
+        
+        return entities
 
 
 # =============================================================================
@@ -423,6 +485,10 @@ def main():
         help='Skip LLM verification stage'
     )
     parser.add_argument(
+        '--skip-embedding', action='store_true',
+        help='Skip embedding stage (for testing without GPU)'
+    )
+    parser.add_argument(
         '--skip-provenance', action='store_true',
         help='Skip provenance verification'
     )
@@ -444,6 +510,7 @@ def main():
         sample_size=args.sample,
         seed=args.seed,
         skip_llm=args.skip_llm,
+        skip_embedding=args.skip_embedding,
         resume=args.resume
     )
     
