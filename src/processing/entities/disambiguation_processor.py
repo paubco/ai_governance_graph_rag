@@ -105,13 +105,13 @@ CONFIG = {
     'faiss_ef_construction': 200,
     'faiss_ef_search': 64,
     
-    # Tiered thresholds
-    'auto_merge_threshold': 0.95,
-    'auto_reject_threshold': 0.85,
+    # Tiered thresholds (tuned from manual review)
+    'auto_merge_threshold': 0.98,   # 0.96-0.98 has false positives
+    'auto_reject_threshold': 0.88,  # 0.85-0.88 is ~95% DIFF
     
     # LLM SameJudge
     'llm_model': 'mistralai/Mistral-7B-Instruct-v0.3',
-    'max_llm_pairs': 1000,  # Limit LLM calls for cost control
+    'max_llm_pairs': 25000,  # ~21K expected, buffer for safety
 }
 
 
