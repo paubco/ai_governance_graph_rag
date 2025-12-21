@@ -10,7 +10,7 @@ Usage:
     python validate_relations.py
     
     # Validate specific file
-    python validate_relations.py --input relations_output.jsonl --output relations_validated.jsonl
+    python validate_relations.py --input relations_semantic.jsonl --output relations_validated.jsonl
     
     # Dry run (report only, no output)
     python validate_relations.py --dry-run
@@ -81,7 +81,7 @@ def validate_nested_relations(
     dry_run: bool = False
 ) -> Dict:
     """
-    Validate relations from nested format (relations_output.jsonl).
+    Validate relations from nested format (relations_semantic.jsonl).
     
     Each line is: {"relations": [...], "num_batches": N, ...}
     """
@@ -223,7 +223,7 @@ def main():
     
     # Default paths
     lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
-    semantic_input = PROJECT_ROOT / "data/processed/relations/relations_output.jsonl"
+    semantic_input = PROJECT_ROOT / "data/processed/relations/relations_semantic.jsonl"
     citation_input = PROJECT_ROOT / "data/processed/relations/relations_discusses.jsonl"
     
     # Check prerequisites
