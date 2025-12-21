@@ -31,7 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from tqdm import tqdm
 
 # Foundation imports
-from src.utils.io import read_jsonl, write_jsonl
+from src.utils.io import load_jsonl, save_jsonl
 
 # Default config (can be overridden)
 DEFAULT_ENRICHMENT_CONFIG = {
@@ -169,7 +169,7 @@ class EnrichmentProcessor:
         
         # Load entities (JSONL format for v1.1)
         if self.entities_file.suffix == '.jsonl':
-            entities = list(read_jsonl(self.entities_file))
+            entities = list(load_jsonl(self.entities_file))
         else:
             with open(self.entities_file, 'r', encoding='utf-8') as f:
                 entities = json.load(f)
@@ -177,7 +177,7 @@ class EnrichmentProcessor:
         
         # Load relations (JSONL format for v1.1)
         if self.relations_file.suffix == '.jsonl':
-            relations = list(read_jsonl(self.relations_file))
+            relations = list(load_jsonl(self.relations_file))
         else:
             with open(self.relations_file, 'r', encoding='utf-8') as f:
                 relations = json.load(f)
@@ -185,7 +185,7 @@ class EnrichmentProcessor:
         
         # Load chunks (JSONL format for v1.1)
         if self.chunks_file.suffix == '.jsonl':
-            chunks = list(read_jsonl(self.chunks_file))
+            chunks = list(load_jsonl(self.chunks_file))
         else:
             with open(self.chunks_file, 'r', encoding='utf-8') as f:
                 chunks_data = json.load(f)

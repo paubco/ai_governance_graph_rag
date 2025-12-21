@@ -51,9 +51,9 @@ def test_imports():
     return all_passed
 
 
-def test_foundation_imports():
-    """Test foundation modules can be imported."""
-    print("\n=== TEST: Foundation Imports ===")
+def test_utils_imports():
+    """Test utils modules can be imported."""
+    print("\n=== TEST: Utils Imports ===")
     
     try:
         from src.utils.dataclasses import Entity, Relation, Chunk
@@ -73,7 +73,7 @@ def test_foundation_imports():
         return False
     
     try:
-        from src.utils.io import read_jsonl, write_jsonl
+        from src.utils.io import load_jsonl, save_jsonl
         print("  ✓ io")
     except Exception as e:
         print(f"  ✗ io: {e}")

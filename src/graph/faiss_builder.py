@@ -32,12 +32,12 @@ import faiss
 from tqdm import tqdm
 
 # Project imports
-from src.utils.io import read_jsonl
+from src.utils.io import load_jsonl
 from src.utils.logger import get_logger
 
 # Config - import with fallback
 try:
-    from src.config.extraction import FAISS_CONFIG
+    from extraction_config import FAISS_CONFIG
 except ImportError:
     FAISS_CONFIG = {
         'hnsw_m': 32,
@@ -94,7 +94,7 @@ class FAISSIndexBuilder:
         
         # Load data based on format
         if entities_file.suffix == '.jsonl':
-            entities = list(read_jsonl(entities_file))
+            entities = list(load_jsonl(entities_file))
         else:
             with open(entities_file, 'r', encoding='utf-8') as f:
                 entities = json.load(f)
@@ -139,7 +139,7 @@ class FAISSIndexBuilder:
         
         # Load data based on format
         if chunks_file.suffix == '.jsonl':
-            chunks_data = list(read_jsonl(chunks_file))
+            chunks_data = list(load_jsonl(chunks_file))
         else:
             with open(chunks_file, 'r', encoding='utf-8') as f:
                 chunks_data = json.load(f)
