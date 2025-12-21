@@ -17,7 +17,7 @@ References:
 # Standard library
 import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 import sys
 import argparse
 
@@ -32,8 +32,19 @@ import faiss
 from tqdm import tqdm
 
 # Project imports
-from src.foundation.io import read_jsonl
+from src.utils.io import read_jsonl
 from src.utils.logger import get_logger
+
+# Config - import with fallback
+try:
+    from src.config.extraction import FAISS_CONFIG
+except ImportError:
+    FAISS_CONFIG = {
+        'hnsw_m': 32,
+        'hnsw_ef_construction': 200,
+        'hnsw_ef_search': 64,
+        'output_dir': 'data/processed/faiss',
+    }
 
 logger = get_logger(__name__)
 
@@ -50,15 +61,22 @@ class FAISSIndexBuilder:
         builder.build_all_indexes(entities_file, chunks_file)
     """
     
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, config: Dict = None):
         """
         Initialize builder.
         
         Args:
             output_dir: Directory to save indexes and ID maps
+            config: Optional config override (defaults to FAISS_CONFIG)
         """
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load config
+        cfg = config or FAISS_CONFIG
+        self.hnsw_m = cfg.get('hnsw_m', 32)
+        self.hnsw_ef_construction = cfg.get('hnsw_ef_construction', 200)
+        self.hnsw_ef_search = cfg.get('hnsw_ef_search', 64)
     
     def load_entity_embeddings(self, entities_file: Path) -> Tuple[List[str], np.ndarray]:
         """
@@ -155,19 +173,22 @@ class FAISSIndexBuilder:
         
         return chunk_ids, embeddings_array
     
-    def build_hnsw_index(self, embeddings: np.ndarray, m: int = 32, 
-                         ef_construction: int = 200) -> faiss.Index:
+    def build_hnsw_index(self, embeddings: np.ndarray, m: int = None, 
+                         ef_construction: int = None) -> faiss.Index:
         """
         Build FAISS HNSW index.
         
         Args:
             embeddings: Numpy array of embeddings (N, D)
-            m: Number of neighbors per node in HNSW graph (default: 32)
-            ef_construction: Size of dynamic candidate list (default: 200)
+            m: Number of neighbors per node (default: from config)
+            ef_construction: Size of dynamic candidate list (default: from config)
             
         Returns:
             FAISS HNSW index
         """
+        m = m or self.hnsw_m
+        ef_construction = ef_construction or self.hnsw_ef_construction
+        
         dim = embeddings.shape[1]
         logger.info(f"Building HNSW index: {len(embeddings):,} vectors, {dim} dimensions")
         logger.info(f"HNSW parameters: M={m}, ef_construction={ef_construction}")

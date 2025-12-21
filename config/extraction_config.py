@@ -28,6 +28,46 @@ SCOPUS_API_KEY = os.getenv('SCOPUS_API_KEY')
 
 
 # ============================================================================
+# LOGGING
+# ============================================================================
+
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'standard',
+            'stream': 'ext://sys.stdout',
+        },
+    },
+    'root': {
+        'level': 'INFO',
+        'handlers': ['console'],
+    },
+}
+
+# ============================================================================
+# SCRAPER CONFIGURATION
+# ============================================================================
+
+SCRAPER_CONFIG = {
+    'base_url': 'https://intelligence.dlapiper.com/artificial-intelligence/',
+    'delay_between_requests': 2,
+    'timeout': 10,
+    'retry_attempts': 3,
+    'headers': {
+        'User-Agent': 'Mozilla/5.0 (Educational Research Bot)',
+    },
+}
+
+# ============================================================================
 # PHASE 0B: PREPROCESSING
 # ============================================================================
 
@@ -491,72 +531,69 @@ RELATION_EXTRACTION_CONFIG = {
 
 
 # ============================================================================
-# PHASE 2A: SCOPUS ENRICHMENT
+# PHASE 2A: SCOPUS ENRICHMENT (v1.1 - extended)
 # ============================================================================
 
 ENRICHMENT_CONFIG = {
-    'citation_match_threshold': 0.8,
-    'author_match_threshold': 0.9,
-    'title_similarity_threshold': 0.85,
-    'doi_exact_match': True,
+    # Input paths (relative to PROJECT_ROOT)
+    'scopus_csv_path': 'data/raw/academic/scopus_2023/scopus_export_2023_raw.csv',
+    'entities_path': 'data/interim/entities/entities_semantic.jsonl',
+    'relations_path': 'data/processed/relations/relations_output.jsonl',
+    'chunks_path': 'data/interim/chunks/chunks_embedded.jsonl',
+    'scraping_summary_path': 'data/raw/dlapiper/scraping_summary.json',
+    
+    # Output directory
+    'output_dir': 'data/processed/enrichment',
+    
+    # Citation matching thresholds
+    'type_author_threshold': 0.80,      # Type-aware author matching
+    'type_journal_threshold': 0.80,     # Type-aware journal matching  
+    'type_title_threshold': 0.75,       # Type-aware title matching
+    'fuzzy_fallback_threshold': 0.65,   # Cross-field fuzzy fallback
+    'l1_overlap_threshold': 0.90,       # L1 paper detection
+    
+    # Partial match scores
+    'partial_year_surname_score': 0.65,
+    'partial_surname_start_score': 0.60,
+    'partial_year_only_score': 0.50,
+    
+    # Feature flags
     'extract_authors': True,
     'extract_journals': True,
     'extract_references': True,
-    'extract_keywords': True,
 }
 
 
 # ============================================================================
-# NEO4J CONFIGURATION
+# PHASE 2B: NEO4J IMPORT
 # ============================================================================
 
 NEO4J_CONFIG = {
+    # Connection (from .env)
     'uri': os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
     'user': os.getenv('NEO4J_USER', 'neo4j'),
     'password': os.getenv('NEO4J_PASSWORD'),
     'database': 'neo4j',
-    'batch_size': 1000,
-    'use_periodic_commit': True,
+    
+    # Import settings
+    'batch_size': 500,
 }
 
 
 # ============================================================================
-# SCRAPER CONFIGURATION (Phase 0)
+# PHASE 2B: FAISS INDEX BUILDING
 # ============================================================================
 
-SCRAPER_CONFIG = {
-    'base_url': 'https://intelligence.dlapiper.com/artificial-intelligence/',
-    'delay_between_requests': 2,
-    'timeout': 10,
-    'retry_attempts': 3,
-    'headers': {
-        'User-Agent': 'Mozilla/5.0 (Educational Research Bot)',
-    },
-}
-
-
-# ============================================================================
-# LOGGING
-# ============================================================================
-
-LOGGING_CONFIG = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {
-            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'INFO',
-            'formatter': 'standard',
-            'stream': 'ext://sys.stdout',
-        },
-    },
-    'root': {
-        'level': 'INFO',
-        'handlers': ['console'],
-    },
+FAISS_CONFIG = {
+    # HNSW parameters
+    'hnsw_m': 32,                    # Neighbors per node
+    'hnsw_ef_construction': 200,     # Build quality
+    'hnsw_ef_search': 64,            # Search quality (runtime)
+    
+    # Output paths (relative to PROJECT_ROOT)
+    'output_dir': 'data/processed/faiss',
+    'entity_index_file': 'entity_embeddings.index',
+    'entity_map_file': 'entity_id_map.json',
+    'chunk_index_file': 'chunk_embeddings.index',
+    'chunk_map_file': 'chunk_id_map.json',
 }

@@ -32,6 +32,12 @@ from tqdm import tqdm
 # Project imports
 from src.utils.logger import get_logger
 
+# Config - import with fallback
+try:
+    from src.config.extraction import NEO4J_CONFIG
+except ImportError:
+    NEO4J_CONFIG = {'batch_size': 500}
+
 logger = get_logger(__name__)
 
 
@@ -47,7 +53,7 @@ class Neo4jImporter:
             importer.import_entities(session, entities)
     """
     
-    def __init__(self, uri: str, user: str, password: str):
+    def __init__(self, uri: str, user: str, password: str, config: Dict = None):
         """
         Initialize Neo4j connection.
         
@@ -55,8 +61,14 @@ class Neo4jImporter:
             uri: Neo4j connection URI (e.g., neo4j+s://xxx.databases.neo4j.io)
             user: Username (typically 'neo4j')
             password: Database password
+            config: Optional config override (defaults to NEO4J_CONFIG)
         """
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        
+        # Load config
+        cfg = config or NEO4J_CONFIG
+        self.batch_size = cfg.get('batch_size', 500)
+        
         logger.info(f"Connected to Neo4j at {uri}")
     
     def close(self):
@@ -116,7 +128,7 @@ class Neo4jImporter:
         logger.info(f"Created {len(constraints)} constraints and {len(indexes)} indexes")
     
     def batch_import(self, session: Session, query: str, data: List[Dict], 
-                     batch_size: int = 500, desc: str = "Importing") -> int:
+                     batch_size: int = None, desc: str = "Importing") -> int:
         """
         Import data in batches using UNWIND pattern.
         
@@ -124,12 +136,13 @@ class Neo4jImporter:
             session: Neo4j session
             query: Cypher query with UNWIND $batch
             data: List of dicts to import
-            batch_size: Number of items per batch
+            batch_size: Number of items per batch (default: from config)
             desc: Description for progress bar
             
         Returns:
             Total number of items imported
         """
+        batch_size = batch_size or self.batch_size
         total = len(data)
         if total == 0:
             logger.warning(f"{desc}: No data to import")
