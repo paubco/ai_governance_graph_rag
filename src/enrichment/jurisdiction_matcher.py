@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import List, Dict, Set
 
 # Project imports
-from src.foundation.id_generator import generate_entity_id
+from src.utils.id_generator import generate_entity_id
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
