@@ -264,21 +264,28 @@ def build_entity_lookup(
     """
     Build entity_id → entity lookup for relation extraction.
     
+    Strips embeddings to keep file size manageable (~50MB vs 1GB).
+    Embeddings are only needed in the original JSONL files for MMR retrieval.
+    
     Args:
         semantic_entities: List of semantic entity dicts
         metadata_entities: List of metadata entity dicts
     
     Returns:
-        Dict mapping entity_id to full entity dict
+        Dict mapping entity_id to entity dict (without embedding)
     """
     lookup = {}
+    
+    # Fields to keep (exclude 'embedding' which is 1024 floats)
+    KEEP_FIELDS = {'entity_id', 'name', 'type', 'description', 'chunk_ids', 'source_file'}
     
     for entity in semantic_entities + metadata_entities:
         entity_id = entity.get('entity_id')
         if entity_id:
-            lookup[entity_id] = entity
+            # Copy only needed fields, skip embedding
+            lookup[entity_id] = {k: v for k, v in entity.items() if k in KEEP_FIELDS}
     
-    logger.info(f"✓ Built entity lookup with {len(lookup):,} entries")
+    logger.info(f"✓ Built entity lookup with {len(lookup):,} entries (embeddings stripped)")
     return lookup
 
 
