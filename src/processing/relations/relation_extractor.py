@@ -1,30 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-RAKG-style relation extractor with entity_id-based output (v2.0).
+RAKG-style relation extractor with entity_id-based output (v1.2).
 
 Implements retrieval-augmented relation extraction using two-stage MMR for semantic
-and entity diversity in chunk selection. v2.0 uses entity_ids throughout to avoid
-post-hoc name→ID normalization that caused 52% entity mismatch in v1.0.
+and entity diversity in chunk selection.
 
-Key v2.0 Changes:
+Key v1.2 Changes:
+- Track 1 (Semantic): Entity-based, multi-chunk MMR with up to 3 rounds
+- Track 2 (Citation): Chunk-based, single chunk with fixed 'discusses' predicate
+- Type-filtered detected entities (semantic→semantic, citation→concepts)
 - Entity lookup keyed by entity_id (not name)
-- Co-occurrence matrices contain entity_ids (not names)
 - LLM prompt constrains output to valid entity_ids
-- Relations output subject_id/object_id directly
 
-Algorithm:
+Algorithm (Track 1):
     1. Semantic MMR: Select top-k chunks by entity embedding similarity with diversity
     2. Entity MMR: Add chunks containing co-occurring entities (diversified selection)
-    3. Threshold check: Trigger second batch if first batch yields < threshold relations
+    3. Threshold check: Trigger 2nd/3rd batch if centroid distance > threshold
     4. LLM extraction: OpenIE triplet extraction with ID-constrained JSON schema
     5. Validation: Verify output IDs exist in detected entity set
+
+Algorithm (Track 2):
+    1. Iterate over chunks (not entities)
+    2. For each chunk: find citations + concepts
+    3. Single LLM call per citation with 'discusses' predicate
+    4. No MMR, no batching - single chunk context
 
 Example:
     extractor = RAKGRelationExtractor(
         model_name="mistralai/Mistral-7B-Instruct-v0.3",
         num_chunks=6, mmr_lambda=0.65
     )
+    # Track 1
     relations = extractor.extract_relations_for_entity(entity, chunks)
+    # Track 2
+    relations = extractor.extract_citation_relations_for_chunk(chunk, citations, concepts)
 """
 
 # Standard library
@@ -51,7 +60,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.logger import setup_logging
-from src.prompts.prompts import RELATION_EXTRACTION_PROMPT, METADATA_RELATION_EXTRACTION_PROMPT
+from src.prompts.prompts import RELATION_EXTRACTION_PROMPT, CITATION_DISCUSSES_PROMPT
 
 # Setup logging
 setup_logging()
@@ -64,20 +73,23 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85
 DEFAULT_MMR_LAMBDA = 0.65
-DEFAULT_NUM_CHUNKS = 4
+DEFAULT_NUM_CHUNKS = 6
 DEFAULT_CANDIDATE_POOL = 200
 DEFAULT_SECOND_ROUND_THRESHOLD = 0.25
+DEFAULT_THIRD_ROUND_THRESHOLD = 0.30  # Trigger third if still diverse
+DEFAULT_MAX_DETECTED_ENTITIES = 25    # Cap entities in prompt
+DEFAULT_MAX_CHARS_PER_CHUNK = 2500    # Truncate only as last resort
 
 # Entity type classification
 SEMANTIC_TYPES = {
     'RegulatoryConcept', 'TechnicalConcept', 'PoliticalConcept', 'EconomicConcept',
     'Regulation', 'Technology', 'Organization', 'Location', 'Risk'
 }
-ACADEMIC_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation'}
-SKIP_TYPES = {'Document', 'DocumentSection'}
 CONCEPT_TYPES = {
     'RegulatoryConcept', 'TechnicalConcept', 'PoliticalConcept', 'EconomicConcept'
 }
+ACADEMIC_TYPES = {'Citation', 'Author', 'Journal', 'Affiliation'}
+SKIP_TYPES = {'Document', 'DocumentSection'}
 
 
 # ============================================================================
@@ -155,13 +167,16 @@ def build_relation_prompt(
     track: str = 'semantic'
 ) -> str:
     """
-    Build relation extraction prompt with entity IDs.
+    Build relation extraction prompt with entity IDs (Track 1 semantic only).
+    
+    Note: Track 2 (citation) now uses extract_citation_relations_for_chunk()
+    which builds prompts directly with CITATION_DISCUSSES_PROMPT.
     
     Args:
         entity: Target entity dict with entity_id, name, type, description
         chunks: List of context chunks
         detected_entities: List of detected entity dicts in chunks
-        track: 'semantic' or 'academic'
+        track: 'semantic' (academic/citation handled separately)
     
     Returns:
         Formatted prompt string
@@ -169,23 +184,14 @@ def build_relation_prompt(
     chunks_text = format_chunks_for_prompt(chunks)
     detected_list = format_detected_entities_with_ids(detected_entities)
     
-    if track == 'academic':
-        return METADATA_RELATION_EXTRACTION_PROMPT.format(
-            entity_id=entity.get('entity_id', ''),
-            entity_name=entity.get('name', 'Unknown'),
-            entity_type=entity.get('type', 'Unknown'),
-            detected_entities_list=detected_list,
-            chunks_text=chunks_text
-        )
-    else:
-        return RELATION_EXTRACTION_PROMPT.format(
-            entity_id=entity.get('entity_id', ''),
-            entity_name=entity.get('name', 'Unknown'),
-            entity_type=entity.get('type', 'Unknown'),
-            entity_description=entity.get('description', 'No description'),
-            detected_entities_list=detected_list,
-            chunks_text=chunks_text
-        )
+    return RELATION_EXTRACTION_PROMPT.format(
+        entity_id=entity.get('entity_id', ''),
+        entity_name=entity.get('name', 'Unknown'),
+        entity_type=entity.get('type', 'Unknown'),
+        entity_description=entity.get('description', 'No description'),
+        detected_entities_list=detected_list,
+        chunks_text=chunks_text
+    )
 
 
 def normalize_predicate(predicate: str) -> str:
@@ -506,27 +512,50 @@ class RAKGRelationExtractor:
         self,
         chunks: List[Dict],
         exclude_entity_id: str,
-        cooccurrence_matrix: Dict[str, List[str]]
+        cooccurrence_matrix: Dict[str, List[str]],
+        max_entities: int = DEFAULT_MAX_DETECTED_ENTITIES,
+        allowed_types: set = None
     ) -> List[Dict]:
         """
         Get detected entities from chunks using entity_ids.
         
-        v2.0: Returns full entity dicts from entity_lookup.
+        Args:
+            chunks: List of chunk dicts
+            exclude_entity_id: Target entity to exclude from results
+            cooccurrence_matrix: {chunk_id: [entity_ids]}
+            max_entities: Cap on returned entities
+            allowed_types: If provided, only include entities of these types
+                          - Track 1 (semantic): SEMANTIC_TYPES
+                          - Track 2 (citation): CONCEPT_TYPES
+        
+        Returns:
+            List of entity dicts, sorted by frequency, capped at max_entities
         """
-        detected_ids: Set[str] = set()
+        # Count entity occurrences across chunks
+        entity_counts: Dict[str, int] = {}
         
         for chunk in chunks:
             chunk_id = get_chunk_id(chunk)
             entity_ids = cooccurrence_matrix.get(chunk_id, [])
-            detected_ids.update(entity_ids)
+            for eid in entity_ids:
+                if eid != exclude_entity_id:
+                    entity_counts[eid] = entity_counts.get(eid, 0) + 1
         
-        detected_ids.discard(exclude_entity_id)
+        # Sort by frequency (most common first)
+        sorted_ids = sorted(entity_counts.keys(), key=lambda x: entity_counts[x], reverse=True)
         
-        # Resolve to full entity dicts
+        # Resolve to full entity dicts with optional type filtering
         detected_entities = []
-        for eid in detected_ids:
+        for eid in sorted_ids:
             if eid in self.entity_lookup:
-                detected_entities.append(self.entity_lookup[eid])
+                entity = self.entity_lookup[eid]
+                # Type filter: skip if not in allowed types
+                if allowed_types and entity.get('type') not in allowed_types:
+                    continue
+                detected_entities.append(entity)
+                # Stop once we hit the cap
+                if len(detected_entities) >= max_entities:
+                    break
         
         return detected_entities
     
@@ -604,7 +633,7 @@ class RAKGRelationExtractor:
         return validated
     
     # ========================================================================
-    # MAIN EXTRACTION
+    # MAIN EXTRACTION - TRACK 1 (SEMANTIC ENTITIES)
     # ========================================================================
     
     def extract_relations_for_entity(
@@ -613,7 +642,10 @@ class RAKGRelationExtractor:
         all_chunks: List[Dict]
     ) -> Dict:
         """
-        Extract relations for a single entity.
+        Extract relations for a single semantic entity (Track 1).
+        
+        Uses multi-chunk MMR retrieval with optional second/third rounds
+        if context is semantically diverse.
         
         Returns:
             Dict with keys: relations, num_batches, chunks_used, strategy
@@ -629,7 +661,12 @@ class RAKGRelationExtractor:
         if strategy == 'skip':
             return {'relations': [], 'num_batches': 0, 'chunks_used': 0, 'strategy': 'skip'}
         
-        # Get appropriate co-occurrence matrix
+        # Academic entities should use chunk-based extraction (Track 2)
+        if strategy == 'academic':
+            logger.debug(f"  Skipping - academic entities use chunk-based extraction")
+            return {'relations': [], 'num_batches': 0, 'chunks_used': 0, 'strategy': 'academic_skip'}
+        
+        # Get co-occurrence matrix (semantic track)
         cooccurrence = self._get_cooccurrence_matrix(strategy)
         
         # Gather and select chunks
@@ -638,25 +675,17 @@ class RAKGRelationExtractor:
             logger.warning(f"  No candidates for {entity_name}")
             return {'relations': [], 'num_batches': 0, 'chunks_used': 0, 'strategy': strategy}
         
-        selected_chunks = self.two_stage_mmr_select(entity, candidates, cooccurrence)
-        
-        # Check for second round
-        second_round_chunks = []
-        if strategy == 'semantic':
-            should_second, distance = self._should_do_second_round(entity, selected_chunks)
-            if should_second:
-                logger.debug(f"  Second round triggered (distance: {distance:.3f})")
-                selected_ids = {get_chunk_id(c) for c in selected_chunks}
-                remaining = [c for c in candidates if get_chunk_id(c) not in selected_ids]
-                if remaining:
-                    second_round_chunks = self.two_stage_mmr_select(entity, remaining, cooccurrence)
-        
-        # Extract relations
+        # Track used chunk IDs across all rounds
+        used_chunk_ids = set()
         all_relations = []
+        num_batches = 0
         
-        # Batch 1
+        # --- Batch 1 ---
+        selected_chunks = self.two_stage_mmr_select(entity, candidates, cooccurrence)
+        used_chunk_ids.update(get_chunk_id(c) for c in selected_chunks)
+        
         detected_entities = self._get_detected_entities_from_chunks(
-            selected_chunks, entity_id, cooccurrence
+            selected_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
         )
         valid_ids = {e['entity_id'] for e in detected_entities}
         valid_ids.add(entity_id)
@@ -665,26 +694,59 @@ class RAKGRelationExtractor:
         prompt = build_relation_prompt(entity, selected_chunks, detected_entities, strategy)
         
         if self.debug_mode:
+            logger.debug(f"  Batch 1: {len(selected_chunks)} chunks, {len(detected_entities)} detected entities")
             logger.debug(f"  Prompt length: {len(prompt)} chars")
         
         response = self._call_llm(prompt)
-        batch1_relations = self._parse_relations_response(response, valid_ids, entity_id, chunk_ids)
-        all_relations.extend(batch1_relations)
+        batch_relations = self._parse_relations_response(response, valid_ids, entity_id, chunk_ids)
+        all_relations.extend(batch_relations)
+        num_batches = 1
         
-        # Batch 2 (if triggered)
-        if second_round_chunks:
-            detected_entities_2 = self._get_detected_entities_from_chunks(
-                second_round_chunks, entity_id, cooccurrence
-            )
-            valid_ids_2 = {e['entity_id'] for e in detected_entities_2}
-            valid_ids_2.add(entity_id)
-            
-            chunk_ids_2 = [get_chunk_id(c) for c in second_round_chunks]
-            prompt_2 = build_relation_prompt(entity, second_round_chunks, detected_entities_2, strategy)
-            
-            response_2 = self._call_llm(prompt_2)
-            batch2_relations = self._parse_relations_response(response_2, valid_ids_2, entity_id, chunk_ids_2)
-            all_relations.extend(batch2_relations)
+        # --- Batch 2 (if triggered) ---
+        should_second, distance = self._should_do_second_round(entity, selected_chunks)
+        if should_second:
+            remaining = [c for c in candidates if get_chunk_id(c) not in used_chunk_ids]
+            if remaining:
+                logger.debug(f"  Second round triggered (distance: {distance:.3f})")
+                second_chunks = self.two_stage_mmr_select(entity, remaining, cooccurrence)
+                used_chunk_ids.update(get_chunk_id(c) for c in second_chunks)
+                
+                detected_2 = self._get_detected_entities_from_chunks(
+                    second_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                )
+                valid_ids_2 = {e['entity_id'] for e in detected_2}
+                valid_ids_2.add(entity_id)
+                
+                chunk_ids_2 = [get_chunk_id(c) for c in second_chunks]
+                prompt_2 = build_relation_prompt(entity, second_chunks, detected_2, strategy)
+                
+                response_2 = self._call_llm(prompt_2)
+                batch_relations_2 = self._parse_relations_response(response_2, valid_ids_2, entity_id, chunk_ids_2)
+                all_relations.extend(batch_relations_2)
+                num_batches = 2
+                
+                # --- Batch 3 (if still diverse) ---
+                should_third, distance_3 = self._should_do_second_round(entity, second_chunks)
+                if should_third and distance_3 > DEFAULT_THIRD_ROUND_THRESHOLD:
+                    remaining_3 = [c for c in candidates if get_chunk_id(c) not in used_chunk_ids]
+                    if remaining_3:
+                        logger.debug(f"  Third round triggered (distance: {distance_3:.3f})")
+                        third_chunks = self.two_stage_mmr_select(entity, remaining_3, cooccurrence)
+                        used_chunk_ids.update(get_chunk_id(c) for c in third_chunks)
+                        
+                        detected_3 = self._get_detected_entities_from_chunks(
+                            third_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                        )
+                        valid_ids_3 = {e['entity_id'] for e in detected_3}
+                        valid_ids_3.add(entity_id)
+                        
+                        chunk_ids_3 = [get_chunk_id(c) for c in third_chunks]
+                        prompt_3 = build_relation_prompt(entity, third_chunks, detected_3, strategy)
+                        
+                        response_3 = self._call_llm(prompt_3)
+                        batch_relations_3 = self._parse_relations_response(response_3, valid_ids_3, entity_id, chunk_ids_3)
+                        all_relations.extend(batch_relations_3)
+                        num_batches = 3
         
         # Deduplicate
         seen = set()
@@ -696,8 +758,7 @@ class RAKGRelationExtractor:
                 rel['extraction_strategy'] = strategy
                 deduplicated.append(rel)
         
-        num_batches = 2 if second_round_chunks else 1
-        total_chunks = len(selected_chunks) + len(second_round_chunks)
+        total_chunks = len(used_chunk_ids)
         
         logger.debug(f"  Extracted {len(deduplicated)} relations ({num_batches} batches, {total_chunks} chunks)")
         
@@ -707,3 +768,75 @@ class RAKGRelationExtractor:
             'chunks_used': total_chunks,
             'strategy': strategy
         }
+    
+    # ========================================================================
+    # TRACK 2: CITATION CHUNK-BASED EXTRACTION
+    # ========================================================================
+    
+    def extract_citation_relations_for_chunk(
+        self,
+        chunk: Dict,
+        citations_in_chunk: List[Dict],
+        concepts_in_chunk: List[Dict]
+    ) -> List[Dict]:
+        """
+        Extract 'discusses' relations for citations in a single chunk (Track 2).
+        
+        Args:
+            chunk: Single chunk dict
+            citations_in_chunk: Citation entities found in this chunk
+            concepts_in_chunk: Concept entities found in this chunk
+        
+        Returns:
+            List of relation dicts
+        """
+        if not citations_in_chunk or not concepts_in_chunk:
+            return []
+        
+        chunk_id = get_chunk_id(chunk)
+        chunk_text = chunk.get('text', '')
+        
+        all_relations = []
+        
+        for citation in citations_in_chunk:
+            citation_id = citation.get('entity_id', '')
+            citation_name = citation.get('name', 'Unknown')
+            
+            # Format detected concepts with IDs
+            detected_list = format_detected_entities_with_ids(concepts_in_chunk)
+            
+            # Build prompt
+            prompt = CITATION_DISCUSSES_PROMPT.format(
+                entity_id=citation_id,
+                entity_name=citation_name,
+                detected_entities_list=detected_list,
+                chunk_text=chunk_text,
+                chunk_id=chunk_id
+            )
+            
+            if self.debug_mode:
+                logger.debug(f"  Citation prompt: {len(prompt)} chars for {citation_name}")
+            
+            # Call LLM
+            try:
+                response = self._call_llm(prompt)
+                
+                # Parse response
+                valid_ids = {c['entity_id'] for c in concepts_in_chunk}
+                valid_ids.add(citation_id)
+                
+                relations = self._parse_relations_response(
+                    response, valid_ids, citation_id, [chunk_id]
+                )
+                
+                # Force predicate to 'discusses' for consistency
+                for rel in relations:
+                    rel['predicate'] = 'discusses'
+                    rel['extraction_strategy'] = 'citation'
+                
+                all_relations.extend(relations)
+                
+            except Exception as e:
+                logger.warning(f"  Citation extraction failed for {citation_name}: {e}")
+        
+        return all_relations

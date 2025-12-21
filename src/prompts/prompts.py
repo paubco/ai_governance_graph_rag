@@ -132,53 +132,47 @@ Answer YES or NO:"""
 
 
 # ============================================================================
-# PHASE 1D: RELATION EXTRACTION (v2.1 - ID-constrained)
+# PHASE 1D: RELATION EXTRACTION (v1.2 - ID-constrained)
 # ============================================================================
 
+# Track 1: Semantic entities - OpenIE with multi-chunk context
 RELATION_EXTRACTION_PROMPT = """Extract relationships for the target entity.
 
-TARGET ENTITY:
-- ID: {entity_id}
-- Name: {entity_name} ({entity_type})
-- Description: {entity_description}
+TARGET: {entity_id}: {entity_name} ({entity_type})
+Description: {entity_description}
 
-DETECTED ENTITIES IN CONTEXT (use these IDs in your output):
+DETECTED ENTITIES (use these IDs):
 {detected_entities_list}
 
-TEXT CHUNKS:
+CHUNKS:
 {chunks_text}
 
 RULES:
-1. Subject MUST be the target entity ID: {entity_id}
-2. Object MUST be an ID from the detected entities list above
-3. Predicates: lowercase with underscores (regulates, applies_to, requires, enables, addresses)
-4. Only extract relations explicitly stated or strongly implied in the text
-5. Include chunk_ids where the relation evidence appears
+- Subject MUST be target: {entity_id}
+- Object MUST be an ID from detected entities
+- Predicates: lowercase_underscore (regulates, applies_to, requires, enables)
+- No duplicates, only explicit relations
+- Each unique relation appears ONCE
 
-Output JSON only:
+JSON only:
 {{"relations": [{{"subject_id": "{entity_id}", "predicate": "...", "object_id": "ent_...", "chunk_ids": ["..."]}}]}}"""
 
 
-METADATA_RELATION_EXTRACTION_PROMPT = """Extract what this citation discusses.
+# Track 2: Citation entities - chunk-based "discusses" extraction
+CITATION_DISCUSSES_PROMPT = """What does this citation discuss in this chunk?
 
-TARGET CITATION:
-- ID: {entity_id}
-- Name: {entity_name} ({entity_type})
+CITATION: {entity_id}: {entity_name}
 
-DETECTED CONCEPTS (use these IDs as objects):
+CONCEPTS IN CHUNK (use these IDs as objects):
 {detected_entities_list}
 
-TEXT CHUNKS:
-{chunks_text}
+CHUNK:
+{chunk_text}
 
-RULES:
-1. Subject MUST be: {entity_id}
-2. Predicate MUST be: "discusses"
-3. Object MUST be an ID from detected concepts above
-4. Only extract topics the citation actually discusses in this context
+Output only concepts the citation explicitly discusses or supports in this context.
 
-Output JSON only:
-{{"relations": [{{"subject_id": "{entity_id}", "predicate": "discusses", "object_id": "ent_...", "chunk_ids": ["..."]}}]}}"""
+JSON only:
+{{"relations": [{{"subject_id": "{entity_id}", "predicate": "discusses", "object_id": "ent_...", "chunk_ids": ["{chunk_id}"]}}]}}"""
 
 
 # ============================================================================

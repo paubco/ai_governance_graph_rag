@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Preflight test for Phase 1D relation extraction (v2.0).
+Preflight test for Phase 1D relation extraction (v1.2).
 
 Tests extraction on 10 hand-picked entities covering edge cases before full run.
 Validates:
@@ -216,7 +216,7 @@ def run_preflight_test(verbose: bool = False) -> bool:
         num_chunks=6,
         mmr_lambda=0.65,
         semantic_threshold=0.85,
-        max_tokens=16000,
+        max_tokens=8000,
         second_round_threshold=0.25,
         entity_lookup_file=str(lookup_file),
         cooccurrence_semantic_file=str(cooccur_semantic),

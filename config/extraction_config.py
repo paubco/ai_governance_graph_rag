@@ -9,8 +9,8 @@ Created: 2025-12-18
 Modified: 2025-12-20
 
 References:
-    - ARCHITECTURE.md Â§ 3-4 (Phases 1-2)
-    - ARCHITECTURE.md Â§ 7.5 (Type normalization)
+    - ARCHITECTURE.md Ã‚Â§ 3-4 (Phases 1-2)
+    - ARCHITECTURE.md Ã‚Â§ 7.5 (Type normalization)
     - Phase 1B v2.0: Semantic + Metadata schema
 """
 
@@ -105,7 +105,7 @@ PREPROCESSING_CONFIG = {
         r'doi:\s*\S+',               # DOI references
         r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Emails
         r'Vol\.\s*\d+',              # Volume references
-        r'pp?\.\s*\d+[-â€“]\d+',       # Page ranges (p. 1-10, pp. 1-10)
+        r'pp?\.\s*\d+[-Ã¢â‚¬â€œ]\d+',       # Page ranges (p. 1-10, pp. 1-10)
     ],
 }
 
@@ -264,7 +264,7 @@ PRE_ENTITY_FILTER_CONFIG = {
     # Case-SENSITIVE patterns (preserves AI, ML, EU, G20, etc.)
     'blacklist_case_sensitive': [
         r'^\.+$',                    # ... or ..
-        r'^\u2026$',                 # Unicode ellipsis (…)
+        r'^\u2026$',                 # Unicode ellipsis (â€¦)
         r'^\d+%$',                   # 80%, 41%, 83%
         r'^[a-z]$',                  # Single lowercase letter (k, q)
         r'^[RP]\d+$',                # R12, P9
@@ -384,7 +384,7 @@ PRE_ENTITY_FILTER_CONFIG = {
         r'^records?$',
     ],
     
-    # DocumentSection type: Article 5, Section 3, Annex I — NOT figures/tables
+    # DocumentSection type: Article 5, Section 3, Annex I â€” NOT figures/tables
     'document_section_blacklist': [
         # PDF artifacts
         r'^\.+$',
@@ -456,31 +456,40 @@ DISAMBIGUATION_CONFIG = {
 
 
 # ============================================================================
-# PHASE 1D: RELATION EXTRACTION 
+# PHASE 1D: RELATION EXTRACTION (v1.2)
 # ============================================================================
 
 RELATION_EXTRACTION_CONFIG = {
     'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
     'temperature': 0.0,
-    'max_tokens': 16000,
+    'max_tokens': 8000,  # Increased for relation output
     
     # Corpus retrospective retrieval
-    'chunks_per_entity': 6,
-    'candidate_pool_size': 200,
-    'mmr_lambda': 0.65,
-    'semantic_threshold': 0.85,
-    'second_round_threshold': 0.25,
+    'chunks_per_entity': 6,          # Per batch (up to 3 batches possible)
+    'candidate_pool_size': 200,      # Initial pool before MMR
+    'mmr_lambda': 0.65,              # Balance relevance/diversity
+    'semantic_threshold': 0.85,      # For semantic neighbor chunks
+    
+    # Adaptive batching thresholds
+    'second_round_threshold': 0.25,  # Centroid distance trigger
+    'third_round_threshold': 0.30,   # Higher bar for third batch
+    
+    # Detected entity limits (prevents output bloat)
+    'max_detected_entities': 25,
+    'max_chars_per_chunk': 2500,     # Last-resort truncation
     
     # Two-track extraction
-    'semantic_track': True,
-    'citation_track': True,
+    'semantic_track': True,          # Track 1: OpenIE multi-chunk
+    'citation_track': True,          # Track 2: chunk-based discusses
     
     # Parallel processing
     'max_workers': 40,
-    'requests_per_minute': 2900,
     'checkpoint_frequency': 100,
+    'requests_per_minute': 2900,
 }
+
+
 # ============================================================================
 # PHASE 2A: SCOPUS ENRICHMENT
 # ============================================================================

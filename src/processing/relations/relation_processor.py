@@ -1,27 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Parallel relation extraction processor with checkpoint resume (v2.0).
+Parallel relation extraction processor with checkpoint resume (v1.2).
 
-Coordinates parallel extraction of relations from normalized entities using
-multithreaded processing with rate limiting and progress tracking.
+Coordinates parallel extraction of relations using two-track architecture:
+- Track 1 (Semantic): Entity-based, multi-chunk MMR (loops over entities)
+- Track 2 (Citation): Chunk-based, single chunk context (loops over chunks)
 
-v2.0 Changes:
+v1.2 Changes:
 - Uses entity_id throughout (no post-hoc name normalization)
-- Updated input paths to Phase 1C outputs
-- Loads both semantic and metadata entities
+- Separate processing methods for each track
+- Track 2 uses chunk-based loop with process_citation_track()
 
 Usage:
-    # Full extraction
+    # Full extraction (both tracks)
     python -m src.processing.relations.relation_processor
     
-    # Test run (100 entities)
-    python -m src.processing.relations.relation_processor --entities 100
+    # Semantic track only (100 entity test)
+    python -m src.processing.relations.relation_processor --track semantic --entities 100
+    
+    # Citation track only
+    python -m src.processing.relations.relation_processor --track citation
     
     # Resume from checkpoint
     python -m src.processing.relations.relation_processor --resume
-    
-    # Semantic track only
-    python -m src.processing.relations.relation_processor --track semantic
 """
 
 # Standard library
@@ -240,6 +241,122 @@ class ParallelRelationProcessor:
                     raise
         
         return None
+    
+    def process_citation_track(
+        self,
+        cooccurrence_concept: Dict[str, List[str]],
+        entity_lookup: Dict[str, Dict]
+    ):
+        """
+        Process Track 2: Citation chunk-based 'discusses' extraction.
+        
+        Loops over chunks (not entities). For each chunk with both
+        citations and concepts, extracts what each citation discusses.
+        
+        Args:
+            cooccurrence_concept: {chunk_id: [concept_entity_ids]}
+            entity_lookup: {entity_id: entity_dict}
+        """
+        from src.processing.relations.relation_extractor import CONCEPT_TYPES
+        
+        print("\n" + "=" * 80)
+        print("CITATION TRACK: CHUNK-BASED EXTRACTION")
+        print("=" * 80)
+        
+        # Build chunk → entities lookup
+        chunks_with_citations = []
+        
+        for chunk in self.all_chunks:
+            chunk_id = chunk.get('chunk_ids', [chunk.get('chunk_id', '')])[0]
+            if not chunk_id:
+                continue
+            
+            # Get entities in this chunk from cooccurrence
+            entity_ids = cooccurrence_concept.get(chunk_id, [])
+            if not entity_ids:
+                continue
+            
+            # Separate citations and concepts
+            citations = []
+            concepts = []
+            for eid in entity_ids:
+                if eid in entity_lookup:
+                    entity = entity_lookup[eid]
+                    if entity.get('type') == 'Citation':
+                        citations.append(entity)
+                    elif entity.get('type') in CONCEPT_TYPES:
+                        concepts.append(entity)
+            
+            if citations and concepts:
+                chunks_with_citations.append({
+                    'chunk': chunk,
+                    'chunk_id': chunk_id,
+                    'citations': citations,
+                    'concepts': concepts
+                })
+        
+        print(f"Chunks with citations+concepts: {len(chunks_with_citations)}")
+        print(f"Total citations to process: {sum(len(c['citations']) for c in chunks_with_citations)}")
+        print("=" * 80 + "\n")
+        
+        if not chunks_with_citations:
+            print("No chunks with both citations and concepts found.")
+            return
+        
+        # Process in parallel
+        all_relations = []
+        start_time = time.time()
+        
+        with tqdm(total=len(chunks_with_citations), desc="Processing chunks", unit="chunk") as pbar:
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._process_single_chunk_citations,
+                        item['chunk'],
+                        item['citations'],
+                        item['concepts']
+                    ): item
+                    for item in chunks_with_citations
+                }
+                
+                for future in as_completed(futures):
+                    try:
+                        relations = future.result()
+                        if relations:
+                            all_relations.extend(relations)
+                    except Exception as e:
+                        item = futures[future]
+                        logger.error(f"Error for chunk {item['chunk_id']}: {e}")
+                    finally:
+                        pbar.update(1)
+        
+        elapsed = time.time() - start_time
+        
+        # Save results
+        output_file = self.output_dir / "relations_discusses.jsonl"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            for rel in all_relations:
+                f.write(json.dumps(rel, ensure_ascii=False) + '\n')
+        
+        print("\n" + "=" * 80)
+        print("CITATION TRACK COMPLETE")
+        print("=" * 80)
+        print(f"Relations extracted: {len(all_relations)}")
+        print(f"Elapsed: {elapsed/60:.1f}m")
+        print(f"Output: {output_file}")
+        print("=" * 80 + "\n")
+    
+    def _process_single_chunk_citations(
+        self,
+        chunk: Dict,
+        citations: List[Dict],
+        concepts: List[Dict]
+    ) -> List[Dict]:
+        """Process citations in a single chunk."""
+        self.rate_limiter.acquire()
+        return self.extractor.extract_citation_relations_for_chunk(
+            chunk, citations, concepts
+        )
 
 
 # ============================================================================
@@ -325,7 +442,7 @@ def validate_prerequisites() -> bool:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Phase 1D: Parallel relation extraction (v2.0)'
+        description='Phase 1D: Parallel relation extraction (v1.2)'
     )
     parser.add_argument('--workers', type=int, default=40)
     parser.add_argument('--resume', action='store_true')
@@ -344,21 +461,26 @@ def main():
     config = RELATION_EXTRACTION_CONFIG.copy()
     
     print("\n" + "=" * 80)
-    print("PHASE 1D: RELATION EXTRACTION (v2.0)")
+    print("PHASE 1D: RELATION EXTRACTION (v1.2)")
     print("=" * 80)
     print(f"Track: {args.track} | Workers: {args.workers} | Limit: {args.entities or 'full'}")
     print("=" * 80 + "\n")
     
     try:
-        entities = load_entities(args.track)
         chunks = load_chunks()
-        
-        if not entities or not chunks:
+        if not chunks:
             return 1
         
-        if args.entities:
-            step = max(1, len(entities) // args.entities)
-            entities = entities[::step][:args.entities]
+        # Load entity lookup and cooccurrence for both tracks
+        entity_lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
+        cooccurrence_semantic_file = PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"
+        cooccurrence_concept_file = PROJECT_ROOT / "data/interim/entities/cooccurrence_concept.json"
+        
+        with open(entity_lookup_file, 'r', encoding='utf-8') as f:
+            entity_lookup = json.load(f)
+        
+        with open(cooccurrence_concept_file, 'r', encoding='utf-8') as f:
+            cooccurrence_concept = json.load(f)
         
         extractor = RAKGRelationExtractor(
             model_name=config['model_name'],
@@ -367,9 +489,9 @@ def main():
             semantic_threshold=config.get('semantic_threshold', 0.85),
             max_tokens=config.get('max_tokens', 16000),
             second_round_threshold=config.get('second_round_threshold', 0.25),
-            entity_lookup_file=str(PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"),
-            cooccurrence_semantic_file=str(PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"),
-            cooccurrence_concept_file=str(PROJECT_ROOT / "data/interim/entities/cooccurrence_concept.json"),
+            entity_lookup_file=str(entity_lookup_file),
+            cooccurrence_semantic_file=str(cooccurrence_semantic_file),
+            cooccurrence_concept_file=str(cooccurrence_concept_file),
             debug_mode=args.debug
         )
         
@@ -381,14 +503,40 @@ def main():
             rate_limit_rpm=config.get('requests_per_minute', 2900),
         )
         
-        estimate = processor.estimate_cost_and_time(len(entities))
-        print("ESTIMATE:", estimate)
+        # Track 1: Semantic entities (entity-based, multi-chunk)
+        if args.track in ('semantic', 'all'):
+            entities = load_entities('semantic')
+            
+            if entities:
+                if args.entities:
+                    step = max(1, len(entities) // args.entities)
+                    entities = entities[::step][:args.entities]
+                
+                estimate = processor.estimate_cost_and_time(len(entities))
+                print("SEMANTIC TRACK ESTIMATE:", estimate)
+                
+                if not args.resume and args.entities is None:
+                    if input("Proceed with semantic track? [y/N]: ").lower() != 'y':
+                        print("Semantic track skipped")
+                    else:
+                        processor.process_all_entities(entities)
+                else:
+                    processor.process_all_entities(entities)
         
-        if not args.resume and args.entities is None:
-            if input("Proceed? [y/N]: ").lower() != 'y':
-                return 0
+        # Track 2: Citation entities (chunk-based, single chunk)
+        if args.track in ('citation', 'all'):
+            print("\n" + "-" * 80)
+            print("Starting citation track...")
+            print("-" * 80 + "\n")
+            
+            if not args.resume:
+                if input("Proceed with citation track? [y/N]: ").lower() != 'y':
+                    print("Citation track skipped")
+                else:
+                    processor.process_citation_track(cooccurrence_concept, entity_lookup)
+            else:
+                processor.process_citation_track(cooccurrence_concept, entity_lookup)
         
-        processor.process_all_entities(entities)
         return 0
     
     except KeyboardInterrupt:
