@@ -23,16 +23,9 @@ from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Dict, Set, List, Tuple
 
-# Project root - find it by looking for data/ directory
-def find_project_root():
-    current = Path(__file__).resolve().parent
-    for _ in range(10):  # Max 10 levels up
-        if (current / "data").exists():
-            return current
-        current = current.parent
-    return Path.cwd()
-
-PROJECT_ROOT = find_project_root()
+# Project root - standard pattern
+# src/processing/relations/validate_relations.py → 4 levels up
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 def load_cooccurrence_matrix(cooccurrence_file: Path) -> Dict[str, Set[str]]:
