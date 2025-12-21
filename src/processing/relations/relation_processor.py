@@ -462,6 +462,7 @@ def main():
     parser.add_argument('--entities', type=int, default=None)
     parser.add_argument('--track', choices=['semantic', 'citation', 'all'], default='all')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--validate', action='store_true', help='Run co-occurrence validation after extraction')
     
     args = parser.parse_args()
     
@@ -549,6 +550,34 @@ def main():
                     processor.process_citation_track(cooccurrence_concept, entity_lookup)
             else:
                 processor.process_citation_track(cooccurrence_concept, entity_lookup)
+        
+        # Post-extraction validation
+        if args.validate:
+            print("\n" + "=" * 80)
+            print("RUNNING CO-OCCURRENCE VALIDATION")
+            print("=" * 80 + "\n")
+            
+            from src.processing.relations.validate_relations import (
+                load_entity_chunks, validate_nested_relations, 
+                validate_flat_relations, print_stats
+            )
+            
+            entity_chunks = load_entity_chunks(entity_lookup_file)
+            print(f"Loaded {len(entity_chunks):,} entity chunk mappings")
+            
+            relations_dir = PROJECT_ROOT / "data/processed/relations"
+            semantic_file = relations_dir / "relations_output.jsonl"
+            citation_file = relations_dir / "relations_discusses.jsonl"
+            
+            if semantic_file.exists():
+                output = semantic_file.with_name('relations_semantic_validated.jsonl')
+                stats = validate_nested_relations(semantic_file, entity_chunks, output)
+                print_stats(stats, "SEMANTIC TRACK")
+            
+            if citation_file.exists():
+                output = citation_file.with_name('relations_discusses_validated.jsonl')
+                stats = validate_flat_relations(citation_file, entity_chunks, output)
+                print_stats(stats, "CITATION TRACK")
         
         return 0
     
