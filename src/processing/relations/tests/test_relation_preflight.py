@@ -154,7 +154,7 @@ def run_preflight_test(verbose: bool = False) -> bool:
     # File paths
     semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic.jsonl"
     metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata.jsonl"
-    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.json"
+    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
     lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
     cooccur_semantic = PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"
     cooccur_concept = PROJECT_ROOT / "data/interim/entities/cooccurrence_concept.json"
@@ -163,7 +163,7 @@ def run_preflight_test(verbose: bool = False) -> bool:
     missing = []
     for name, path in [
         ("entities_semantic.jsonl", semantic_file),
-        ("chunks_embedded.json", chunks_file),
+        ("chunks_embedded.jsonl", chunks_file),
         ("entity_id_lookup.json", lookup_file),
         ("cooccurrence_semantic.json", cooccur_semantic),
     ]:
@@ -189,11 +189,13 @@ def run_preflight_test(verbose: bool = False) -> bool:
         print(f"      - {e['name'][:40]:<40} [{e['type']}] ({chunk_count} chunks)")
     print()
     
-    # Load chunks
+    # Load chunks (JSONL format)
     print("[2] Loading chunks...")
+    chunks = []
     with open(chunks_file, 'r', encoding='utf-8') as f:
-        chunks_data = json.load(f)
-    chunks = list(chunks_data.values()) if isinstance(chunks_data, dict) else chunks_data
+        for line in f:
+            if line.strip():
+                chunks.append(json.loads(line))
     print(f"    Loaded {len(chunks)} chunks")
     print()
     
