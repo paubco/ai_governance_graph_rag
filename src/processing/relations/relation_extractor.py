@@ -130,13 +130,13 @@ def batch_cosine_similarity(query_vec: np.ndarray, vectors: np.ndarray) -> np.nd
 # PROMPT HELPERS
 # ============================================================================
 
-def format_chunks_for_prompt(chunks: List[Dict], max_chars_per_chunk: int = 2000) -> str:
-    """Format chunks for relation extraction prompt with truncation."""
+def format_chunks_for_prompt(chunks: List[Dict], max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK) -> str:
+    """Format chunks for relation extraction prompt with truncation as fallback."""
     formatted = []
     for chunk in chunks:
         chunk_id = get_chunk_id(chunk) or 'unknown'
         text = chunk.get('text', '')
-        # Truncate long chunks
+        # Truncate long chunks (fallback - adaptive fitting should prevent this)
         if len(text) > max_chars_per_chunk:
             text = text[:max_chars_per_chunk] + "... [truncated]"
         formatted.append(f"--- Chunk ID: {chunk_id} ---\n{text}")
@@ -505,6 +505,74 @@ class RAKGRelationExtractor:
         return distance > self.second_round_threshold, distance
     
     # ========================================================================
+    # ADAPTIVE CHUNK FITTING
+    # ========================================================================
+    
+    def fit_chunks_to_context(
+        self,
+        mmr_selected_chunks: List[Dict],
+        detected_entities: List[Dict],
+        max_prompt_tokens: int = 6000
+    ) -> Tuple[List[Dict], int]:
+        """
+        Fit chunks into context window, adding one-by-one until budget exhausted.
+        
+        Token budget breakdown (for ~8K effective context):
+        - Prompt template: ~300 tokens
+        - Detected entities: ~20 tokens each
+        - Response headroom: ~1500 tokens (for output JSON)
+        - Chunks: remainder
+        
+        Args:
+            mmr_selected_chunks: Chunks pre-selected by MMR (ordered by relevance)
+            detected_entities: Entities to list in prompt
+            max_prompt_tokens: Target max prompt size (default 6000 leaves 2K for response)
+        
+        Returns:
+            (fitted_chunks, estimated_prompt_tokens)
+        """
+        # Fixed overhead
+        TEMPLATE_TOKENS = 300
+        TOKENS_PER_ENTITY = 20
+        CHARS_PER_TOKEN = 4  # Rough estimate for English
+        
+        entity_tokens = len(detected_entities) * TOKENS_PER_ENTITY
+        available_for_chunks = max_prompt_tokens - TEMPLATE_TOKENS - entity_tokens
+        
+        if available_for_chunks <= 0:
+            logger.warning(f"    No token budget for chunks! ({len(detected_entities)} entities)")
+            # Still return at least 1 chunk
+            return mmr_selected_chunks[:1], max_prompt_tokens
+        
+        fitted = []
+        total_chunk_tokens = 0
+        
+        for chunk in mmr_selected_chunks:
+            chunk_text = chunk.get('text', '')
+            chunk_tokens = len(chunk_text) // CHARS_PER_TOKEN
+            
+            if total_chunk_tokens + chunk_tokens <= available_for_chunks:
+                fitted.append(chunk)
+                total_chunk_tokens += chunk_tokens
+            else:
+                # Check if we can fit a truncated version
+                remaining_tokens = available_for_chunks - total_chunk_tokens
+                if remaining_tokens >= 200:  # Worth adding truncated chunk
+                    truncated_text = chunk_text[:remaining_tokens * CHARS_PER_TOKEN]
+                    truncated_chunk = chunk.copy()
+                    truncated_chunk['text'] = truncated_text + "... [truncated]"
+                    fitted.append(truncated_chunk)
+                    total_chunk_tokens += remaining_tokens
+                break
+        
+        estimated_total = TEMPLATE_TOKENS + entity_tokens + total_chunk_tokens
+        
+        logger.info(f"    Chunk fitting: {len(fitted)}/{len(mmr_selected_chunks)} chunks, "
+                   f"~{estimated_total} tokens (budget: {max_prompt_tokens})")
+        
+        return fitted, estimated_total
+    
+    # ========================================================================
     # ENTITY DETECTION
     # ========================================================================
     
@@ -563,8 +631,14 @@ class RAKGRelationExtractor:
     # LLM EXTRACTION
     # ========================================================================
     
-    def _call_llm(self, prompt: str) -> str:
-        """Call LLM and return response text."""
+    def _call_llm(self, prompt: str, entity_name: str = "unknown") -> str:
+        """Call LLM and return response text with detailed logging."""
+        # Estimate tokens (rough: 1 token ≈ 4 chars for English)
+        prompt_chars = len(prompt)
+        prompt_tokens_est = prompt_chars // 4
+        
+        logger.info(f"    LLM call: ~{prompt_tokens_est} prompt tokens ({prompt_chars} chars)")
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
@@ -572,10 +646,51 @@ class RAKGRelationExtractor:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            return response.choices[0].message.content
+            
+            content = response.choices[0].message.content or ""
+            finish_reason = response.choices[0].finish_reason
+            
+            # Log response details
+            response_chars = len(content)
+            logger.info(f"    Response: {response_chars} chars, finish_reason={finish_reason}")
+            
+            # Warn on potential issues
+            if not content:
+                logger.warning(f"    Empty response from LLM!")
+            elif finish_reason == "length":
+                logger.warning(f"    Response truncated (hit max_tokens={self.max_tokens})")
+            
+            # Debug mode: save prompt/response to disk
+            if self.debug_mode:
+                self._save_debug_files(entity_name, prompt, content, finish_reason)
+            
+            return content
+            
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
+    
+    def _save_debug_files(self, entity_name: str, prompt: str, response: str, finish_reason: str):
+        """Save prompt and response to debug directory."""
+        debug_dir = PROJECT_ROOT / "logs" / "phase1d_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Sanitize entity name for filename
+        safe_name = re.sub(r'[^\w\-]', '_', entity_name)[:50]
+        timestamp = time.strftime("%H%M%S")
+        
+        # Save prompt
+        prompt_file = debug_dir / f"{timestamp}_{safe_name}_prompt.txt"
+        with open(prompt_file, 'w', encoding='utf-8') as f:
+            f.write(prompt)
+        
+        # Save response
+        response_file = debug_dir / f"{timestamp}_{safe_name}_response.txt"
+        with open(response_file, 'w', encoding='utf-8') as f:
+            f.write(f"finish_reason: {finish_reason}\n")
+            f.write(f"length: {len(response)} chars\n")
+            f.write("-" * 40 + "\n")
+            f.write(response)
     
     def _parse_relations_response(
         self,
@@ -681,23 +796,34 @@ class RAKGRelationExtractor:
         num_batches = 0
         
         # --- Batch 1 ---
-        selected_chunks = self.two_stage_mmr_select(entity, candidates, cooccurrence)
+        mmr_chunks = self.two_stage_mmr_select(entity, candidates, cooccurrence)
+        
+        # Get detected entities first (needed for token budget calculation)
+        detected_entities = self._get_detected_entities_from_chunks(
+            mmr_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+        )
+        
+        # Adaptive chunk fitting based on context budget
+        selected_chunks, est_tokens = self.fit_chunks_to_context(
+            mmr_chunks, detected_entities, max_prompt_tokens=6000
+        )
         used_chunk_ids.update(get_chunk_id(c) for c in selected_chunks)
         
-        detected_entities = self._get_detected_entities_from_chunks(
-            selected_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
-        )
+        # Recalculate detected entities for fitted chunks only
+        if len(selected_chunks) < len(mmr_chunks):
+            detected_entities = self._get_detected_entities_from_chunks(
+                selected_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+            )
+        
         valid_ids = {e['entity_id'] for e in detected_entities}
         valid_ids.add(entity_id)
         
         chunk_ids = [get_chunk_id(c) for c in selected_chunks]
         prompt = build_relation_prompt(entity, selected_chunks, detected_entities, strategy)
         
-        if self.debug_mode:
-            logger.debug(f"  Batch 1: {len(selected_chunks)} chunks, {len(detected_entities)} detected entities")
-            logger.debug(f"  Prompt length: {len(prompt)} chars")
+        logger.info(f"  Batch 1: {len(selected_chunks)} chunks, {len(detected_entities)} entities")
         
-        response = self._call_llm(prompt)
+        response = self._call_llm(prompt, entity_name)
         batch_relations = self._parse_relations_response(response, valid_ids, entity_id, chunk_ids)
         all_relations.extend(batch_relations)
         num_batches = 1
@@ -707,20 +833,29 @@ class RAKGRelationExtractor:
         if should_second:
             remaining = [c for c in candidates if get_chunk_id(c) not in used_chunk_ids]
             if remaining:
-                logger.debug(f"  Second round triggered (distance: {distance:.3f})")
-                second_chunks = self.two_stage_mmr_select(entity, remaining, cooccurrence)
-                used_chunk_ids.update(get_chunk_id(c) for c in second_chunks)
+                logger.info(f"  Second round triggered (distance: {distance:.3f})")
+                mmr_chunks_2 = self.two_stage_mmr_select(entity, remaining, cooccurrence)
                 
                 detected_2 = self._get_detected_entities_from_chunks(
-                    second_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                    mmr_chunks_2, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
                 )
+                second_chunks, _ = self.fit_chunks_to_context(mmr_chunks_2, detected_2)
+                used_chunk_ids.update(get_chunk_id(c) for c in second_chunks)
+                
+                if len(second_chunks) < len(mmr_chunks_2):
+                    detected_2 = self._get_detected_entities_from_chunks(
+                        second_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                    )
+                
                 valid_ids_2 = {e['entity_id'] for e in detected_2}
                 valid_ids_2.add(entity_id)
                 
                 chunk_ids_2 = [get_chunk_id(c) for c in second_chunks]
                 prompt_2 = build_relation_prompt(entity, second_chunks, detected_2, strategy)
                 
-                response_2 = self._call_llm(prompt_2)
+                logger.info(f"  Batch 2: {len(second_chunks)} chunks, {len(detected_2)} entities")
+                
+                response_2 = self._call_llm(prompt_2, entity_name)
                 batch_relations_2 = self._parse_relations_response(response_2, valid_ids_2, entity_id, chunk_ids_2)
                 all_relations.extend(batch_relations_2)
                 num_batches = 2
@@ -730,20 +865,29 @@ class RAKGRelationExtractor:
                 if should_third and distance_3 > DEFAULT_THIRD_ROUND_THRESHOLD:
                     remaining_3 = [c for c in candidates if get_chunk_id(c) not in used_chunk_ids]
                     if remaining_3:
-                        logger.debug(f"  Third round triggered (distance: {distance_3:.3f})")
-                        third_chunks = self.two_stage_mmr_select(entity, remaining_3, cooccurrence)
-                        used_chunk_ids.update(get_chunk_id(c) for c in third_chunks)
+                        logger.info(f"  Third round triggered (distance: {distance_3:.3f})")
+                        mmr_chunks_3 = self.two_stage_mmr_select(entity, remaining_3, cooccurrence)
                         
                         detected_3 = self._get_detected_entities_from_chunks(
-                            third_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                            mmr_chunks_3, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
                         )
+                        third_chunks, _ = self.fit_chunks_to_context(mmr_chunks_3, detected_3)
+                        used_chunk_ids.update(get_chunk_id(c) for c in third_chunks)
+                        
+                        if len(third_chunks) < len(mmr_chunks_3):
+                            detected_3 = self._get_detected_entities_from_chunks(
+                                third_chunks, entity_id, cooccurrence, allowed_types=SEMANTIC_TYPES
+                            )
+                        
                         valid_ids_3 = {e['entity_id'] for e in detected_3}
                         valid_ids_3.add(entity_id)
                         
                         chunk_ids_3 = [get_chunk_id(c) for c in third_chunks]
                         prompt_3 = build_relation_prompt(entity, third_chunks, detected_3, strategy)
                         
-                        response_3 = self._call_llm(prompt_3)
+                        logger.info(f"  Batch 3: {len(third_chunks)} chunks, {len(detected_3)} entities")
+                        
+                        response_3 = self._call_llm(prompt_3, entity_name)
                         batch_relations_3 = self._parse_relations_response(response_3, valid_ids_3, entity_id, chunk_ids_3)
                         all_relations.extend(batch_relations_3)
                         num_batches = 3
@@ -819,7 +963,7 @@ class RAKGRelationExtractor:
             
             # Call LLM
             try:
-                response = self._call_llm(prompt)
+                response = self._call_llm(prompt, citation_name)
                 
                 # Parse response
                 valid_ids = {c['entity_id'] for c in concepts_in_chunk}
