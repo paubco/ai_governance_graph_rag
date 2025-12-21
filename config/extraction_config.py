@@ -445,7 +445,7 @@ DISAMBIGUATION_CONFIG = {
     # Cluster breaking (betweenness centrality)
     # Cuts high-betweenness edges (bridges between subcommunities) with low similarity
     'min_cluster_size': 5,           # Only analyze clusters >= this size
-    'betweenness_threshold': 0.3,    # Cut edges with betweenness > this
+    'betweenness_threshold': 0.25,   # Cut edges with betweenness > this (lowered from 0.3)
     'similarity_ceiling': 0.91,      # Only cut if similarity < this
     'hard_max_size': 20,             # Force-cut weakest edge if cluster exceeds this
     

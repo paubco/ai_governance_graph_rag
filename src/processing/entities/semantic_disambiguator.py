@@ -765,7 +765,7 @@ def break_large_clusters(merge_pairs: List[Dict],
     # Iteratively find and cut bridges
     removed_edges = []
     iterations = 0
-    max_iterations = 500
+    max_iterations = 1000
     
     while iterations < max_iterations:
         iterations += 1
