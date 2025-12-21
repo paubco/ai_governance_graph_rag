@@ -566,7 +566,7 @@ def main():
             print(f"Loaded {len(entity_chunks):,} entity chunk mappings")
             
             relations_dir = PROJECT_ROOT / "data/processed/relations"
-            semantic_file = relations_dir / "relations_output.jsonl"
+            semantic_file = relations_dir / "relations_semantic.jsonl"
             citation_file = relations_dir / "relations_discusses.jsonl"
             
             if semantic_file.exists():
