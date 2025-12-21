@@ -31,7 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from tqdm import tqdm
 
 # Foundation imports
-from src.foundation.io import read_jsonl, write_jsonl
+from src.utils.io import read_jsonl, write_jsonl
 
 # Default config (can be overridden)
 DEFAULT_ENRICHMENT_CONFIG = {
@@ -53,7 +53,7 @@ DEFAULT_ENRICHMENT_CONFIG = {
 
 # Try to import from config, fall back to defaults
 try:
-    from src.config.extraction import ENRICHMENT_CONFIG as _cfg
+    from extraction_config import ENRICHMENT_CONFIG as _cfg
     # Merge with defaults (config overrides defaults)
     ENRICHMENT_CONFIG = {**DEFAULT_ENRICHMENT_CONFIG, **_cfg}
 except ImportError:
@@ -405,7 +405,7 @@ class EnrichmentProcessor:
         for pub in tqdm(self.l1_publications, desc="PUBLISHED_IN"):
             journal_name = pub.get('source_title')
             if journal_name:
-                from src.foundation.id_generator import generate_journal_id
+                from src.utils.id_generator import generate_journal_id
                 journal_id = generate_journal_id(journal_name)
                 relations.append({
                     'relation_type': 'PUBLISHED_IN',
@@ -422,7 +422,7 @@ class EnrichmentProcessor:
             scopus_id = metadata.get('eid') or metadata.get('scopus_id')
             
             if scopus_id:
-                from src.foundation.id_generator import generate_publication_id
+                from src.utils.id_generator import generate_publication_id
                 pub_id = generate_publication_id(scopus_id, layer=1)
                 relations.append({
                     'relation_type': 'CONTAINS',
