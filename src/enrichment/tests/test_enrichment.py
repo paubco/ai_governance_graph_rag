@@ -277,7 +277,7 @@ def run_all_tests():
     results = {}
     
     results['imports'] = test_imports()
-    results['foundation'] = test_foundation_imports()
+    results['utils'] = test_utils_imports()
     results['id_generation'] = test_id_generation()
     results['scopus_parser'] = test_scopus_parser()
     results['citation_matcher'] = test_citation_matcher()
