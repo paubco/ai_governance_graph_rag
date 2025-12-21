@@ -354,14 +354,169 @@ def run_preflight_test(verbose: bool = False) -> bool:
     return passed
 
 
+def run_citation_preflight_test(verbose: bool = False) -> bool:
+    """
+    Test citation track (chunk-based) extraction on a few sample chunks.
+    
+    Track 2 loops over chunks, not entities.
+    """
+    print("\n" + "=" * 80)
+    print("CITATION TRACK PREFLIGHT TEST")
+    print("=" * 80 + "\n")
+    
+    # Load prerequisites
+    lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
+    cooccur_concept = PROJECT_ROOT / "data/interim/entities/cooccurrence_concept.json"
+    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
+    
+    for f in [lookup_file, cooccur_concept, chunks_file]:
+        if not f.exists():
+            print(f"MISSING: {f.name}")
+            return False
+    
+    print("[1] Loading data...")
+    
+    with open(lookup_file, 'r', encoding='utf-8') as f:
+        entity_lookup = json.load(f)
+    print(f"    Entity lookup: {len(entity_lookup)} entities")
+    
+    with open(cooccur_concept, 'r', encoding='utf-8') as f:
+        cooccurrence = json.load(f)
+    print(f"    Cooccurrence: {len(cooccurrence)} chunks")
+    
+    chunks = []
+    with open(chunks_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                chunks.append(json.loads(line))
+    print(f"    Chunks: {len(chunks)}")
+    
+    # Find chunks with both citations and concepts
+    from src.processing.relations.relation_extractor import CONCEPT_TYPES
+    
+    def get_chunk_id(chunk):
+        if 'chunk_id' in chunk:
+            return chunk['chunk_id']
+        elif 'chunk_ids' in chunk:
+            return chunk['chunk_ids'][0] if chunk['chunk_ids'] else ''
+        return ''
+    
+    sample_chunks = []
+    for chunk in chunks:
+        chunk_id = get_chunk_id(chunk)
+        if not chunk_id or chunk_id not in cooccurrence:
+            continue
+        
+        entity_ids = cooccurrence[chunk_id]
+        citations = []
+        concepts = []
+        
+        for eid in entity_ids:
+            if eid in entity_lookup:
+                entity = entity_lookup[eid]
+                if entity.get('type') == 'Citation':
+                    citations.append(entity)
+                elif entity.get('type') in CONCEPT_TYPES:
+                    concepts.append(entity)
+        
+        if citations and concepts:
+            sample_chunks.append({
+                'chunk': chunk,
+                'chunk_id': chunk_id,
+                'citations': citations,
+                'concepts': concepts
+            })
+        
+        if len(sample_chunks) >= 5:  # Test 5 chunks
+            break
+    
+    print(f"    Sample chunks with citations+concepts: {len(sample_chunks)}")
+    
+    if not sample_chunks:
+        print("    No chunks with both citations and concepts found!")
+        return False
+    
+    # Initialize extractor
+    print("\n[2] Initializing extractor...")
+    from src.processing.relations.relation_extractor import RAKGRelationExtractor
+    
+    extractor = RAKGRelationExtractor(
+        model_name='mistralai/Mistral-7B-Instruct-v0.3',
+        num_chunks=6,
+        max_tokens=8000,
+        entity_lookup_file=str(lookup_file),
+        cooccurrence_semantic_file=str(PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"),
+        cooccurrence_concept_file=str(cooccur_concept),
+        debug_mode=verbose
+    )
+    
+    # Test extraction
+    print("\n[3] Testing citation extraction...")
+    print("-" * 80)
+    
+    total_relations = 0
+    total_time = 0.0
+    
+    for i, item in enumerate(sample_chunks, 1):
+        chunk_id = item['chunk_id'][:30]
+        n_citations = len(item['citations'])
+        n_concepts = len(item['concepts'])
+        
+        print(f"  [{i}/{len(sample_chunks)}] Chunk {chunk_id}... "
+              f"({n_citations} citations, {n_concepts} concepts)", end=" ", flush=True)
+        
+        start = time.time()
+        try:
+            relations = extractor.extract_citation_relations_for_chunk(
+                item['chunk'],
+                item['citations'],
+                item['concepts']
+            )
+            elapsed = time.time() - start
+            total_time += elapsed
+            
+            total_relations += len(relations)
+            print(f"-> {len(relations)} relations, {elapsed:.1f}s")
+            
+            if verbose and relations:
+                for rel in relations[:3]:
+                    subj = item['citations'][0]['name'][:25]
+                    obj_name = entity_lookup.get(rel['object_id'], {}).get('name', rel['object_id'])[:25]
+                    print(f"        ({subj}, discusses, {obj_name})")
+        
+        except Exception as e:
+            print(f"ERROR: {e}")
+    
+    print("-" * 80)
+    print(f"\n[4] CITATION TRACK SUMMARY")
+    print(f"  Chunks tested: {len(sample_chunks)}")
+    print(f"  Total relations: {total_relations}")
+    print(f"  Time: {total_time:.1f}s")
+    
+    passed = total_relations > 0
+    print(f"\nCITATION PREFLIGHT: {'PASSED' if passed else 'FAILED'}")
+    print("=" * 80)
+    
+    return passed
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Phase 1D preflight test')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser.add_argument('--track', choices=['semantic', 'citation', 'all'], default='all',
+                       help='Which track to test')
     args = parser.parse_args()
     
-    success = run_preflight_test(verbose=args.verbose)
-    return 0 if success else 1
+    results = []
+    
+    if args.track in ('semantic', 'all'):
+        results.append(run_preflight_test(verbose=args.verbose))
+    
+    if args.track in ('citation', 'all'):
+        results.append(run_citation_preflight_test(verbose=args.verbose))
+    
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":

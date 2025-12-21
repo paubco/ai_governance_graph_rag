@@ -645,6 +645,7 @@ class RAKGRelationExtractor:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                response_format={"type": "json_object"},  # Enforce JSON output
             )
             
             content = response.choices[0].message.content or ""
@@ -692,6 +693,106 @@ class RAKGRelationExtractor:
             f.write("-" * 40 + "\n")
             f.write(response)
     
+    def _extract_json_from_response(self, response_text: str) -> str:
+        """
+        Extract JSON from response, handling preamble text and truncation.
+        
+        Strategies:
+        1. Find JSON start (first '{')
+        2. If truncated, find last complete relation object and close brackets
+        3. Handle markdown code blocks
+        """
+        if not response_text:
+            return ""
+        
+        text = response_text.strip()
+        
+        # Remove markdown code blocks
+        text = text.replace("```json", "").replace("```", "").strip()
+        
+        # Find JSON start - look for {"relations" or just {
+        json_start = text.find('{"relations"')
+        if json_start == -1:
+            json_start = text.find('{')
+        
+        if json_start == -1:
+            logger.warning("    No JSON object found in response")
+            return ""
+        
+        text = text[json_start:]
+        
+        # Try parsing as-is first
+        try:
+            json.loads(text)
+            return text
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to recover truncated JSON
+        # Find last complete relation object: ends with }
+        # Pattern: {...}, {...}, {...  <- truncated
+        
+        # Find the last complete "}" that closes a relation
+        last_complete = -1
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        
+        for i, char in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 1:  # Just closed a relation object (inside relations array)
+                    last_complete = i
+        
+        if last_complete > 0:
+            # Cut at last complete relation and close the structure
+            recovered = text[:last_complete + 1] + "]}"
+            try:
+                json.loads(recovered)
+                logger.info(f"    Recovered truncated JSON (cut at char {last_complete})")
+                return recovered
+            except json.JSONDecodeError:
+                pass
+        
+        # Last resort: try to find and extract just the relations array
+        relations_match = re.search(r'"relations"\s*:\s*\[', text)
+        if relations_match:
+            # Find matching closing bracket
+            start = relations_match.end() - 1  # Position of '['
+            bracket_count = 0
+            for i in range(start, len(text)):
+                if text[i] == '[':
+                    bracket_count += 1
+                elif text[i] == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        # Found complete array
+                        array_text = text[start:i+1]
+                        recovered = '{"relations": ' + array_text + '}'
+                        try:
+                            json.loads(recovered)
+                            return recovered
+                        except:
+                            pass
+                        break
+        
+        logger.warning("    Could not recover JSON structure")
+        return ""
+
     def _parse_relations_response(
         self,
         response_text: str,
@@ -702,16 +803,18 @@ class RAKGRelationExtractor:
         """
         Parse LLM response and validate entity IDs.
         
-        v2.0: Validates that subject_id and object_id exist.
+        v1.2: Robust JSON extraction with recovery for truncated/malformed responses.
         """
-        # Clean response
-        cleaned = response_text.strip()
-        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+        # Extract JSON with recovery
+        cleaned = self._extract_json_from_response(response_text)
+        
+        if not cleaned:
+            return []
         
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse error: {e}")
+            logger.warning(f"JSON parse error after recovery: {e}")
             return []
         
         relations = data.get('relations', [])
