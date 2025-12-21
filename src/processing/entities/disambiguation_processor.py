@@ -50,7 +50,8 @@ from src.processing.entities.pre_entity_filter import (
 )
 from src.processing.entities.semantic_disambiguator import (
     ExactDeduplicator, FAISSBlocker, TieredThresholdFilter, SameJudge,
-    apply_merges, route_by_type, build_entity_map, METADATA_TYPES
+    apply_merges, route_by_type, build_entity_map, METADATA_TYPES,
+    break_large_clusters
 )
 from src.processing.entities.metadata_disambiguator import (
     MetadataDisambiguator, build_chunk_entity_map
@@ -107,12 +108,18 @@ CONFIG = {
     
     # Tiered thresholds (tuned from manual review)
     'auto_merge_threshold': 0.98,   # 0.96-0.98 has false positives
-    'auto_reject_threshold': 0.88,  # 0.85-0.88 is ~95% DIFF
+    'auto_reject_threshold': 0.885, # Raised: 0.880-0.885 has bad bridges
     
     # LLM SameJudge
     'llm_model': 'mistralai/Mistral-7B-Instruct-v0.3',
     'max_llm_pairs': 25000,  # ~21K expected, buffer for safety
     'max_workers': 8,        # Parallel workers for LLM calls
+    
+    # Cluster breaking (statistical outlier detection)
+    'min_cluster_size': 5,   # Only analyze clusters >= this size
+    'z_threshold': 2.0,      # Cut edges > N std devs below cluster mean
+    'hard_max_size': 50,     # Force-cut if cluster exceeds this
+    'floor_similarity': 0.89, # Never cut edges above this
 }
 
 
@@ -374,8 +381,19 @@ class DisambiguationProcessor:
             
             # Apply only auto-merges (high confidence), no LLM
             if filtered['merged']:
-                final_entities, aliases = apply_merges(deduped, filtered['merged'], aliases)
-                self.stats['auto_merges'] = len(filtered['merged'])
+                # Break oversized clusters by removing statistical outliers
+                filtered_merges = break_large_clusters(
+                    filtered['merged'],
+                    min_cluster_size=self.config['min_cluster_size'],
+                    z_threshold=self.config['z_threshold'],
+                    hard_max_size=self.config['hard_max_size'],
+                    floor_similarity=self.config['floor_similarity']
+                )
+                final_entities, aliases = apply_merges(
+                    deduped, filtered_merges, aliases,
+                    max_cluster_size=self.config['hard_max_size']
+                )
+                self.stats['auto_merges'] = len(filtered_merges)
             else:
                 final_entities = deduped
             
@@ -409,8 +427,21 @@ class DisambiguationProcessor:
         # Apply all merges
         all_merges = filtered['merged'] + llm_approved
         
+        # Break oversized clusters by removing statistical outliers
         if all_merges:
-            final_entities, aliases = apply_merges(deduped, all_merges, aliases)
+            all_merges = break_large_clusters(
+                all_merges,
+                min_cluster_size=self.config['min_cluster_size'],
+                z_threshold=self.config['z_threshold'],
+                hard_max_size=self.config['hard_max_size'],
+                floor_similarity=self.config['floor_similarity']
+            )
+        
+        if all_merges:
+            final_entities, aliases = apply_merges(
+                deduped, all_merges, aliases,
+                max_cluster_size=self.config['hard_max_size']
+            )
         else:
             final_entities = deduped
         

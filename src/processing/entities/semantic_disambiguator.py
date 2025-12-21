@@ -699,12 +699,179 @@ class SameJudge:
 
 
 # =============================================================================
+# CLUSTER BREAKING - STATISTICAL OUTLIER DETECTION
+# =============================================================================
+
+def break_large_clusters(merge_pairs: List[Dict],
+                        min_cluster_size: int = 5,
+                        z_threshold: float = 2.0,
+                        hard_max_size: int = 50,
+                        floor_similarity: float = 0.89) -> List[Dict]:
+    """
+    Remove weak bridge edges using statistical outlier detection.
+    
+    Instead of arbitrary size limits, uses z-scores to find edges that are
+    statistical outliers within their cluster. An edge with similarity 0.88
+    in a cluster averaging 0.95 is suspicious; the same edge in a cluster
+    averaging 0.89 is normal.
+    
+    Args:
+        merge_pairs: List of approved merge pairs
+        min_cluster_size: Only analyze clusters larger than this
+        z_threshold: Cut edges more than this many std devs below cluster mean
+        hard_max_size: Force-cut weakest edge if cluster exceeds this (fallback)
+        floor_similarity: Never cut edges above this regardless of z-score
+        
+    Returns:
+        Filtered merge_pairs with outlier bridges removed
+    """
+    import networkx as nx
+    import numpy as np
+    
+    if not merge_pairs:
+        return merge_pairs
+    
+    logger.info(f"Analyzing clusters for outlier bridges (z>{z_threshold}, min_size={min_cluster_size})...")
+    
+    # Build graph from merge pairs
+    G = nx.Graph()
+    
+    for pair in merge_pairs:
+        e1 = tuple(pair['entity1_key']) if isinstance(pair['entity1_key'], list) else pair['entity1_key']
+        e2 = tuple(pair['entity2_key']) if isinstance(pair['entity2_key'], list) else pair['entity2_key']
+        sim = pair.get('similarity', 0.9)
+        G.add_edge(e1, e2, similarity=sim)
+    
+    def find_outlier_bridges(component):
+        """Find edges that are statistical outliers within a cluster."""
+        subgraph = G.subgraph(component)
+        edges_data = [(u, v, d['similarity']) for u, v, d in subgraph.edges(data=True)]
+        
+        if len(edges_data) < 3:  # Need enough edges for statistics
+            return []
+        
+        similarities = [e[2] for e in edges_data]
+        mean = np.mean(similarities)
+        std = np.std(similarities)
+        
+        if std < 0.005:  # Very homogeneous cluster, no outliers
+            return []
+        
+        outliers = []
+        for u, v, sim in edges_data:
+            z_score = (mean - sim) / std  # How many stds below mean
+            # Only flag as outlier if z-score exceeds threshold AND similarity below floor
+            if z_score > z_threshold and sim < floor_similarity:
+                outliers.append((u, v, sim, z_score, mean, std))
+        
+        return sorted(outliers, key=lambda x: -x[3])  # Worst outliers first
+    
+    # Iteratively find and cut outliers
+    removed_edges = []
+    iterations = 0
+    max_iterations = 500
+    
+    while iterations < max_iterations:
+        iterations += 1
+        components = list(nx.connected_components(G))
+        
+        # Find clusters to analyze
+        large_clusters = [c for c in components if len(c) >= min_cluster_size]
+        
+        if not large_clusters:
+            break
+        
+        # Find outliers in each cluster
+        all_outliers = []
+        for component in large_clusters:
+            outliers = find_outlier_bridges(component)
+            for outlier in outliers:
+                all_outliers.append((component, outlier))
+        
+        # Also check for hard size limit violations
+        huge_clusters = [c for c in components if len(c) > hard_max_size]
+        
+        if not all_outliers and not huge_clusters:
+            break
+        
+        # Cut the worst outlier
+        if all_outliers:
+            # Sort by z-score descending, cut worst
+            all_outliers.sort(key=lambda x: -x[1][3])
+            component, (u, v, sim, z_score, mean, std) = all_outliers[0]
+            
+            G.remove_edge(u, v)
+            removed_edges.append({
+                'edge': (u, v),
+                'similarity': sim,
+                'z_score': z_score,
+                'cluster_mean': mean,
+                'cluster_std': std,
+                'cluster_size': len(component),
+                'reason': 'statistical_outlier'
+            })
+        elif huge_clusters:
+            # Fallback: cut weakest edge in huge cluster
+            worst_cluster = max(huge_clusters, key=len)
+            subgraph = G.subgraph(worst_cluster)
+            edges = [(u, v, d['similarity']) for u, v, d in subgraph.edges(data=True)]
+            weakest = min(edges, key=lambda x: x[2])
+            
+            G.remove_edge(weakest[0], weakest[1])
+            removed_edges.append({
+                'edge': (weakest[0], weakest[1]),
+                'similarity': weakest[2],
+                'cluster_size': len(worst_cluster),
+                'reason': 'hard_size_limit'
+            })
+    
+    # Report results
+    if removed_edges:
+        outlier_cuts = len([e for e in removed_edges if e.get('reason') == 'statistical_outlier'])
+        size_cuts = len([e for e in removed_edges if e.get('reason') == 'hard_size_limit'])
+        logger.info(f"  Removed {len(removed_edges)} bridges: {outlier_cuts} outliers, {size_cuts} size-limit")
+        
+        # Show sample of cuts
+        for edge in removed_edges[:5]:
+            e1 = edge['edge'][0][0] if isinstance(edge['edge'][0], tuple) else str(edge['edge'][0])
+            e2 = edge['edge'][1][0] if isinstance(edge['edge'][1], tuple) else str(edge['edge'][1])
+            if 'z_score' in edge:
+                logger.info(f"    Cut: {e1[:25]:<25} ↔ {e2[:25]:<25} "
+                          f"(sim={edge['similarity']:.3f}, z={edge['z_score']:.1f}, μ={edge['cluster_mean']:.3f})")
+            else:
+                logger.info(f"    Cut: {e1[:25]:<25} ↔ {e2[:25]:<25} "
+                          f"(sim={edge['similarity']:.3f}, size={edge['cluster_size']})")
+    
+    # Final cluster stats
+    components = list(nx.connected_components(G))
+    sizes = sorted([len(c) for c in components], reverse=True)
+    logger.info(f"  Final: {len(components)} clusters, max={sizes[0] if sizes else 0}, "
+               f">15: {len([s for s in sizes if s > 15])}")
+    
+    # Rebuild filtered pairs list
+    kept_edges = set(G.edges())
+    filtered_pairs = []
+    
+    for pair in merge_pairs:
+        e1 = tuple(pair['entity1_key']) if isinstance(pair['entity1_key'], list) else pair['entity1_key']
+        e2 = tuple(pair['entity2_key']) if isinstance(pair['entity2_key'], list) else pair['entity2_key']
+        
+        if (e1, e2) in kept_edges or (e2, e1) in kept_edges:
+            filtered_pairs.append(pair)
+    
+    logger.info(f"  Kept {len(filtered_pairs)}/{len(merge_pairs)} merge pairs")
+    
+    return filtered_pairs
+
+
+# =============================================================================
 # MERGE APPLICATION WITH ALIAS TRACKING
 # =============================================================================
 
 def apply_merges(entities: List[Dict], 
                 merged_pairs: List[Dict],
-                existing_aliases: Dict[str, List[str]] = None) -> Tuple[List[Dict], Dict[str, List[str]]]:
+                existing_aliases: Dict[str, List[str]] = None,
+                max_cluster_size: int = 20) -> Tuple[List[Dict], Dict[str, List[str]]]:
     """
     Apply merge decisions using Union-Find with alias tracking.
     
@@ -712,41 +879,60 @@ def apply_merges(entities: List[Dict],
         entities: List of entities
         merged_pairs: List of pair dicts to merge
         existing_aliases: Existing alias map to extend
+        max_cluster_size: Maximum entities per cluster (prevents cascade)
         
     Returns:
         (canonical_entities, updated_alias_map)
     """
-    logger.info(f"Applying {len(merged_pairs)} merges...")
+    logger.info(f"Applying {len(merged_pairs)} merges (max_cluster_size={max_cluster_size})...")
     
     aliases = dict(existing_aliases) if existing_aliases else {}
     
-    # Build Union-Find structure
+    # Build Union-Find structure with size tracking
     parent = {}
+    size = {}  # Track cluster sizes
     
     for entity in entities:
         key = get_entity_key(entity)
         parent[key] = key
+        size[key] = 1
     
     def find(x):
         x = normalize_key(x)
         if x not in parent:
             parent[x] = x
+            size[x] = 1
         if parent[x] != x:
             parent[x] = find(parent[x])
         return parent[x]
+    
+    def get_size(x):
+        return size.get(find(x), 1)
     
     def union(x, y):
         x = normalize_key(x)
         y = normalize_key(y)
         px, py = find(x), find(y)
         if px != py:
+            # Check if merge would exceed max cluster size
+            combined_size = get_size(px) + get_size(py)
+            if combined_size > max_cluster_size:
+                return False  # Reject merge
             parent[py] = px
+            size[px] = combined_size
+            return True
+        return True  # Already same cluster
     
-    # Union all merged pairs
+    # Union all merged pairs (with size limit)
+    rejected = 0
     for pair in merged_pairs:
         key1 = normalize_key(pair['entity1_key'])
         key2 = normalize_key(pair['entity2_key'])
-        union(key1, key2)
+        if not union(key1, key2):
+            rejected += 1
+    
+    if rejected > 0:
+        logger.info(f"  Rejected {rejected} merges due to cluster size limit")
     
     # Group entities by root
     groups = defaultdict(list)
