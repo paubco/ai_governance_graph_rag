@@ -282,16 +282,18 @@ def load_entities(track: str) -> List[Dict]:
 
 def load_chunks() -> List[Dict]:
     """Load embedded chunks."""
-    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.json"
+    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
     
     if not chunks_file.exists():
         logger.error(f"Chunks file not found: {chunks_file}")
         return []
     
+    chunks = []
     with open(chunks_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+        for line in f:
+            if line.strip():
+                chunks.append(json.loads(line))
     
-    chunks = list(data.values()) if isinstance(data, dict) else data
     logger.info(f"Loaded {len(chunks)} chunks")
     return chunks
 
@@ -300,7 +302,7 @@ def validate_prerequisites() -> bool:
     """Validate required input files exist."""
     required = [
         ("entities_semantic.jsonl", "data/processed/entities/entities_semantic.jsonl"),
-        ("chunks_embedded.json", "data/processed/chunks/chunks_embedded.json"),
+        ("chunks_embedded.jsonl", "data/processed/chunks/chunks_embedded.jsonl"),
         ("cooccurrence_semantic.json", "data/interim/entities/cooccurrence_semantic.json"),
         ("entity_id_lookup.json", "data/interim/entities/entity_id_lookup.json"),
     ]

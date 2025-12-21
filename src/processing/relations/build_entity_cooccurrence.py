@@ -128,17 +128,14 @@ def load_entities_jsonl(entities_file: Path) -> List[Dict]:
 
 
 def load_chunks(chunks_file: Path) -> List[Dict]:
-    """Load chunks from JSON file."""
+    """Load chunks from JSONL file."""
     logger.info(f"Loading chunks from {chunks_file}")
     
+    chunks = []
     with open(chunks_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    # Handle dict or list format
-    if isinstance(data, dict):
-        chunks = list(data.values())
-    else:
-        chunks = data
+        for line in f:
+            if line.strip():
+                chunks.append(json.loads(line))
     
     logger.info(f"✓ Loaded {len(chunks):,} chunks")
     return chunks
@@ -294,7 +291,7 @@ def main():
     # File paths
     semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic.jsonl"
     metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata.jsonl"
-    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.json"
+    chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
     
     output_dir = PROJECT_ROOT / "data/interim/entities"
     output_files = {
