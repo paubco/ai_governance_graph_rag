@@ -81,6 +81,19 @@ CONCEPT_TYPES = {
 
 
 # ============================================================================
+# CHUNK HELPERS
+# ============================================================================
+
+def get_chunk_id(chunk: Dict) -> str:
+    """Get chunk_id handling both chunk_id and chunk_ids formats."""
+    if 'chunk_id' in chunk:
+        return chunk['chunk_id']
+    elif 'chunk_ids' in chunk:
+        return chunk['chunk_ids'][0] if chunk['chunk_ids'] else ''
+    return ''
+
+
+# ============================================================================
 # VECTOR HELPERS
 # ============================================================================
 
@@ -109,7 +122,7 @@ def format_chunks_for_prompt(chunks: List[Dict]) -> str:
     """Format chunks for relation extraction prompt."""
     formatted = []
     for chunk in chunks:
-        chunk_id = chunk.get('chunk_id', 'unknown')
+        chunk_id = get_chunk_id(chunk) or 'unknown'
         text = chunk.get('text', '')
         formatted.append(f"--- Chunk ID: {chunk_id} ---\n{text}")
     return "\n\n".join(formatted)
@@ -341,7 +354,7 @@ class RAKGRelationExtractor:
         direct_chunk_ids = set(entity.get('chunk_ids', []))
         
         # Build chunk lookup
-        chunks_dict = {chunk['chunk_id']: chunk for chunk in all_chunks}
+        chunks_dict = {get_chunk_id(c): c for c in all_chunks if get_chunk_id(c)}
         
         # Direct chunks first
         direct_chunks = [chunks_dict[cid] for cid in direct_chunk_ids if cid in chunks_dict]
@@ -355,7 +368,8 @@ class RAKGRelationExtractor:
             for i, sim in enumerate(similarities):
                 if sim >= self.semantic_threshold:
                     chunk = all_chunks[i]
-                    if chunk['chunk_id'] not in direct_chunk_ids:
+                    chunk_id = get_chunk_id(chunk)
+                    if chunk_id not in direct_chunk_ids:
                         semantic_chunks.append((chunk, sim))
             
             semantic_chunks.sort(key=lambda x: x[1], reverse=True)
@@ -438,7 +452,7 @@ class RAKGRelationExtractor:
         
         chunk_scores = []
         for chunk in semantic_diverse:
-            chunk_id = chunk.get('chunk_id', '')
+            chunk_id = get_chunk_id(chunk)
             cooccurring_ids = set(cooccurrence_matrix.get(chunk_id, []))
             cooccurring_ids.discard(entity_id)
             new_entities = cooccurring_ids - seen_entity_ids
@@ -499,7 +513,7 @@ class RAKGRelationExtractor:
         detected_ids: Set[str] = set()
         
         for chunk in chunks:
-            chunk_id = chunk.get('chunk_id', '')
+            chunk_id = get_chunk_id(chunk)
             entity_ids = cooccurrence_matrix.get(chunk_id, [])
             detected_ids.update(entity_ids)
         
@@ -629,8 +643,8 @@ class RAKGRelationExtractor:
             should_second, distance = self._should_do_second_round(entity, selected_chunks)
             if should_second:
                 logger.debug(f"  Second round triggered (distance: {distance:.3f})")
-                selected_ids = {c['chunk_id'] for c in selected_chunks}
-                remaining = [c for c in candidates if c['chunk_id'] not in selected_ids]
+                selected_ids = {get_chunk_id(c) for c in selected_chunks}
+                remaining = [c for c in candidates if get_chunk_id(c) not in selected_ids]
                 if remaining:
                     second_round_chunks = self.two_stage_mmr_select(entity, remaining, cooccurrence)
         
@@ -644,7 +658,7 @@ class RAKGRelationExtractor:
         valid_ids = {e['entity_id'] for e in detected_entities}
         valid_ids.add(entity_id)
         
-        chunk_ids = [c['chunk_id'] for c in selected_chunks]
+        chunk_ids = [get_chunk_id(c) for c in selected_chunks]
         prompt = build_relation_prompt(entity, selected_chunks, detected_entities, strategy)
         
         if self.debug_mode:
@@ -662,7 +676,7 @@ class RAKGRelationExtractor:
             valid_ids_2 = {e['entity_id'] for e in detected_entities_2}
             valid_ids_2.add(entity_id)
             
-            chunk_ids_2 = [c['chunk_id'] for c in second_round_chunks]
+            chunk_ids_2 = [get_chunk_id(c) for c in second_round_chunks]
             prompt_2 = build_relation_prompt(entity, second_round_chunks, detected_entities_2, strategy)
             
             response_2 = self._call_llm(prompt_2)
