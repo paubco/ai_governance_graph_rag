@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 LLM prompt templates - Mistral-7B optimized, v2.0 (semantic + metadata).
+
+v2.1 Changes (Phase 1D):
+- RELATION_EXTRACTION_PROMPT now uses entity_ids for constrained output
+- METADATA_RELATION_EXTRACTION_PROMPT updated for Track 2 (discusses only)
 """
 
 from config.extraction_config import (
@@ -27,7 +31,7 @@ Extract named entities. Use ONLY these types:
 {_SEMANTIC_TYPES_LIST}
 
 # Rules
-- MUST split compounds: "AI and ML" â†’ extract "AI" AND "ML" as separate entities
+- MUST split compounds: "AI and ML" → extract "AI" AND "ML" as separate entities
 - Regulation = law documents (EU AI Act, GDPR)
 - RegulatoryConcept = compliance ideas AND principles (governance, transparency, accountability)
 
@@ -128,41 +132,53 @@ Answer YES or NO:"""
 
 
 # ============================================================================
-# PHASE 1D: RELATION EXTRACTION
+# PHASE 1D: RELATION EXTRACTION (v2.1 - ID-constrained)
 # ============================================================================
 
-RELATION_EXTRACTION_PROMPT = """Extract relationships for target entity.
+RELATION_EXTRACTION_PROMPT = """Extract relationships for the target entity.
 
-TARGET: {entity_name} ({entity_type})
-Description: {entity_description}
+TARGET ENTITY:
+- ID: {entity_id}
+- Name: {entity_name} ({entity_type})
+- Description: {entity_description}
 
-DETECTED ENTITIES:
+DETECTED ENTITIES IN CONTEXT (use these IDs in your output):
 {detected_entities_list}
 
-CHUNKS:
+TEXT CHUNKS:
 {chunks_text}
 
 RULES:
-- Subject/Object MUST be from detected entities or target
-- Discover predicates from text (regulates, applies_to, requires)
-- No duplicates, only explicit relations
+1. Subject MUST be the target entity ID: {entity_id}
+2. Object MUST be an ID from the detected entities list above
+3. Predicates: lowercase with underscores (regulates, applies_to, requires, enables, addresses)
+4. Only extract relations explicitly stated or strongly implied in the text
+5. Include chunk_ids where the relation evidence appears
 
-JSON only:
-{{"relations": [{{"subject": "...", "predicate": "...", "object": "...", "chunk_ids": ["..."]}}]}}"""
+Output JSON only:
+{{"relations": [{{"subject_id": "{entity_id}", "predicate": "...", "object_id": "ent_...", "chunk_ids": ["..."]}}]}}"""
 
 
 METADATA_RELATION_EXTRACTION_PROMPT = """Extract what this citation discusses.
 
-TARGET: {entity_name} ({entity_type})
+TARGET CITATION:
+- ID: {entity_id}
+- Name: {entity_name} ({entity_type})
 
-DETECTED CONCEPTS:
+DETECTED CONCEPTS (use these IDs as objects):
 {detected_entities_list}
 
-CHUNKS:
+TEXT CHUNKS:
 {chunks_text}
 
-JSON only:
-{{"relations": [{{"subject": "{entity_name}", "predicate": "discusses", "object": "...", "chunk_ids": ["..."]}}]}}"""
+RULES:
+1. Subject MUST be: {entity_id}
+2. Predicate MUST be: "discusses"
+3. Object MUST be an ID from detected concepts above
+4. Only extract topics the citation actually discusses in this context
+
+Output JSON only:
+{{"relations": [{{"subject_id": "{entity_id}", "predicate": "discusses", "object_id": "ent_...", "chunk_ids": ["..."]}}]}}"""
 
 
 # ============================================================================

@@ -142,13 +142,14 @@ def analyze_relations(part_of: list, same_as: list) -> dict:
     
     # Check for cross-chunk issues
     cross_chunk = [r for r in part_of if 'cross_chunk' in r.get('source', '')]
-    print(f"\nCross-chunk relations: {len(cross_chunk)} ({100*len(cross_chunk)/len(part_of):.1f}%)")
+    print(f"\nCross-chunk relations: {len(cross_chunk)} ({100*len(cross_chunk)/max(1,len(part_of)):.1f}%)")
     
     if part_of:
         print(f"\nSample relations:")
-        for r in part_of[:5]:
-            subj = r.get('subject', '?')[:35]
-            obj = r.get('object', '?')[:35]
+        for r in part_of[:8]:
+            # Handle multiple possible field names
+            subj = r.get('subject', r.get('source_name', r.get('child', '?')))[:35]
+            obj = r.get('object', r.get('target_name', r.get('parent', '?')))[:35]
             src = r.get('source', '?')
             print(f"  {subj:<35} → {obj} [{src}]")
     
@@ -165,8 +166,8 @@ def analyze_relations(part_of: list, same_as: list) -> dict:
         
         print(f"\nSample relations:")
         for r in same_as[:8]:
-            subj = r.get('subject', '?')[:35]
-            obj = r.get('object', '?')[:35]
+            subj = r.get('subject', r.get('source_name', r.get('entity1', '?')))[:35]
+            obj = r.get('object', r.get('target_name', r.get('entity2', '?')))[:35]
             conf = r.get('confidence', 1.0)
             print(f"  {subj:<35} ↔ {obj} [{conf:.2f}]")
     

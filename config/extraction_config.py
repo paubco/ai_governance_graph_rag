@@ -456,33 +456,31 @@ DISAMBIGUATION_CONFIG = {
 
 
 # ============================================================================
-# PHASE 1D: RELATION EXTRACTION
+# PHASE 1D: RELATION EXTRACTION 
 # ============================================================================
 
 RELATION_EXTRACTION_CONFIG = {
     'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
     'temperature': 0.0,
-    'max_tokens': 2048,
+    'max_tokens': 16000,
     
     # Corpus retrospective retrieval
-    'chunks_per_entity': 10,
-    'mmr_lambda': 0.7,
-    'similarity_threshold': 0.6,
+    'chunks_per_entity': 6,
+    'candidate_pool_size': 200,
+    'mmr_lambda': 0.65,
+    'semantic_threshold': 0.85,
+    'second_round_threshold': 0.25,
     
     # Two-track extraction
     'semantic_track': True,
     'citation_track': True,
     
-    # Batch processing
-    'batch_size': 5,
-    'max_workers': 2,
-    'checkpoint_frequency': 50,
-    
-    'requests_per_minute': 30,
+    # Parallel processing
+    'max_workers': 40,
+    'requests_per_minute': 2900,
+    'checkpoint_frequency': 100,
 }
-
-
 # ============================================================================
 # PHASE 2A: SCOPUS ENRICHMENT
 # ============================================================================
