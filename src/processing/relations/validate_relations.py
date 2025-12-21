@@ -7,13 +7,13 @@ Removes hallucinated relations where entities never co-occur.
 
 Usage:
     # Validate existing files (standalone)
-    python validate_relations.py
+    python -m src.processing.relations.validate_relations
     
     # Validate specific file
-    python validate_relations.py --input relations_semantic.jsonl --output relations_validated.jsonl
+    python -m src.processing.relations.validate_relations --input relations_semantic.jsonl
     
     # Dry run (report only, no output)
-    python validate_relations.py --dry-run
+    python -m src.processing.relations.validate_relations --dry-run
 """
 
 import json
@@ -23,29 +23,35 @@ from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Dict, Set, List, Tuple
 
-# Project root
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-if not (PROJECT_ROOT / "data").exists():
-    PROJECT_ROOT = Path.cwd()
+# Project root - find it by looking for data/ directory
+def find_project_root():
+    current = Path(__file__).resolve().parent
+    for _ in range(10):  # Max 10 levels up
+        if (current / "data").exists():
+            return current
+        current = current.parent
+    return Path.cwd()
+
+PROJECT_ROOT = find_project_root()
 
 
-def load_entity_chunks(lookup_file: Path) -> Dict[str, Set[str]]:
+def load_cooccurrence_matrix(cooccurrence_file: Path) -> Dict[str, Set[str]]:
     """
-    Build entity_id → set(chunk_ids) mapping from entity lookup.
+    Load cooccurrence matrix and invert it to entity_id → set(chunk_ids).
     
-    Returns:
-        Dict mapping entity_id to set of chunk_ids it appears in
+    Input format: {chunk_id: [entity_ids]}
+    Output format: {entity_id: set(chunk_ids)}
     """
-    entity_chunks = {}
+    entity_chunks = defaultdict(set)
     
-    with open(lookup_file, 'r', encoding='utf-8') as f:
-        lookup = json.load(f)
+    with open(cooccurrence_file, 'r', encoding='utf-8') as f:
+        cooccurrence = json.load(f)
     
-    for entity_id, entity in lookup.items():
-        chunk_ids = entity.get('chunk_ids', [])
-        entity_chunks[entity_id] = set(chunk_ids)
+    for chunk_id, entity_ids in cooccurrence.items():
+        for entity_id in entity_ids:
+            entity_chunks[entity_id].add(chunk_id)
     
-    return entity_chunks
+    return dict(entity_chunks)
 
 
 def validate_relation(rel: Dict, entity_chunks: Dict[str, Set[str]]) -> Tuple[bool, str]:
@@ -81,7 +87,7 @@ def validate_nested_relations(
     dry_run: bool = False
 ) -> Dict:
     """
-    Validate relations from nested format (relations_semantic.jsonl).
+    Validate relations from nested format (relations_output.jsonl).
     
     Each line is: {"relations": [...], "num_batches": N, ...}
     """
@@ -221,18 +227,18 @@ def main():
     parser.add_argument('--flat', action='store_true', help='Input is flat format (one relation per line)')
     args = parser.parse_args()
     
-    # Default paths
-    lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
+    # Default paths - use cooccurrence_full.json (all entities)
+    cooccurrence_file = PROJECT_ROOT / "data/interim/entities/cooccurrence_full.json"
     semantic_input = PROJECT_ROOT / "data/processed/relations/relations_semantic.jsonl"
     citation_input = PROJECT_ROOT / "data/processed/relations/relations_discusses.jsonl"
     
     # Check prerequisites
-    if not lookup_file.exists():
-        print(f"ERROR: Entity lookup not found: {lookup_file}")
+    if not cooccurrence_file.exists():
+        print(f"ERROR: Cooccurrence matrix not found: {cooccurrence_file}")
         sys.exit(1)
     
-    print("Loading entity chunk mapping...")
-    entity_chunks = load_entity_chunks(lookup_file)
+    print("Loading cooccurrence matrix...")
+    entity_chunks = load_cooccurrence_matrix(cooccurrence_file)
     print(f"  Loaded {len(entity_chunks):,} entities")
     
     # Single file mode

@@ -558,11 +558,12 @@ def main():
             print("=" * 80 + "\n")
             
             from src.processing.relations.validate_relations import (
-                load_entity_chunks, validate_nested_relations, 
+                load_cooccurrence_matrix, validate_nested_relations, 
                 validate_flat_relations, print_stats
             )
             
-            entity_chunks = load_entity_chunks(entity_lookup_file)
+            cooccurrence_full = PROJECT_ROOT / "data/interim/entities/cooccurrence_full.json"
+            entity_chunks = load_cooccurrence_matrix(cooccurrence_full)
             print(f"Loaded {len(entity_chunks):,} entity chunk mappings")
             
             relations_dir = PROJECT_ROOT / "data/processed/relations"
