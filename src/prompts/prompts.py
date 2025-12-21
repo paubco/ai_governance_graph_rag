@@ -159,20 +159,23 @@ JSON only:
 
 
 # Track 2: Citation entities - chunk-based "discusses" extraction
-CITATION_DISCUSSES_PROMPT = """What does this citation discuss in this chunk?
+# ONE prompt per chunk - extracts ALL citation→concept relations
+CITATION_DISCUSSES_PROMPT = """Which citations discuss which concepts in this chunk?
 
-CITATION: {entity_id}: {entity_name}
+CITATIONS (use as subject_id):
+{citations_list}
 
-CONCEPTS IN CHUNK (use these IDs as objects):
-{detected_entities_list}
+CONCEPTS (use as object_id):
+{concepts_list}
 
 CHUNK:
 {chunk_text}
 
-Output only concepts the citation explicitly discusses or supports in this context.
+For each citation, list the concepts it explicitly discusses or supports.
+Each citation can discuss 0-3 concepts max.
 
 JSON only:
-{{"relations": [{{"subject_id": "{entity_id}", "predicate": "discusses", "object_id": "ent_...", "chunk_ids": ["{chunk_id}"]}}]}}"""
+{{"relations": [{{"subject_id": "ent_...", "predicate": "discusses", "object_id": "ent_...", "chunk_ids": ["{chunk_id}"]}}]}}"""
 
 
 # ============================================================================

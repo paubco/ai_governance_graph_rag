@@ -1024,15 +1024,21 @@ class RAKGRelationExtractor:
         self,
         chunk: Dict,
         citations_in_chunk: List[Dict],
-        concepts_in_chunk: List[Dict]
+        concepts_in_chunk: List[Dict],
+        max_chunk_chars: int = 2000,
+        max_concepts: int = 15,
+        max_citations: int = 10
     ) -> List[Dict]:
         """
-        Extract 'discusses' relations for citations in a single chunk (Track 2).
+        Extract 'discusses' relations for ALL citations in a chunk with ONE LLM call.
         
         Args:
             chunk: Single chunk dict
             citations_in_chunk: Citation entities found in this chunk
             concepts_in_chunk: Concept entities found in this chunk
+            max_chunk_chars: Truncate chunk text to this length
+            max_concepts: Limit concepts in prompt
+            max_citations: Limit citations in prompt
         
         Returns:
             List of relation dicts
@@ -1043,47 +1049,67 @@ class RAKGRelationExtractor:
         chunk_id = get_chunk_id(chunk)
         chunk_text = chunk.get('text', '')
         
-        all_relations = []
+        # Truncate chunk text
+        if len(chunk_text) > max_chunk_chars:
+            chunk_text = chunk_text[:max_chunk_chars] + "..."
         
-        for citation in citations_in_chunk:
-            citation_id = citation.get('entity_id', '')
-            citation_name = citation.get('name', 'Unknown')
+        # Limit entities
+        limited_citations = citations_in_chunk[:max_citations]
+        limited_concepts = concepts_in_chunk[:max_concepts]
+        
+        # Format lists
+        citations_list = format_detected_entities_with_ids(limited_citations)
+        concepts_list = format_detected_entities_with_ids(limited_concepts)
+        
+        # Build prompt - ONE call for all citations
+        prompt = CITATION_DISCUSSES_PROMPT.format(
+            citations_list=citations_list,
+            concepts_list=concepts_list,
+            chunk_text=chunk_text,
+            chunk_id=chunk_id
+        )
+        
+        # Valid IDs for validation
+        valid_citation_ids = {c['entity_id'] for c in limited_citations}
+        valid_concept_ids = {c['entity_id'] for c in limited_concepts}
+        
+        try:
+            response = self._call_llm(prompt, f"chunk_{chunk_id[:20]}")
             
-            # Format detected concepts with IDs
-            detected_list = format_detected_entities_with_ids(concepts_in_chunk)
+            # Parse response
+            cleaned = self._extract_json_from_response(response)
+            if not cleaned:
+                return []
             
-            # Build prompt
-            prompt = CITATION_DISCUSSES_PROMPT.format(
-                entity_id=citation_id,
-                entity_name=citation_name,
-                detected_entities_list=detected_list,
-                chunk_text=chunk_text,
-                chunk_id=chunk_id
-            )
-            
-            if self.debug_mode:
-                logger.debug(f"  Citation prompt: {len(prompt)} chars for {citation_name}")
-            
-            # Call LLM
             try:
-                response = self._call_llm(prompt, citation_name)
+                data = json.loads(cleaned)
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON parse error: {e}")
+                return []
+            
+            relations = data.get('relations', [])
+            validated = []
+            
+            for rel in relations:
+                subject_id = rel.get('subject_id', '')
+                object_id = rel.get('object_id', '')
                 
-                # Parse response
-                valid_ids = {c['entity_id'] for c in concepts_in_chunk}
-                valid_ids.add(citation_id)
+                # Validate: subject must be citation, object must be concept
+                if subject_id not in valid_citation_ids:
+                    continue
+                if object_id not in valid_concept_ids:
+                    continue
                 
-                relations = self._parse_relations_response(
-                    response, valid_ids, citation_id, [chunk_id]
-                )
-                
-                # Force predicate to 'discusses' for consistency
-                for rel in relations:
-                    rel['predicate'] = 'discusses'
-                    rel['extraction_strategy'] = 'citation'
-                
-                all_relations.extend(relations)
-                
-            except Exception as e:
-                logger.warning(f"  Citation extraction failed for {citation_name}: {e}")
-        
-        return all_relations
+                validated.append({
+                    'subject_id': subject_id,
+                    'predicate': 'discusses',
+                    'object_id': object_id,
+                    'chunk_ids': [chunk_id],
+                    'extraction_strategy': 'citation'
+                })
+            
+            return validated
+            
+        except Exception as e:
+            logger.warning(f"  Citation extraction failed for chunk {chunk_id}: {e}")
+            return []
