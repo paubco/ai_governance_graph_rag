@@ -59,6 +59,7 @@ from src.processing.entities.metadata_disambiguator import (
 from src.utils.io import load_jsonl, save_jsonl, save_json, load_json
 from src.utils.id_generator import generate_entity_id
 from src.utils.checkpoint_manager import CheckpointManager
+from src.config.extraction_config import DISAMBIGUATION_CONFIG
 
 # Configure logging
 logging.basicConfig(
@@ -92,34 +93,35 @@ CHECKPOINT_DIR = DATA_DIR / 'interim' / 'entities' / 'checkpoints'
 
 
 # =============================================================================
-# CONFIGURATION
+# CONFIGURATION (imported from extraction_config.py)
 # =============================================================================
 
+# Map config keys for backwards compatibility
 CONFIG = {
     # Filtering
     'verify_provenance': True,
     
-    # FAISS blocking
-    'faiss_k': 50,
-    'faiss_threshold': 0.70,
-    'faiss_M': 32,
-    'faiss_ef_construction': 200,
-    'faiss_ef_search': 64,
+    # FAISS blocking (from DISAMBIGUATION_CONFIG)
+    'faiss_k': DISAMBIGUATION_CONFIG['faiss_k'],
+    'faiss_threshold': DISAMBIGUATION_CONFIG['faiss_threshold'],
+    'faiss_M': DISAMBIGUATION_CONFIG['faiss_M'],
+    'faiss_ef_construction': DISAMBIGUATION_CONFIG['faiss_ef_construction'],
+    'faiss_ef_search': DISAMBIGUATION_CONFIG['faiss_ef_search'],
     
-    # Tiered thresholds (tuned from manual review)
-    'auto_merge_threshold': 0.98,   # 0.96-0.98 has false positives
-    'auto_reject_threshold': 0.885, # Raised: 0.880-0.885 has bad bridges
+    # Tiered thresholds
+    'auto_merge_threshold': DISAMBIGUATION_CONFIG['auto_merge_threshold'],
+    'auto_reject_threshold': DISAMBIGUATION_CONFIG['auto_reject_threshold'],
     
     # LLM SameJudge
-    'llm_model': 'mistralai/Mistral-7B-Instruct-v0.3',
-    'max_llm_pairs': 25000,  # ~21K expected, buffer for safety
-    'max_workers': 8,        # Parallel workers for LLM calls
+    'llm_model': DISAMBIGUATION_CONFIG['model_name'],
+    'max_llm_pairs': DISAMBIGUATION_CONFIG['max_llm_pairs'],
+    'max_workers': DISAMBIGUATION_CONFIG['max_workers'],
     
-    # Cluster breaking (statistical outlier detection)
-    'min_cluster_size': 5,   # Only analyze clusters >= this size
-    'z_threshold': 2.0,      # Cut edges > N std devs below cluster mean
-    'hard_max_size': 50,     # Force-cut if cluster exceeds this
-    'floor_similarity': 0.89, # Never cut edges above this
+    # Cluster breaking (betweenness centrality)
+    'min_cluster_size': DISAMBIGUATION_CONFIG['min_cluster_size'],
+    'betweenness_threshold': DISAMBIGUATION_CONFIG['betweenness_threshold'],
+    'similarity_ceiling': DISAMBIGUATION_CONFIG['similarity_ceiling'],
+    'hard_max_size': DISAMBIGUATION_CONFIG['hard_max_size'],
 }
 
 
@@ -381,13 +383,13 @@ class DisambiguationProcessor:
             
             # Apply only auto-merges (high confidence), no LLM
             if filtered['merged']:
-                # Break oversized clusters by removing statistical outliers
+                # Break oversized clusters by removing high-betweenness bridges
                 filtered_merges = break_large_clusters(
                     filtered['merged'],
                     min_cluster_size=self.config['min_cluster_size'],
-                    z_threshold=self.config['z_threshold'],
-                    hard_max_size=self.config['hard_max_size'],
-                    floor_similarity=self.config['floor_similarity']
+                    betweenness_threshold=self.config['betweenness_threshold'],
+                    similarity_ceiling=self.config['similarity_ceiling'],
+                    hard_max_size=self.config['hard_max_size']
                 )
                 final_entities, aliases = apply_merges(
                     deduped, filtered_merges, aliases,
@@ -427,14 +429,14 @@ class DisambiguationProcessor:
         # Apply all merges
         all_merges = filtered['merged'] + llm_approved
         
-        # Break oversized clusters by removing statistical outliers
+        # Break oversized clusters by removing high-betweenness bridges
         if all_merges:
             all_merges = break_large_clusters(
                 all_merges,
                 min_cluster_size=self.config['min_cluster_size'],
-                z_threshold=self.config['z_threshold'],
-                hard_max_size=self.config['hard_max_size'],
-                floor_similarity=self.config['floor_similarity']
+                betweenness_threshold=self.config['betweenness_threshold'],
+                similarity_ceiling=self.config['similarity_ceiling'],
+                hard_max_size=self.config['hard_max_size']
             )
         
         if all_merges:

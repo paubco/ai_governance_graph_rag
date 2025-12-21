@@ -417,34 +417,41 @@ PRE_ENTITY_FILTER_CONFIG = {
 
 
 # ============================================================================
-# PHASE 1C: ENTITY DISAMBIGUATION (v1.1)
+# PHASE 1C: ENTITY DISAMBIGUATION (v2.0)
 # ============================================================================
 
 DISAMBIGUATION_CONFIG = {
     # Model - Mistral-7B for SameJudge (Qwen has JSON bugs)
     'model_name': 'mistralai/Mistral-7B-Instruct-v0.3',
     
-    # FAISS blocking (thresholds TBD after quintile analysis)
+    # FAISS blocking
     'faiss_k': 50,                   # Neighbors to retrieve
     'faiss_threshold': 0.70,         # Blocking threshold (permissive)
     'faiss_M': 32,                   # HNSW connections per node
     'faiss_ef_construction': 200,    # Build quality
     'faiss_ef_search': 64,           # Search quality
     
-    # Tiered thresholds (TBD after quintile analysis)
-    'auto_merge_threshold': 0.98,    # >= this â†’ auto-merge
-    'auto_reject_threshold': 0.88,   # < this â†’ auto-reject
-    # Between 0.88-0.98 (~21K pairs) â†’ LLM decides
+    # Tiered thresholds (tuned from manual review)
+    'auto_merge_threshold': 0.98,    # >= this: auto-merge
+    'auto_reject_threshold': 0.885,  # < this: auto-reject (raised from 0.88)
+    # Between 0.885-0.98: LLM decides
     
     # LLM SameJudge
     'temperature': 0.0,
     'max_tokens': 256,
-    'max_llm_pairs': 25000,           # Cost control limit
+    'max_llm_pairs': 25000,          # Cost control limit
+    'max_workers': 8,                # Parallel workers for LLM calls
+    
+    # Cluster breaking (betweenness centrality)
+    # Cuts high-betweenness edges (bridges between subcommunities) with low similarity
+    'min_cluster_size': 5,           # Only analyze clusters >= this size
+    'betweenness_threshold': 0.3,    # Cut edges with betweenness > this
+    'similarity_ceiling': 0.91,      # Only cut if similarity < this
+    'hard_max_size': 20,             # Force-cut weakest edge if cluster exceeds this
     
     # Batch processing
     'batch_size': 50,
-    'max_workers': 4,
-    'checkpoint_frequency': 500,
+    'checkpoint_frequency': 1000,
 }
 
 

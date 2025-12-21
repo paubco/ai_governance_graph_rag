@@ -699,39 +699,38 @@ class SameJudge:
 
 
 # =============================================================================
-# CLUSTER BREAKING - STATISTICAL OUTLIER DETECTION
+# CLUSTER BREAKING - BETWEENNESS CENTRALITY BRIDGE DETECTION
 # =============================================================================
 
 def break_large_clusters(merge_pairs: List[Dict],
                         min_cluster_size: int = 5,
-                        z_threshold: float = 2.0,
-                        hard_max_size: int = 50,
-                        floor_similarity: float = 0.89) -> List[Dict]:
+                        betweenness_threshold: float = 0.3,
+                        similarity_ceiling: float = 0.91,
+                        hard_max_size: int = 50) -> List[Dict]:
     """
-    Remove weak bridge edges using statistical outlier detection.
+    Remove weak bridge edges using betweenness centrality.
     
-    Instead of arbitrary size limits, uses z-scores to find edges that are
-    statistical outliers within their cluster. An edge with similarity 0.88
-    in a cluster averaging 0.95 is suspicious; the same edge in a cluster
-    averaging 0.89 is normal.
+    High betweenness edges are critical connectors between subcommunities.
+    If such an edge also has low similarity, it's likely an artificial bridge
+    created by LLM errors. A 0.88 edge connecting two dense subclusters is 
+    suspicious; the same edge inside a dense region would have low betweenness.
     
     Args:
         merge_pairs: List of approved merge pairs
         min_cluster_size: Only analyze clusters larger than this
-        z_threshold: Cut edges more than this many std devs below cluster mean
+        betweenness_threshold: Cut edges with normalized betweenness > this
+        similarity_ceiling: Only cut high-betweenness edges below this similarity
         hard_max_size: Force-cut weakest edge if cluster exceeds this (fallback)
-        floor_similarity: Never cut edges above this regardless of z-score
         
     Returns:
-        Filtered merge_pairs with outlier bridges removed
+        Filtered merge_pairs with bridge edges removed
     """
     import networkx as nx
-    import numpy as np
     
     if not merge_pairs:
         return merge_pairs
     
-    logger.info(f"Analyzing clusters for outlier bridges (z>{z_threshold}, min_size={min_cluster_size})...")
+    logger.info(f"Analyzing clusters for bridge edges (betweenness>{betweenness_threshold}, sim<{similarity_ceiling})...")
     
     # Build graph from merge pairs
     G = nx.Graph()
@@ -742,31 +741,28 @@ def break_large_clusters(merge_pairs: List[Dict],
         sim = pair.get('similarity', 0.9)
         G.add_edge(e1, e2, similarity=sim)
     
-    def find_outlier_bridges(component):
-        """Find edges that are statistical outliers within a cluster."""
-        subgraph = G.subgraph(component)
-        edges_data = [(u, v, d['similarity']) for u, v, d in subgraph.edges(data=True)]
+    def find_bridge_edges(component):
+        """Find edges that are high-betweenness bridges with low similarity."""
+        subgraph = G.subgraph(component).copy()
         
-        if len(edges_data) < 3:  # Need enough edges for statistics
+        if subgraph.number_of_edges() < 3:
             return []
         
-        similarities = [e[2] for e in edges_data]
-        mean = np.mean(similarities)
-        std = np.std(similarities)
+        # Compute edge betweenness centrality (normalized)
+        edge_betweenness = nx.edge_betweenness_centrality(subgraph, normalized=True)
         
-        if std < 0.005:  # Very homogeneous cluster, no outliers
-            return []
+        bridges = []
+        for (u, v), betweenness in edge_betweenness.items():
+            sim = subgraph[u][v]['similarity']
+            
+            # High betweenness + low similarity = suspicious bridge
+            if betweenness > betweenness_threshold and sim < similarity_ceiling:
+                bridges.append((u, v, sim, betweenness))
         
-        outliers = []
-        for u, v, sim in edges_data:
-            z_score = (mean - sim) / std  # How many stds below mean
-            # Only flag as outlier if z-score exceeds threshold AND similarity below floor
-            if z_score > z_threshold and sim < floor_similarity:
-                outliers.append((u, v, sim, z_score, mean, std))
-        
-        return sorted(outliers, key=lambda x: -x[3])  # Worst outliers first
+        # Sort by betweenness (highest first), then by similarity (lowest first)
+        return sorted(bridges, key=lambda x: (-x[3], x[2]))
     
-    # Iteratively find and cut outliers
+    # Iteratively find and cut bridges
     removed_edges = []
     iterations = 0
     max_iterations = 500
@@ -781,34 +777,32 @@ def break_large_clusters(merge_pairs: List[Dict],
         if not large_clusters:
             break
         
-        # Find outliers in each cluster
-        all_outliers = []
+        # Find bridges in each cluster
+        all_bridges = []
         for component in large_clusters:
-            outliers = find_outlier_bridges(component)
-            for outlier in outliers:
-                all_outliers.append((component, outlier))
+            bridges = find_bridge_edges(component)
+            for bridge in bridges:
+                all_bridges.append((component, bridge))
         
         # Also check for hard size limit violations
         huge_clusters = [c for c in components if len(c) > hard_max_size]
         
-        if not all_outliers and not huge_clusters:
+        if not all_bridges and not huge_clusters:
             break
         
-        # Cut the worst outlier
-        if all_outliers:
-            # Sort by z-score descending, cut worst
-            all_outliers.sort(key=lambda x: -x[1][3])
-            component, (u, v, sim, z_score, mean, std) = all_outliers[0]
+        # Cut the worst bridge (highest betweenness with low similarity)
+        if all_bridges:
+            # Sort by betweenness descending
+            all_bridges.sort(key=lambda x: -x[1][3])
+            component, (u, v, sim, betweenness) = all_bridges[0]
             
             G.remove_edge(u, v)
             removed_edges.append({
                 'edge': (u, v),
                 'similarity': sim,
-                'z_score': z_score,
-                'cluster_mean': mean,
-                'cluster_std': std,
+                'betweenness': betweenness,
                 'cluster_size': len(component),
-                'reason': 'statistical_outlier'
+                'reason': 'high_betweenness_bridge'
             })
         elif huge_clusters:
             # Fallback: cut weakest edge in huge cluster
@@ -827,17 +821,17 @@ def break_large_clusters(merge_pairs: List[Dict],
     
     # Report results
     if removed_edges:
-        outlier_cuts = len([e for e in removed_edges if e.get('reason') == 'statistical_outlier'])
+        bridge_cuts = len([e for e in removed_edges if e.get('reason') == 'high_betweenness_bridge'])
         size_cuts = len([e for e in removed_edges if e.get('reason') == 'hard_size_limit'])
-        logger.info(f"  Removed {len(removed_edges)} bridges: {outlier_cuts} outliers, {size_cuts} size-limit")
+        logger.info(f"  Removed {len(removed_edges)} edges: {bridge_cuts} betweenness bridges, {size_cuts} size-limit")
         
         # Show sample of cuts
         for edge in removed_edges[:5]:
             e1 = edge['edge'][0][0] if isinstance(edge['edge'][0], tuple) else str(edge['edge'][0])
             e2 = edge['edge'][1][0] if isinstance(edge['edge'][1], tuple) else str(edge['edge'][1])
-            if 'z_score' in edge:
+            if 'betweenness' in edge:
                 logger.info(f"    Cut: {e1[:25]:<25} ↔ {e2[:25]:<25} "
-                          f"(sim={edge['similarity']:.3f}, z={edge['z_score']:.1f}, μ={edge['cluster_mean']:.3f})")
+                          f"(sim={edge['similarity']:.3f}, betw={edge['betweenness']:.3f})")
             else:
                 logger.info(f"    Cut: {e1[:25]:<25} ↔ {e2[:25]:<25} "
                           f"(sim={edge['similarity']:.3f}, size={edge['cluster_size']})")
