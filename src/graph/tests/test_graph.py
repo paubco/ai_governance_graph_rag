@@ -22,6 +22,12 @@ import json
 import argparse
 import os
 
+# Third-party
+from dotenv import load_dotenv
+
+# Load .env before anything else
+load_dotenv()
+
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:

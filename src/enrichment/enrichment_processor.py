@@ -94,15 +94,22 @@ class EnrichmentProcessor:
         """
         self.config = config or ENRICHMENT_CONFIG
         
+        # Resolve paths relative to PROJECT_ROOT
+        def resolve_path(p):
+            path = Path(p)
+            if not path.is_absolute():
+                path = PROJECT_ROOT / path
+            return path
+        
         # Set paths from config
-        self.scopus_csv = Path(self.config['scopus_csv_path'])
-        self.entities_file = Path(self.config['entities_path'])
-        self.relations_file = Path(self.config['relations_path'])
-        self.chunks_file = Path(self.config['chunks_path'])
-        self.scraping_summary = Path(self.config['scraping_summary_path'])
+        self.scopus_csv = resolve_path(self.config['scopus_csv_path'])
+        self.entities_file = resolve_path(self.config['entities_path'])
+        self.relations_file = resolve_path(self.config['relations_path'])
+        self.chunks_file = resolve_path(self.config['chunks_path'])
+        self.scraping_summary = resolve_path(self.config['scraping_summary_path'])
         
         # Output directories
-        self.output_dir = Path(self.config['output_dir'])
+        self.output_dir = resolve_path(self.config['output_dir'])
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # State
