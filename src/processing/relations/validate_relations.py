@@ -80,20 +80,23 @@ def validate_nested_relations(
     dry_run: bool = False
 ) -> Dict:
     """
-    Validate relations from nested format (relations_output.jsonl).
+    Validate relations from nested format (relations_semantic.jsonl).
+    Flattens to one relation per line and deduplicates globally.
     
-    Each line is: {"relations": [...], "num_batches": N, ...}
+    Each input line is: {"relations": [...], "num_batches": N, ...}
+    Output is flat: one relation dict per line.
     """
     stats = {
         'total_entities': 0,
         'total_relations': 0,
         'valid_relations': 0,
         'invalid_relations': 0,
+        'after_dedup': 0,
         'reasons': Counter(),
         'predicates_removed': Counter(),
     }
     
-    output_lines = []
+    all_valid_relations = []
     
     with open(input_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -103,31 +106,28 @@ def validate_nested_relations(
             result = json.loads(line)
             stats['total_entities'] += 1
             
-            original_relations = result.get('relations', [])
-            valid_relations = []
-            
-            for rel in original_relations:
+            for rel in result.get('relations', []):
                 stats['total_relations'] += 1
                 is_valid, reason = validate_relation(rel, entity_chunks)
                 
                 if is_valid:
                     stats['valid_relations'] += 1
-                    valid_relations.append(rel)
+                    all_valid_relations.append(rel)
                 else:
                     stats['invalid_relations'] += 1
                     stats['reasons'][reason] += 1
                     stats['predicates_removed'][rel.get('predicate', 'unknown')] += 1
-            
-            # Update result with validated relations
-            result['relations'] = valid_relations
-            result['relations_removed'] = len(original_relations) - len(valid_relations)
-            output_lines.append(json.dumps(result, ensure_ascii=False))
     
-    # Write output
+    # Global deduplication with chunk_id merging
+    deduplicated = deduplicate_relations(all_valid_relations)
+    stats['after_dedup'] = len(deduplicated)
+    
+    # Write output (flat format, one relation per line)
     if not dry_run and output_file:
         with open(output_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(output_lines))
-        print(f"Wrote validated relations to: {output_file}")
+            for rel in deduplicated:
+                f.write(json.dumps(rel, ensure_ascii=False) + '\n')
+        print(f"Wrote {len(deduplicated):,} deduplicated relations to: {output_file}")
     
     return stats
 
@@ -140,6 +140,7 @@ def validate_flat_relations(
 ) -> Dict:
     """
     Validate relations from flat format (relations_discusses.jsonl).
+    Deduplicates globally with chunk_id merging.
     
     Each line is a single relation dict.
     """
@@ -147,11 +148,12 @@ def validate_flat_relations(
         'total_relations': 0,
         'valid_relations': 0,
         'invalid_relations': 0,
+        'after_dedup': 0,
         'reasons': Counter(),
         'predicates_removed': Counter(),
     }
     
-    valid_lines = []
+    all_valid_relations = []
     
     with open(input_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -165,17 +167,22 @@ def validate_flat_relations(
             
             if is_valid:
                 stats['valid_relations'] += 1
-                valid_lines.append(line.strip())
+                all_valid_relations.append(rel)
             else:
                 stats['invalid_relations'] += 1
                 stats['reasons'][reason] += 1
                 stats['predicates_removed'][rel.get('predicate', 'unknown')] += 1
     
+    # Global deduplication with chunk_id merging
+    deduplicated = deduplicate_relations(all_valid_relations)
+    stats['after_dedup'] = len(deduplicated)
+    
     # Write output
     if not dry_run and output_file:
         with open(output_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(valid_lines))
-        print(f"Wrote validated relations to: {output_file}")
+            for rel in deduplicated:
+                f.write(json.dumps(rel, ensure_ascii=False) + '\n')
+        print(f"Wrote {len(deduplicated):,} deduplicated relations to: {output_file}")
     
     return stats
 
@@ -195,6 +202,11 @@ def print_stats(stats: Dict, label: str):
     print(f"Total relations:    {total:,}")
     print(f"Valid relations:    {valid:,} ({100*valid/total:.1f}%)" if total else "N/A")
     print(f"Invalid relations:  {invalid:,} ({100*invalid/total:.1f}%)" if total else "N/A")
+    
+    if 'after_dedup' in stats:
+        deduped = stats['after_dedup']
+        print(f"After dedup:        {deduped:,} ({100*deduped/valid:.1f}% of valid)")
+    
     print()
     
     if stats['reasons']:
@@ -210,6 +222,36 @@ def print_stats(stats: Dict, label: str):
         print()
     
     print('=' * 60)
+
+
+def deduplicate_relations(relations: List[Dict]) -> List[Dict]:
+    """
+    Global deduplication with chunk_id merging.
+    
+    Same (subject_id, predicate, object_id) → merge chunk_ids lists.
+    """
+    merged = {}
+    
+    for rel in relations:
+        key = (rel['subject_id'], rel['predicate'], rel['object_id'])
+        
+        if key not in merged:
+            merged[key] = {
+                'subject_id': rel['subject_id'],
+                'predicate': rel['predicate'],
+                'object_id': rel['object_id'],
+                'chunk_ids': list(rel.get('chunk_ids', [])),
+                'extraction_strategy': rel.get('extraction_strategy', 'semantic')
+            }
+        else:
+            # Merge chunk_ids (deduplicate)
+            existing_chunks = set(merged[key]['chunk_ids'])
+            for cid in rel.get('chunk_ids', []):
+                if cid not in existing_chunks:
+                    merged[key]['chunk_ids'].append(cid)
+                    existing_chunks.add(cid)
+    
+    return list(merged.values())
 
 
 def main():
@@ -248,7 +290,7 @@ def main():
         return
     
     # Default: validate both semantic and citation
-    all_stats = {'valid': 0, 'invalid': 0, 'total': 0}
+    all_stats = {'valid': 0, 'invalid': 0, 'total': 0, 'dedup': 0}
     
     # Semantic track (nested format)
     if semantic_input.exists():
@@ -258,6 +300,7 @@ def main():
         all_stats['valid'] += stats['valid_relations']
         all_stats['invalid'] += stats['invalid_relations']
         all_stats['total'] += stats['total_relations']
+        all_stats['dedup'] += stats.get('after_dedup', stats['valid_relations'])
     else:
         print(f"Skipping semantic (not found): {semantic_input}")
     
@@ -269,6 +312,7 @@ def main():
         all_stats['valid'] += stats['valid_relations']
         all_stats['invalid'] += stats['invalid_relations']
         all_stats['total'] += stats['total_relations']
+        all_stats['dedup'] += stats.get('after_dedup', stats['valid_relations'])
     else:
         print(f"Skipping citation (not found): {citation_input}")
     
@@ -279,7 +323,9 @@ def main():
     print('=' * 60)
     print(f"Total relations:  {all_stats['total']:,}")
     print(f"Valid:            {all_stats['valid']:,} ({100*all_stats['valid']/all_stats['total']:.1f}%)" if all_stats['total'] else "N/A")
-    print(f"Removed:          {all_stats['invalid']:,}")
+    print(f"After dedup:      {all_stats['dedup']:,} ({100*all_stats['dedup']/all_stats['valid']:.1f}% of valid)" if all_stats['valid'] else "N/A")
+    print(f"Removed (invalid):{all_stats['invalid']:,}")
+    print(f"Removed (dupes):  {all_stats['valid'] - all_stats['dedup']:,}")
     print('=' * 60)
 
 
