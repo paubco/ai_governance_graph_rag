@@ -19,7 +19,7 @@ from pathlib import Path
 import tempfile
 import json
 
-# Project root
+# Project root - handles src/enrichment/tests/ location
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -56,14 +56,14 @@ def test_foundation_imports():
     print("\n=== TEST: Foundation Imports ===")
     
     try:
-        from src.foundation.dataclasses import Entity, Relation, Chunk
+        from src.utils.dataclasses import Entity, Relation, Chunk
         print("  ✓ dataclasses")
     except Exception as e:
         print(f"  ✗ dataclasses: {e}")
         return False
     
     try:
-        from src.foundation.id_generator import (
+        from src.utils.id_generator import (
             generate_entity_id, generate_publication_id, 
             generate_author_id, generate_journal_id
         )
@@ -73,7 +73,7 @@ def test_foundation_imports():
         return False
     
     try:
-        from src.foundation.io import read_jsonl, write_jsonl
+        from src.utils.io import read_jsonl, write_jsonl
         print("  ✓ io")
     except Exception as e:
         print(f"  ✗ io: {e}")
@@ -228,7 +228,7 @@ def test_id_generation():
     """Test ID generation functions."""
     print("\n=== TEST: ID Generation ===")
     
-    from src.foundation.id_generator import (
+    from src.utils.id_generator import (
         generate_entity_id, generate_publication_id,
         generate_author_id, generate_journal_id, generate_l2_publication_id
     )
