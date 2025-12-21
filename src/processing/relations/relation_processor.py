@@ -263,33 +263,46 @@ class ParallelRelationProcessor:
         print("CITATION TRACK: CHUNK-BASED EXTRACTION")
         print("=" * 80)
         
-        # Build chunk → entities lookup
-        chunks_with_citations = []
+        # Build chunk_id -> citations map from entity_lookup
+        # (Citations have chunk_ids in their entity dict)
+        chunk_citations: Dict[str, List[Dict]] = {}
+        for eid, entity in entity_lookup.items():
+            if entity.get('type') == 'Citation':
+                for chunk_id in entity.get('chunk_ids', []):
+                    if chunk_id not in chunk_citations:
+                        chunk_citations[chunk_id] = []
+                    chunk_citations[chunk_id].append(entity)
         
+        print(f"Chunks with citations: {len(chunk_citations)}")
+        print(f"Chunks with concepts: {len(cooccurrence_concept)}")
+        
+        # Build chunks_by_id for quick lookup
+        chunks_by_id = {}
         for chunk in self.all_chunks:
             chunk_id = chunk.get('chunk_ids', [chunk.get('chunk_id', '')])[0]
-            if not chunk_id:
+            if chunk_id:
+                chunks_by_id[chunk_id] = chunk
+        
+        # Find chunks with BOTH citations AND concepts
+        chunks_with_citations = []
+        
+        for chunk_id, citations in chunk_citations.items():
+            # Check if this chunk has concepts
+            concept_ids = cooccurrence_concept.get(chunk_id, [])
+            if not concept_ids:
                 continue
             
-            # Get entities in this chunk from cooccurrence
-            entity_ids = cooccurrence_concept.get(chunk_id, [])
-            if not entity_ids:
-                continue
-            
-            # Separate citations and concepts
-            citations = []
+            # Resolve concept entities
             concepts = []
-            for eid in entity_ids:
+            for eid in concept_ids:
                 if eid in entity_lookup:
                     entity = entity_lookup[eid]
-                    if entity.get('type') == 'Citation':
-                        citations.append(entity)
-                    elif entity.get('type') in CONCEPT_TYPES:
+                    if entity.get('type') in CONCEPT_TYPES:
                         concepts.append(entity)
             
-            if citations and concepts:
+            if concepts and chunk_id in chunks_by_id:
                 chunks_with_citations.append({
-                    'chunk': chunk,
+                    'chunk': chunks_by_id[chunk_id],
                     'chunk_id': chunk_id,
                     'citations': citations,
                     'concepts': concepts
