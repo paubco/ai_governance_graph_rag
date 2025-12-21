@@ -1,302 +1,345 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1C Evaluation Script - Data-Driven Quality Metrics
+Phase 1C Disambiguation Output Analysis & Quality Tests.
 
-Outputs human-readable metrics for manual evaluation:
-1. Filter effectiveness by type
-2. Random samples of filtered vs kept entities
-3. Relation quality samples (PART_OF, SAME_AS)
-4. Suspicious patterns detection
-5. Deduplication effectiveness
+Comprehensive analysis of entity disambiguation outputs including:
+- Alias distribution and largest clusters
+- Entity type distribution
+- PART_OF and SAME_AS relations quality
+- Quality checks (short names, numeric patterns, high chunk counts)
+- Merge quality validation
 
 Usage:
-    python -m src.processing.entities.evaluate_phase1c
-    python -m src.processing.entities.evaluate_phase1c --sample 20
+    python -m src.processing.entities.analyze_disambiguation
+    
+    # Or directly
+    python src/processing/entities/analyze_disambiguation.py
+
+Author: Pau Barba i Colomer
+Created: 2025-12-21
 """
 
 import json
-import random
-import argparse
-from collections import Counter, defaultdict
+import re
 from pathlib import Path
-
-# Imports
-from src.processing.entities.pre_entity_filter import PreEntityFilter, load_chunks_as_dict, is_garbage
-from src.processing.entities.semantic_disambiguator import ExactDeduplicator, route_by_type
-from src.processing.entities.metadata_disambiguator import MetadataDisambiguator
+from collections import defaultdict
+from typing import List, Dict, Tuple
 
 
-def load_entities(filepath: str) -> list:
-    """Load entities with chunk_id inheritance."""
-    entities = []
-    with open(filepath) as f:
-        for line in f:
-            if line.strip():
-                chunk_data = json.loads(line)
-                chunk_id = chunk_data.get('chunk_id', '')
-                for e in chunk_data.get('entities', []):
-                    e['chunk_id'] = chunk_id
-                    entities.append(e)
-    return entities
+# Paths
+DATA_DIR = Path(__file__).resolve().parents[3] / 'data'
+SEMANTIC_FILE = DATA_DIR / 'processed' / 'entities' / 'entities_semantic.jsonl'
+METADATA_FILE = DATA_DIR / 'processed' / 'entities' / 'entities_metadata.jsonl'
+ALIASES_FILE = DATA_DIR / 'processed' / 'entities' / 'aliases.json'
+PART_OF_FILE = DATA_DIR / 'processed' / 'relations' / 'part_of_relations.jsonl'
+SAME_AS_FILE = DATA_DIR / 'processed' / 'relations' / 'same_as_relations.jsonl'
+SAMEJUDGE_PROGRESS = DATA_DIR / 'interim' / 'entities' / 'samejudge_progress.json'
 
 
-def print_section(title: str):
-    """Print section header."""
-    print(f"\n{'='*70}")
-    print(f" {title}")
-    print('='*70)
+def load_jsonl(path: Path) -> list:
+    """Load JSONL file."""
+    items = []
+    if path.exists():
+        with open(path) as f:
+            for line in f:
+                if line.strip():
+                    items.append(json.loads(line))
+    return items
 
 
-def evaluate_filtering(entities: list, chunks: dict, sample_size: int = 10):
-    """Evaluate pre-entity filter effectiveness."""
-    print_section("1. FILTER EFFECTIVENESS")
+def analyze_aliases(aliases: dict) -> dict:
+    """Analyze alias distribution. Returns metrics dict."""
+    print("\n[1] ALIASES ANALYSIS")
+    print("-" * 50)
     
-    # Track what gets filtered by type
-    filtered_by_type = defaultdict(list)
-    kept_by_type = defaultdict(list)
+    if not aliases:
+        print("  No aliases found")
+        return {}
     
-    for e in entities:
-        name = e.get('name', '')
-        etype = e.get('type', 'Unknown')
-        if is_garbage(name, etype):
-            filtered_by_type[etype].append(name)
-        else:
-            kept_by_type[etype].append(name)
+    total_aliases = sum(len(v) for v in aliases.values())
+    max_aliases = max(len(v) for v in aliases.values())
+    alias_counts = [len(v) for v in aliases.values()]
     
-    # Summary table
-    print("\nFilter Summary by Type:")
-    print(f"{'Type':<20} {'Input':>8} {'Filtered':>10} {'Kept':>8} {'Filter%':>8}")
-    print("-" * 60)
+    metrics = {
+        'canonical_count': len(aliases),
+        'total_aliases': total_aliases,
+        'avg_aliases': total_aliases / len(aliases),
+        'max_aliases': max_aliases,
+        'median_aliases': sorted(alias_counts)[len(alias_counts)//2],
+    }
     
-    all_types = set(filtered_by_type.keys()) | set(kept_by_type.keys())
-    for etype in sorted(all_types):
-        filtered = len(filtered_by_type[etype])
-        kept = len(kept_by_type[etype])
-        total = filtered + kept
-        pct = (filtered / total * 100) if total > 0 else 0
-        flag = " ⚠️" if pct > 20 else ""  # Flag high filter rates
-        print(f"{etype:<20} {total:>8} {filtered:>10} {kept:>8} {pct:>7.1f}%{flag}")
+    print(f"Total canonical entities with aliases: {metrics['canonical_count']}")
+    print(f"Total aliases: {metrics['total_aliases']}")
+    print(f"Avg aliases per canonical: {metrics['avg_aliases']:.1f}")
+    print(f"Max aliases: {metrics['max_aliases']}")
+    print(f"Median aliases: {metrics['median_aliases']}")
     
-    # Show samples of what's being filtered
-    print(f"\n\nSample FILTERED entities (random {sample_size} per type):")
-    for etype in ['Document', 'DocumentSection', 'Technology', 'Citation']:
-        if filtered_by_type[etype]:
-            samples = random.sample(filtered_by_type[etype], 
-                                   min(sample_size, len(filtered_by_type[etype])))
-            print(f"\n  {etype} ({len(filtered_by_type[etype])} filtered):")
-            for name in samples:
-                print(f"    ✗ '{name}'")
+    # Distribution
+    print(f"\nAlias count distribution:")
+    for threshold in [1, 2, 5, 10, 15, 20, 50]:
+        count = len([c for c in alias_counts if c >= threshold])
+        print(f"  >= {threshold}: {count} canonicals")
     
-    # Show samples of what's being kept (for validation)
-    print(f"\n\nSample KEPT entities (random {sample_size} per type):")
-    for etype in ['Document', 'DocumentSection']:
-        if kept_by_type[etype]:
-            samples = random.sample(kept_by_type[etype],
-                                   min(sample_size, len(kept_by_type[etype])))
-            print(f"\n  {etype} ({len(kept_by_type[etype])} kept):")
-            for name in samples:
-                print(f"    ✓ '{name}'")
+    print("\nTop 10 canonicals by alias count:")
+    top = sorted(aliases.items(), key=lambda x: -len(x[1]))[:10]
+    for name, alias_list in top:
+        print(f"  {name:<40} → {len(alias_list)} aliases")
+        for a in alias_list[:3]:
+            print(f"    - {a}")
+        if len(alias_list) > 3:
+            print(f"    ... +{len(alias_list)-3} more")
     
-    return filtered_by_type, kept_by_type
+    return metrics
 
 
-def evaluate_deduplication(semantic_entities: list, sample_size: int = 10):
-    """Evaluate deduplication effectiveness."""
-    print_section("2. DEDUPLICATION EFFECTIVENESS")
+def analyze_entities(semantic: list, metadata: list) -> dict:
+    """Analyze entity type distribution. Returns metrics dict."""
+    print("\n[2] SEMANTIC ENTITIES BY TYPE")
+    print("-" * 50)
     
-    dedup = ExactDeduplicator()
-    canonical, aliases = dedup.deduplicate(semantic_entities)
+    type_counts = defaultdict(int)
+    for e in semantic:
+        type_counts[e.get('type', 'Unknown')] += 1
     
-    # Stats
-    reduction = len(semantic_entities) - len(canonical)
-    reduction_pct = (reduction / len(semantic_entities) * 100) if semantic_entities else 0
+    print(f"Total: {len(semantic)}")
+    for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
+        print(f"  {t:<25} {c:>5} ({100*c/len(semantic):>5.1f}%)")
     
-    print(f"\nDeduplication Stats:")
-    print(f"  Input:     {len(semantic_entities):,}")
-    print(f"  Output:    {len(canonical):,}")
-    print(f"  Reduced:   {reduction:,} ({reduction_pct:.1f}%)")
-    print(f"  Aliases:   {len(aliases):,}")
+    print("\n[2b] METADATA ENTITIES BY TYPE")
+    print("-" * 50)
     
-    # Show high-merge entities (entities that absorbed many duplicates)
-    high_merge = sorted(canonical, key=lambda x: x.get('merge_count', 1), reverse=True)[:sample_size]
-    print(f"\n\nTop {sample_size} entities by merge count:")
-    for e in high_merge:
-        print(f"  {e.get('merge_count', 1):4d}x  '{e['name']}' ({e['type']})")
-        if e.get('aliases'):
-            print(f"         aliases: {e['aliases'][:3]}")
+    meta_counts = defaultdict(int)
+    for e in metadata:
+        meta_counts[e.get('type', 'Unknown')] += 1
     
-    # Type distribution after dedup
-    print("\n\nType distribution after dedup:")
-    type_counts = Counter(e['type'] for e in canonical)
-    for etype, count in type_counts.most_common():
-        print(f"  {etype:<25} {count:>6}")
+    print(f"Total: {len(metadata)}")
+    for t, c in sorted(meta_counts.items(), key=lambda x: -x[1]):
+        pct = 100*c/len(metadata) if metadata else 0
+        print(f"  {t:<25} {c:>5} ({pct:>5.1f}%)")
     
-    return canonical, aliases
+    return {
+        'semantic_total': len(semantic),
+        'semantic_types': dict(type_counts),
+        'metadata_total': len(metadata),
+        'metadata_types': dict(meta_counts),
+    }
 
 
-def evaluate_relations(semantic_entities: list, metadata_entities: list, sample_size: int = 15):
-    """Evaluate PART_OF and SAME_AS relation quality."""
-    print_section("3. RELATION QUALITY")
+def analyze_relations(part_of: list, same_as: list) -> dict:
+    """Analyze PART_OF and SAME_AS relations quality."""
+    print("\n[3] PART_OF RELATIONS")
+    print("-" * 50)
+    print(f"Total: {len(part_of)}")
     
-    # Add entity IDs
-    for i, e in enumerate(semantic_entities):
-        e['entity_id'] = f'ent_{i:05d}'
+    # Analyze sources
+    sources = defaultdict(int)
+    for r in part_of:
+        sources[r.get('source', 'unknown')] += 1
     
-    # Process metadata
-    disambiguator = MetadataDisambiguator(semantic_entities=semantic_entities)
-    meta_out, part_of, same_as = disambiguator.process(metadata_entities)
+    print(f"\nBy source:")
+    for src, count in sorted(sources.items(), key=lambda x: -x[1]):
+        print(f"  {src}: {count}")
     
-    # Stats
-    print(f"\nRelation Counts:")
-    print(f"  PART_OF (DocumentSection → Document): {len(part_of):,}")
-    print(f"  SAME_AS (Document ↔ Regulation):      {len(same_as):,}")
+    # Check for cross-chunk issues
+    cross_chunk = [r for r in part_of if 'cross_chunk' in r.get('source', '')]
+    print(f"\nCross-chunk relations: {len(cross_chunk)} ({100*len(cross_chunk)/len(part_of):.1f}%)")
     
-    # PART_OF samples - check for quality
-    print(f"\n\nPART_OF Samples (random {sample_size}):")
     if part_of:
-        samples = random.sample(part_of, min(sample_size, len(part_of)))
-        for r in samples:
-            # Quality check: is subject actually a subsection of object?
-            subj = r['subject']
-            obj = r['object']
-            looks_valid = obj.lower() in subj.lower() or len(obj) < len(subj)
-            flag = "✓" if looks_valid else "⚠️"
-            print(f"  {flag} '{subj[:45]}' → '{obj[:25]}'")
+        print(f"\nSample relations:")
+        for r in part_of[:5]:
+            subj = r.get('subject', '?')[:35]
+            obj = r.get('object', '?')[:35]
+            src = r.get('source', '?')
+            print(f"  {subj:<35} → {obj} [{src}]")
     
-    # SAME_AS samples
-    print(f"\n\nSAME_AS Samples (random {sample_size}):")
+    print("\n[4] SAME_AS RELATIONS")
+    print("-" * 50)
+    print(f"Total: {len(same_as)}")
+    
     if same_as:
-        samples = random.sample(same_as, min(sample_size, len(same_as)))
-        for r in samples:
-            conf = r.get('confidence', 0)
-            flag = "✓" if conf >= 0.95 else "~" if conf >= 0.85 else "⚠️"
-            print(f"  {flag} '{r['subject'][:30]}' ↔ '{r['object'][:25]}' (conf={conf:.2f})")
+        # Check confidence distribution
+        confidences = [r.get('confidence', 1.0) for r in same_as]
+        print(f"\nConfidence distribution:")
+        print(f"  Min: {min(confidences):.2f}, Max: {max(confidences):.2f}")
+        print(f"  < 1.0: {len([c for c in confidences if c < 1.0])} relations")
+        
+        print(f"\nSample relations:")
+        for r in same_as[:8]:
+            subj = r.get('subject', '?')[:35]
+            obj = r.get('object', '?')[:35]
+            conf = r.get('confidence', 1.0)
+            print(f"  {subj:<35} ↔ {obj} [{conf:.2f}]")
     
-    # Check for potential issues
-    print("\n\nPotential Issues:")
-    
-    # Self-references in PART_OF
-    self_refs = [r for r in part_of if r['subject'].lower() == r['object'].lower()]
-    print(f"  Self-references in PART_OF: {len(self_refs)}")
-    if self_refs:
-        for r in self_refs[:5]:
-            print(f"    ⚠️ '{r['subject']}' → '{r['object']}'")
-    
-    # Very short objects in PART_OF (suspicious)
-    short_objs = [r for r in part_of if len(r['object']) <= 5]
-    print(f"  PART_OF with short object (<=5 chars): {len(short_objs)}")
-    if short_objs:
-        for r in short_objs[:5]:
-            print(f"    ⚠️ '{r['subject'][:40]}' → '{r['object']}'")
-    
-    return part_of, same_as
+    return {
+        'part_of_total': len(part_of),
+        'part_of_cross_chunk': len(cross_chunk),
+        'same_as_total': len(same_as),
+    }
 
 
-def evaluate_suspicious_patterns(entities: list, sample_size: int = 20):
-    """Detect suspicious patterns that might indicate extraction issues."""
-    print_section("4. SUSPICIOUS PATTERNS")
+def quality_checks(semantic: list) -> dict:
+    """Run quality checks on semantic entities."""
+    print("\n[5] QUALITY CHECKS")
+    print("-" * 50)
     
-    # Very short entity names by type
-    print("\nShort entity names (<=3 chars) by type:")
-    short_by_type = defaultdict(list)
-    for e in entities:
-        if len(e['name']) <= 3:
-            short_by_type[e['type']].append(e['name'])
+    issues = {}
     
-    for etype, names in sorted(short_by_type.items(), key=lambda x: -len(x[1])):
-        unique = set(names)
-        print(f"  {etype}: {len(names)} total, {len(unique)} unique")
-        if len(unique) <= 10:
-            print(f"    → {sorted(unique)}")
+    # High chunk counts
+    print("\nHigh chunk counts (top 10):")
+    chunk_counts = [(e['name'], len(e.get('chunk_ids', []))) for e in semantic]
+    top_chunks = sorted(chunk_counts, key=lambda x: -x[1])[:10]
+    for name, count in top_chunks:
+        print(f"  {name:<50} {count} chunks")
+    issues['max_chunk_count'] = top_chunks[0][1] if top_chunks else 0
     
-    # Duplicate names across types (potential misclassification)
-    print(f"\n\nNames appearing in MULTIPLE types:")
-    name_types = defaultdict(set)
-    for e in entities:
-        name_types[e['name']].add(e['type'])
+    # Short names
+    short_names = [e['name'] for e in semantic if len(e['name']) <= 3]
+    print(f"\nShort names (<=3 chars):")
+    print(f"  Count: {len(short_names)}")
+    # Separate valid from garbage
+    valid_short = [n for n in short_names if n.upper() in ['AI', 'EU', 'UK', 'US', 'ML', 'NLP', 'GDP', 'CEO', 'CTO']]
+    garbage_short = [n for n in short_names if n not in valid_short]
+    print(f"  Valid (AI, EU, etc): {len(valid_short)}")
+    print(f"  Garbage: {len(garbage_short)}")
+    print(f"  Garbage examples: {garbage_short[:15]}")
+    issues['short_names_garbage'] = len(garbage_short)
     
-    multi_type = {name: types for name, types in name_types.items() if len(types) > 1}
-    print(f"  Total: {len(multi_type)} names appear in multiple types")
+    # Numeric patterns
+    numeric = [e['name'] for e in semantic if re.match(r'^[\d\.\-\(\)\,]+$', e['name'])]
+    print(f"\nNumeric patterns:")
+    print(f"  Count: {len(numeric)}")
+    print(f"  Examples: {numeric[:10]}")
+    issues['numeric_garbage'] = len(numeric)
     
-    # Show examples
-    samples = list(multi_type.items())[:sample_size]
-    for name, types in samples:
-        print(f"    '{name[:40]}' → {types}")
+    # Very long names (potential garbage)
+    long_names = [(e['name'], len(e['name'])) for e in semantic if len(e['name']) > 80]
+    if long_names:
+        print(f"\nVery long names (>80 chars):")
+        print(f"  Count: {len(long_names)}")
+        for name, length in sorted(long_names, key=lambda x: -x[1])[:5]:
+            print(f"  [{length}] {name[:80]}...")
+    issues['long_names'] = len(long_names)
     
-    # Very frequent entities (might indicate extraction issues)
-    print(f"\n\nMost frequent entities (potential over-extraction):")
-    name_counts = Counter(e['name'] for e in entities)
-    for name, count in name_counts.most_common(15):
-        if count > 50:
-            types = set(e['type'] for e in entities if e['name'] == name)
-            print(f"  {count:5d}x '{name[:40]}' → {types}")
+    # Names with special characters
+    special = [e['name'] for e in semantic if re.search(r'[^\w\s\-\'\.\,\(\)]', e['name'])]
+    if special:
+        print(f"\nSpecial character names:")
+        print(f"  Count: {len(special)}")
+        print(f"  Examples: {special[:10]}")
+    issues['special_chars'] = len(special)
+    
+    return issues
+
+
+def analyze_samejudge_progress() -> dict:
+    """Analyze SameJudge LLM decisions if available."""
+    print("\n[6] SAMEJUDGE LLM ANALYSIS")
+    print("-" * 50)
+    
+    if not SAMEJUDGE_PROGRESS.exists():
+        print("  No SameJudge progress file found")
+        return {}
+    
+    progress = json.load(open(SAMEJUDGE_PROGRESS))
+    
+    total = progress.get('total', 0)
+    processed = progress.get('processed', 0)
+    merge_pairs = progress.get('merge_pairs', [])
+    
+    print(f"Total pairs: {total}")
+    print(f"Processed: {processed}")
+    print(f"Merges approved: {len(merge_pairs)} ({100*len(merge_pairs)/max(1,processed):.1f}%)")
+    
+    if merge_pairs:
+        # Similarity distribution of approved merges
+        sims = [p.get('similarity', 0) for p in merge_pairs]
+        print(f"\nApproved merge similarity distribution:")
+        print(f"  Min: {min(sims):.3f}, Max: {max(sims):.3f}")
+        for threshold in [0.88, 0.89, 0.90, 0.91, 0.92, 0.95]:
+            count = len([s for s in sims if s < threshold])
+            print(f"  < {threshold}: {count}")
+    
+    return {
+        'total_pairs': total,
+        'processed': processed,
+        'merges_approved': len(merge_pairs),
+        'approval_rate': len(merge_pairs) / max(1, processed),
+    }
+
+
+def summary_report(alias_metrics: dict, entity_metrics: dict, 
+                   relation_metrics: dict, quality_issues: dict,
+                   samejudge_metrics: dict) -> None:
+    """Print summary report."""
+    print("\n" + "=" * 70)
+    print(" SUMMARY REPORT")
+    print("=" * 70)
+    
+    print("\n📊 COUNTS:")
+    print(f"  Semantic entities: {entity_metrics.get('semantic_total', 0):,}")
+    print(f"  Metadata entities: {entity_metrics.get('metadata_total', 0):,}")
+    print(f"  Aliases tracked: {alias_metrics.get('canonical_count', 0):,}")
+    print(f"  PART_OF relations: {relation_metrics.get('part_of_total', 0):,}")
+    print(f"  SAME_AS relations: {relation_metrics.get('same_as_total', 0):,}")
+    
+    print("\n✅ QUALITY METRICS:")
+    print(f"  Max aliases per entity: {alias_metrics.get('max_aliases', 0)}")
+    if samejudge_metrics:
+        print(f"  LLM approval rate: {100*samejudge_metrics.get('approval_rate', 0):.1f}%")
+    
+    print("\n⚠️  ISSUES TO ADDRESS:")
+    print(f"  Garbage short names: {quality_issues.get('short_names_garbage', 0)}")
+    print(f"  Numeric garbage: {quality_issues.get('numeric_garbage', 0)}")
+    print(f"  Cross-chunk PART_OF: {relation_metrics.get('part_of_cross_chunk', 0)}")
+    
+    # Quality score
+    max_aliases = alias_metrics.get('max_aliases', 999)
+    if max_aliases <= 20:
+        print("\n🎯 ALIAS QUALITY: EXCELLENT (max ≤ 20)")
+    elif max_aliases <= 50:
+        print("\n🎯 ALIAS QUALITY: GOOD (max ≤ 50)")
+    else:
+        print("\n🎯 ALIAS QUALITY: NEEDS WORK (max > 50)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate Phase 1C quality')
-    parser.add_argument('--sample', type=int, default=10, help='Sample size for examples')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--input', type=str, 
-                       default='data/interim/entities/pre_entities.jsonl',
-                       help='Input pre-entities file')
-    parser.add_argument('--chunks', type=str,
-                       default='data/processed/chunks/chunks_embedded.jsonl',
-                       help='Chunks file for provenance')
-    args = parser.parse_args()
-    
-    random.seed(args.seed)
-    
-    print("\n" + "="*70)
-    print(" PHASE 1C EVALUATION - Data-Driven Quality Metrics")
-    print("="*70)
-    print(f"\nInput: {args.input}")
-    print(f"Sample size: {args.sample}")
-    print(f"Seed: {args.seed}")
+    """Run full analysis."""
+    print("=" * 70)
+    print(" PHASE 1C DISAMBIGUATION OUTPUT ANALYSIS")
+    print("=" * 70)
     
     # Load data
-    print("\nLoading data...")
-    entities = load_entities(args.input)
-    chunks = load_chunks_as_dict(args.chunks)
-    print(f"  Loaded {len(entities):,} entities from {len(chunks):,} chunks")
+    aliases = {}
+    if ALIASES_FILE.exists():
+        aliases = json.load(open(ALIASES_FILE))
     
-    # 1. Filter evaluation
-    filtered, kept = evaluate_filtering(entities, chunks, args.sample)
-    
-    # Get clean entities for further evaluation
-    filt = PreEntityFilter(chunks=chunks)
-    clean, _ = filt.filter(entities)
-    semantic, metadata = route_by_type(clean)
-    
-    # 2. Deduplication evaluation
-    canonical, aliases = evaluate_deduplication(semantic, args.sample)
-    
-    # 3. Relation evaluation
-    part_of, same_as = evaluate_relations(canonical, metadata, args.sample)
-    
-    # 4. Suspicious patterns
-    evaluate_suspicious_patterns(entities, args.sample)
+    semantic = load_jsonl(SEMANTIC_FILE)
+    metadata = load_jsonl(METADATA_FILE)
+    part_of = load_jsonl(PART_OF_FILE)
+    same_as = load_jsonl(SAME_AS_FILE)
     
     # Summary
-    print_section("5. SUMMARY")
-    print(f"""
-Pipeline Flow:
-  Raw entities:        {len(entities):>8,}
-  After filter:        {len(clean):>8,}  (-{len(entities)-len(clean):,} filtered)
-  Semantic path:       {len(semantic):>8,}
-  Metadata path:       {len(metadata):>8,}
-  After dedup:         {len(canonical):>8,}  (-{len(semantic)-len(canonical):,} merged)
-  
-Relations:
-  PART_OF:             {len(part_of):>8,}
-  SAME_AS:             {len(same_as):>8,}
-
-Quality Checks:
-  - Review FILTERED samples: Are we removing things we shouldn't?
-  - Review KEPT samples: Are we keeping garbage?
-  - Review PART_OF samples: Do the links make sense?
-  - Review SAME_AS samples: Are Document↔Regulation pairs correct?
-  - Check suspicious patterns: Multi-type names, over-extraction
-""")
+    print(f"\nFiles loaded:")
+    print(f"  Semantic entities: {len(semantic)}")
+    print(f"  Metadata entities: {len(metadata)}")
+    print(f"  Aliases: {len(aliases)} canonicals")
+    print(f"  PART_OF: {len(part_of)}")
+    print(f"  SAME_AS: {len(same_as)}")
+    
+    # Run analyses
+    alias_metrics = analyze_aliases(aliases)
+    entity_metrics = analyze_entities(semantic, metadata)
+    relation_metrics = analyze_relations(part_of, same_as)
+    quality_issues = quality_checks(semantic)
+    samejudge_metrics = analyze_samejudge_progress()
+    
+    # Summary
+    summary_report(alias_metrics, entity_metrics, relation_metrics, 
+                   quality_issues, samejudge_metrics)
+    
+    print("\n" + "=" * 70)
+    print(" ANALYSIS COMPLETE")
+    print("=" * 70)
 
 
 if __name__ == '__main__':

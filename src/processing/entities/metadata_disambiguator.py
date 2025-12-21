@@ -157,24 +157,17 @@ class MetadataDisambiguator:
                             'source': 'metadata_disambiguator',
                         })
                 
-                # Also check against ALL Documents (not just same chunk)
-                # DocumentSection often appears without parent Document in same chunk
-                for doc_list in documents_by_chunk.values():
-                    for doc in doc_list:
-                        if doc['chunk_ids'] == entity['chunk_ids']:
-                            continue  # Already checked same chunk
-                        if self._is_part_of(entity['name'], doc['name']):
-                            part_of_relations.append({
-                                'subject': entity['name'],
-                                'subject_id': entity['entity_id'],
-                                'subject_type': 'DocumentSection',
-                                'predicate': 'PART_OF',
-                                'object': doc['name'],
-                                'object_id': doc['entity_id'],
-                                'object_type': 'Document',
-                                'chunk_id': chunk_id,
-                                'source': 'metadata_disambiguator_cross_chunk',
-                            })
+                # NOTE: Cross-chunk matching disabled - too many false positives
+                # with fuzzy matching. DocumentSections should reference their
+                # parent Document in the same chunk via explicit naming.
+                # 
+                # Original logic (disabled):
+                # for doc_list in documents_by_chunk.values():
+                #     for doc in doc_list:
+                #         if doc['chunk_ids'] == entity['chunk_ids']:
+                #             continue
+                #         if self._is_part_of(entity['name'], doc['name']):
+                #             part_of_relations.append({...})
         
         # Deduplicate relations (same pair might be found multiple times)
         part_of_relations = self._dedupe_relations(part_of_relations)
