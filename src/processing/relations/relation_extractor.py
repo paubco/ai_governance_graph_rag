@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_THRESHOLD = 0.85
 DEFAULT_MMR_LAMBDA = 0.65
-DEFAULT_NUM_CHUNKS = 6
+DEFAULT_NUM_CHUNKS = 4
 DEFAULT_CANDIDATE_POOL = 200
 DEFAULT_SECOND_ROUND_THRESHOLD = 0.25
 
@@ -118,12 +118,15 @@ def batch_cosine_similarity(query_vec: np.ndarray, vectors: np.ndarray) -> np.nd
 # PROMPT HELPERS
 # ============================================================================
 
-def format_chunks_for_prompt(chunks: List[Dict]) -> str:
-    """Format chunks for relation extraction prompt."""
+def format_chunks_for_prompt(chunks: List[Dict], max_chars_per_chunk: int = 2000) -> str:
+    """Format chunks for relation extraction prompt with truncation."""
     formatted = []
     for chunk in chunks:
         chunk_id = get_chunk_id(chunk) or 'unknown'
         text = chunk.get('text', '')
+        # Truncate long chunks
+        if len(text) > max_chars_per_chunk:
+            text = text[:max_chars_per_chunk] + "... [truncated]"
         formatted.append(f"--- Chunk ID: {chunk_id} ---\n{text}")
     return "\n\n".join(formatted)
 
