@@ -59,7 +59,7 @@ from src.processing.entities.metadata_disambiguator import (
 from src.utils.io import load_jsonl, save_jsonl, save_json, load_json
 from src.utils.id_generator import generate_entity_id
 from src.utils.checkpoint_manager import CheckpointManager
-from src.config.extraction_config import DISAMBIGUATION_CONFIG
+from config.extraction_config import DISAMBIGUATION_CONFIG
 
 # Configure logging
 logging.basicConfig(
