@@ -1,35 +1,23 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FAISS Index Builder for GraphRAG Vector Store
+FAISS Index Builder for GraphRAG Vector Store.
 
 Builds FAISS HNSW indexes for entity and chunk embeddings with parallel ID mapping.
-Handles embedding extraction, index construction, and persistence with consistent
-ordering between FAISS indices and ID maps for efficient similarity search.
+Handles embedding extraction, index construction, and persistence.
 
-Index Categories:
-1. Entity Embeddings:
-   - Source: normalized_entities_with_ids.json
-   - Output: entity_embeddings.index + entity_id_map.json
-   - Dimension: 1024 (BGE-M3)
-2. Chunk Embeddings:
-   - Source: chunks_embedded.json
-   - Output: chunk_embeddings.index + chunk_id_map.json
-   - Dimension: 1024 (BGE-M3)
+Author: Pau Barba i Colomer
+Created: 2025-12-21
+Modified: 2025-12-21
 
-HNSW Parameters:
-- M=32: Number of neighbors per node in graph
-- ef_construction=200: Dynamic candidate list size during construction
-
-Usage:
-    python -m src.graph.faiss_builder --data-dir data
-    python -m src.graph.faiss_builder --entities-file data/interim/entities/normalized_entities_with_ids.json
+References:
+    - See ARCHITECTURE.md § 3.2.2 for Phase 2B context
+    - See PHASE_2B_DESIGN.md for FAISS indices
 """
 
 # Standard library
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 import sys
 import argparse
 
@@ -43,11 +31,10 @@ import numpy as np
 import faiss
 from tqdm import tqdm
 
-# Local
-from src.utils.logger import setup_logging, get_logger
+# Project imports
+from src.foundation.io import read_jsonl
+from src.utils.logger import get_logger
 
-# Setup logging
-setup_logging()
 logger = get_logger(__name__)
 
 
@@ -57,6 +44,10 @@ class FAISSIndexBuilder:
     
     Handles entity and chunk embeddings separately, maintaining
     consistent ordering between FAISS indices and ID maps.
+    
+    Example:
+        builder = FAISSIndexBuilder(Path('data/processed/faiss'))
+        builder.build_all_indexes(entities_file, chunks_file)
     """
     
     def __init__(self, output_dir: Path):
@@ -71,26 +62,42 @@ class FAISSIndexBuilder:
     
     def load_entity_embeddings(self, entities_file: Path) -> Tuple[List[str], np.ndarray]:
         """
-        Load entity embeddings from normalized entities file.
+        Load entity embeddings from file.
+        
+        Supports both JSON and JSONL formats.
         
         Args:
-            entities_file: Path to normalized_entities_with_ids.json
+            entities_file: Path to entities file with embeddings
             
         Returns:
             Tuple of (entity_ids, embeddings_array)
         """
         logger.info(f"Loading entity embeddings from {entities_file}...")
         
-        with open(entities_file, 'r', encoding='utf-8') as f:
-            entities = json.load(f)
+        # Load data based on format
+        if entities_file.suffix == '.jsonl':
+            entities = list(read_jsonl(entities_file))
+        else:
+            with open(entities_file, 'r', encoding='utf-8') as f:
+                entities = json.load(f)
         
         # Extract in consistent order
         entity_ids = []
         embeddings = []
+        skipped = 0
         
         for entity in tqdm(entities, desc="Extracting entity embeddings"):
-            entity_ids.append(entity['entity_id'])
-            embeddings.append(entity['embedding'])
+            entity_id = entity.get('entity_id')
+            embedding = entity.get('embedding')
+            
+            if entity_id and embedding is not None:
+                entity_ids.append(entity_id)
+                embeddings.append(embedding)
+            else:
+                skipped += 1
+        
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} entities without embeddings")
         
         embeddings_array = np.array(embeddings, dtype='float32')
         
@@ -100,32 +107,47 @@ class FAISSIndexBuilder:
     
     def load_chunk_embeddings(self, chunks_file: Path) -> Tuple[List[str], np.ndarray]:
         """
-        Load chunk embeddings from chunks_embedded.json.
+        Load chunk embeddings from file.
+        
+        Supports both JSON and JSONL formats.
         
         Args:
-            chunks_file: Path to chunks_embedded.json
+            chunks_file: Path to chunks file with embeddings
             
         Returns:
             Tuple of (chunk_ids, embeddings_array)
         """
         logger.info(f"Loading chunk embeddings from {chunks_file}...")
         
-        with open(chunks_file, 'r', encoding='utf-8') as f:
-            chunks_data = json.load(f)
-        
-        # Handle dict structure: {chunk_id: chunk_object}
-        if isinstance(chunks_data, dict):
-            chunks = list(chunks_data.values())
+        # Load data based on format
+        if chunks_file.suffix == '.jsonl':
+            chunks_data = list(read_jsonl(chunks_file))
         else:
-            chunks = chunks_data
+            with open(chunks_file, 'r', encoding='utf-8') as f:
+                chunks_data = json.load(f)
+            
+            # Handle dict structure: {chunk_id: chunk_object}
+            if isinstance(chunks_data, dict):
+                chunks_data = list(chunks_data.values())
         
         # Extract in consistent order
         chunk_ids = []
         embeddings = []
+        skipped = 0
         
-        for chunk in tqdm(chunks, desc="Extracting chunk embeddings"):
-            chunk_ids.append(chunk['chunk_id'])
-            embeddings.append(chunk['embedding'])
+        for chunk in tqdm(chunks_data, desc="Extracting chunk embeddings"):
+            # Handle both formats
+            chunk_id = chunk.get('chunk_id') or chunk.get('chunk_ids', [''])[0]
+            embedding = chunk.get('embedding')
+            
+            if chunk_id and embedding is not None:
+                chunk_ids.append(chunk_id)
+                embeddings.append(embedding)
+            else:
+                skipped += 1
+        
+        if skipped > 0:
+            logger.warning(f"Skipped {skipped} chunks without embeddings")
         
         embeddings_array = np.array(embeddings, dtype='float32')
         
@@ -133,14 +155,15 @@ class FAISSIndexBuilder:
         
         return chunk_ids, embeddings_array
     
-    def build_hnsw_index(self, embeddings: np.ndarray, m: int = 32, ef_construction: int = 200) -> faiss.Index:
+    def build_hnsw_index(self, embeddings: np.ndarray, m: int = 32, 
+                         ef_construction: int = 200) -> faiss.Index:
         """
         Build FAISS HNSW index.
         
         Args:
             embeddings: Numpy array of embeddings (N, D)
             m: Number of neighbors per node in HNSW graph (default: 32)
-            ef_construction: Size of dynamic candidate list during construction (default: 200)
+            ef_construction: Size of dynamic candidate list (default: 200)
             
         Returns:
             FAISS HNSW index
@@ -169,8 +192,8 @@ class FAISSIndexBuilder:
         Args:
             index: FAISS index
             id_map: List of IDs in same order as index
-            index_file: Filename for index (e.g., 'entity_embeddings.index')
-            map_file: Filename for ID map (e.g., 'entity_id_map.json')
+            index_file: Filename for index
+            map_file: Filename for ID map
         """
         # Verify consistency
         if index.ntotal != len(id_map):
@@ -196,17 +219,13 @@ class FAISSIndexBuilder:
         Build and save entity embedding index.
         
         Args:
-            entities_file: Path to normalized_entities_with_ids.json
+            entities_file: Path to entities file with embeddings
         """
         logger.info("\n=== BUILDING ENTITY INDEX ===")
         
-        # Load embeddings
         entity_ids, embeddings = self.load_entity_embeddings(entities_file)
-        
-        # Build index
         index = self.build_hnsw_index(embeddings)
         
-        # Save
         self.save_index_and_map(
             index=index,
             id_map=entity_ids,
@@ -221,17 +240,13 @@ class FAISSIndexBuilder:
         Build and save chunk embedding index.
         
         Args:
-            chunks_file: Path to chunks_embedded.json
+            chunks_file: Path to chunks file with embeddings
         """
         logger.info("\n=== BUILDING CHUNK INDEX ===")
         
-        # Load embeddings
         chunk_ids, embeddings = self.load_chunk_embeddings(chunks_file)
-        
-        # Build index
         index = self.build_hnsw_index(embeddings)
         
-        # Save
         self.save_index_and_map(
             index=index,
             id_map=chunk_ids,
@@ -246,20 +261,17 @@ class FAISSIndexBuilder:
         Build both entity and chunk indexes.
         
         Args:
-            entities_file: Path to normalized_entities_with_ids.json
-            chunks_file: Path to chunks_embedded.json
+            entities_file: Path to entities file with embeddings
+            chunks_file: Path to chunks file with embeddings
         """
         logger.info("Starting FAISS index building...")
         
-        # Build entity index
         self.build_entity_index(entities_file)
-        
-        # Build chunk index
         self.build_chunk_index(chunks_file)
         
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("FAISS INDEX BUILDING COMPLETE")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info(f"Output directory: {self.output_dir}")
         logger.info("Files created:")
         logger.info("  - entity_embeddings.index")
@@ -267,6 +279,10 @@ class FAISSIndexBuilder:
         logger.info("  - chunk_embeddings.index")
         logger.info("  - chunk_id_map.json")
 
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 def main():
     """Main entry point for FAISS index building."""
@@ -288,22 +304,28 @@ def main():
     parser.add_argument(
         '--entities-file',
         type=Path,
-        help='Path to normalized_entities_with_ids.json (default: data/processed/entities/...)'
+        help='Path to entities file with embeddings'
     )
     parser.add_argument(
         '--chunks-file',
         type=Path,
-        help='Path to chunks_embedded.json (default: data/processed/chunks/...)'
+        help='Path to chunks file with embeddings'
     )
     
     args = parser.parse_args()
     
     # Set default paths if not provided
     if args.entities_file is None:
-        args.entities_file = args.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        # Try JSONL first, fall back to JSON
+        jsonl_path = args.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
+        json_path = args.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        args.entities_file = jsonl_path if jsonl_path.exists() else json_path
     
     if args.chunks_file is None:
-        args.chunks_file = args.data_dir / 'interim' / 'chunks' / 'chunks_embedded.json'
+        # Try JSONL first, fall back to JSON
+        jsonl_path = args.data_dir / 'interim' / 'chunks' / 'chunks_embedded.jsonl'
+        json_path = args.data_dir / 'interim' / 'chunks' / 'chunks_embedded.json'
+        args.chunks_file = jsonl_path if jsonl_path.exists() else json_path
     
     # Verify files exist
     if not args.entities_file.exists():

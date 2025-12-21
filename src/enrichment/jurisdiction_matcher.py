@@ -1,24 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Link country/region entities to jurisdiction codes.
+Jurisdiction Entity Matcher.
 
 Maps country and region entities to jurisdiction codes via SAME_AS relationships.
-Only links entities that represent the jurisdiction itself (not organizations like
-CNIL or FTC).
+Only links entities that represent the jurisdiction itself (not organizations
+like CNIL or FTC).
 
-Example:
-    matcher = JurisdictionMatcher(valid_codes)
-    matches = matcher.match_entities(entities)
-    # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
+Author: Pau Barba i Colomer
+Created: 2025-12-21
+Modified: 2025-12-21
+
+References:
+    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    - See PHASE_2A_DESIGN.md for matching pipeline
 """
 
 # Standard library
+import json
+from pathlib import Path
 from typing import List, Dict, Set
 
+# Project imports
+from src.foundation.id_generator import generate_entity_id
+from src.utils.logger import get_logger
 
-# ==============================================================================
+logger = get_logger(__name__)
+
+
+# =============================================================================
 # JURISDICTION NAME MAPPING
-# ==============================================================================
+# =============================================================================
 
 # Direct name → code mapping
 # Built from scraping_summary.json + common variants (max 2-3 per jurisdiction)
@@ -92,9 +103,9 @@ JURISDICTION_MAP = {
 }
 
 
-# ==============================================================================
+# =============================================================================
 # JURISDICTION MATCHER
-# ==============================================================================
+# =============================================================================
 
 class JurisdictionMatcher:
     """
@@ -102,6 +113,11 @@ class JurisdictionMatcher:
     
     Uses direct name lookup for entities that ARE the jurisdiction.
     Not for organizations (CNIL, FTC) - those stay unlinked.
+    
+    Example:
+        matcher = JurisdictionMatcher(valid_codes)
+        matches = matcher.match_entities(entities)
+        # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
     """
     
     def __init__(self, valid_codes: Set[str]):
@@ -122,18 +138,18 @@ class JurisdictionMatcher:
             entities: Normalized entities from Phase 1C
             
         Returns:
-            List of matches: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
+            List of matches: [{"entity_id": "...", "jurisdiction_code": "..."}, ...]
         """
         matches = []
         
         for entity in entities:
             entity_name = entity['name']
             entity_id = entity.get('entity_id')
+            entity_type = entity.get('type', '')
             
-            # Generate entity_id if missing
+            # Generate entity_id if missing (legacy compatibility)
             if not entity_id:
-                from src.utils.id_generator import generate_entity_id
-                entity_id = generate_entity_id(entity_name)
+                entity_id = generate_entity_id(entity_name, entity_type)
             
             # Direct name lookup
             if entity_name in self.name_map:
@@ -147,10 +163,12 @@ class JurisdictionMatcher:
                         'jurisdiction_code': code
                     })
         
+        logger.info(f"Matched {len(matches)} entities to jurisdictions")
+        
         return matches
     
     @staticmethod
-    def load_valid_codes(scraping_summary_path: str) -> Set[str]:
+    def load_valid_codes(scraping_summary_path: Path) -> Set[str]:
         """
         Load valid jurisdiction codes from scraping summary.
         
@@ -160,9 +178,10 @@ class JurisdictionMatcher:
         Returns:
             Set of 2-letter codes
         """
-        import json
-        
         with open(scraping_summary_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        return {country['code'] for country in data['countries']}
+        codes = {country['code'] for country in data['countries']}
+        logger.info(f"Loaded {len(codes)} valid jurisdiction codes")
+        
+        return codes

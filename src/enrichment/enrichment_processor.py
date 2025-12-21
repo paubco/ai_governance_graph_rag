@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Pipeline orchestrator for Phase 2A Scopus enrichment.
+Phase 2A Enrichment Pipeline Orchestrator.
 
-Coordinates L1 metadata extraction, citation matching, jurisdiction linking, and
-relation generation for the AI governance GraphRAG pipeline. Outputs JSON files
-for Phase 2B Neo4j construction.
+Coordinates L1 metadata extraction, citation matching, jurisdiction linking,
+and relation generation for the AI governance GraphRAG pipeline.
 
-Example:
-    python src/enrichment/enrichment_processor.py
+Author: Pau Barba i Colomer
+Created: 2025-12-21
+Modified: 2025-12-21
+
+References:
+    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    - See PHASE_2A_DESIGN.md for matching pipeline
 """
 
 # Standard library
@@ -26,40 +30,47 @@ if str(PROJECT_ROOT) not in sys.path:
 # Third-party
 from tqdm import tqdm
 
-# Local
-from src.enrichment.scopus_enricher import (
-    ScopusParser,
-    ReferenceParser,
-    CitationEntityIdentifier,
-    CitationMatcher
-)
+# Foundation imports
+from src.foundation.io import read_jsonl, write_jsonl
+
+# Default config (can be overridden)
+DEFAULT_ENRICHMENT_CONFIG = {
+    # Input paths (relative to PROJECT_ROOT/data)
+    'scopus_csv_path': 'data/raw/academic/scopus_2023/scopus_export_2023_raw.csv',
+    'entities_path': 'data/interim/entities/entities_semantic.jsonl',
+    'relations_path': 'data/processed/relations/relations_output.jsonl',
+    'chunks_path': 'data/interim/chunks/chunks_embedded.jsonl',
+    'scraping_summary_path': 'data/raw/dlapiper/scraping_summary.json',
+    
+    # Output directory
+    'output_dir': 'data/processed/enrichment',
+    
+    # Matching thresholds
+    'citation_match_threshold': 0.65,
+    'title_similarity_threshold': 0.75,
+    'l1_overlap_threshold': 0.90,
+}
+
+# Try to import from config, fall back to defaults
+try:
+    from src.config.extraction import ENRICHMENT_CONFIG as _cfg
+    # Merge with defaults (config overrides defaults)
+    ENRICHMENT_CONFIG = {**DEFAULT_ENRICHMENT_CONFIG, **_cfg}
+except ImportError:
+    ENRICHMENT_CONFIG = DEFAULT_ENRICHMENT_CONFIG
+
+# Local imports
+from src.enrichment.scopus_parser import ScopusParser, ReferenceParser
+from src.enrichment.citation_matcher import CitationEntityIdentifier, CitationMatcher
 from src.enrichment.jurisdiction_matcher import JurisdictionMatcher
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
-
-# Input paths
-SCOPUS_CSV = Path("data/raw/academic/scopus_2023/scopus_export_2023_raw.csv")
-NORMALIZED_ENTITIES = Path("data/interim/entities/normalized_entities_with_ids.json")
-RELATIONS_FILE = Path("data/interim/relations/relations_normalized.json")
-CHUNKS_FILE = Path("data/interim/chunks/chunks_text.json")
-SCRAPING_SUMMARY = Path("data/raw/dlapiper/scraping_summary.json")
-
-# Output directories (organized by node type)
-ENTITIES_DIR = Path("data/processed/entities")
-RELATIONS_DIR = Path("data/processed/relations")
-REPORTS_DIR = Path("data/processed/reports")
-
-ENTITIES_DIR.mkdir(parents=True, exist_ok=True)
-RELATIONS_DIR.mkdir(parents=True, exist_ok=True)
-REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ==============================================================================
+# =============================================================================
 # PIPELINE ORCHESTRATION
-# ==============================================================================
+# =============================================================================
 
 class EnrichmentProcessor:
     """
@@ -69,26 +80,45 @@ class EnrichmentProcessor:
     1. L1 metadata extraction (Scopus CSV → Publications, Authors, Journals)
     2. Citation matching (Entity → L1/L2 Publications)
     3. Jurisdiction linking (Entity → Jurisdiction)
-    4. Relation generation (5 types: MATCHED_TO, CITES, PUBLISHED_IN, CONTAINS, SAME_AS)
+    4. Relation generation (MATCHED_TO, CITES, PUBLISHED_IN, CONTAINS, SAME_AS)
     
     Outputs JSON files for Phase 2B Neo4j construction.
     """
     
-    def __init__(self):
-        """Initialize processor with empty state."""
+    def __init__(self, config: Dict = None):
+        """
+        Initialize processor with configuration.
+        
+        Args:
+            config: Optional config override (defaults to ENRICHMENT_CONFIG)
+        """
+        self.config = config or ENRICHMENT_CONFIG
+        
+        # Set paths from config
+        self.scopus_csv = Path(self.config['scopus_csv_path'])
+        self.entities_file = Path(self.config['entities_path'])
+        self.relations_file = Path(self.config['relations_path'])
+        self.chunks_file = Path(self.config['chunks_path'])
+        self.scraping_summary = Path(self.config['scraping_summary_path'])
+        
+        # Output directories
+        self.output_dir = Path(self.config['output_dir'])
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # State
         self.l1_publications = []
         self.l2_publications = []
         self.authors = []
         self.journals = []
         self.relations = []
-        self.quality_stats = {}
+        self.quality_report = {}
     
     def run(self):
         """Execute complete enrichment pipeline."""
-        print("\n" + "="*70)
-        print("PHASE 2A: SCOPUS ENRICHMENT & CITATION MATCHING")
-        print("="*70)
-        print(f"\nTimestamp: {datetime.now().isoformat()}")
+        logger.info("=" * 70)
+        logger.info("PHASE 2A: SCOPUS ENRICHMENT & CITATION MATCHING")
+        logger.info("=" * 70)
+        logger.info(f"Timestamp: {datetime.now().isoformat()}")
         
         # Load input data
         entities, relations, chunks = self._load_input_data()
@@ -122,57 +152,71 @@ class EnrichmentProcessor:
         # Step 9: Save outputs
         self._save_outputs()
         
-        print("\n✓ Pipeline complete!")
+        logger.info("✓ Pipeline complete!")
     
     def _load_input_data(self) -> tuple:
         """Load entities, relations, and chunks."""
-        print(f"\n{'='*70}")
-        print("LOADING INPUT DATA")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("LOADING INPUT DATA")
+        logger.info("=" * 70)
         
-        with open(NORMALIZED_ENTITIES, 'r', encoding='utf-8') as f:
-            entities = json.load(f)
-        print(f"✓ Loaded {len(entities)} entities")
+        # Load entities (JSONL format for v1.1)
+        if self.entities_file.suffix == '.jsonl':
+            entities = list(read_jsonl(self.entities_file))
+        else:
+            with open(self.entities_file, 'r', encoding='utf-8') as f:
+                entities = json.load(f)
+        logger.info(f"✓ Loaded {len(entities)} entities")
         
-        with open(RELATIONS_FILE, 'r', encoding='utf-8') as f:
-            relations = json.load(f)
-        print(f"✓ Loaded {len(relations)} relations")
+        # Load relations (JSONL format for v1.1)
+        if self.relations_file.suffix == '.jsonl':
+            relations = list(read_jsonl(self.relations_file))
+        else:
+            with open(self.relations_file, 'r', encoding='utf-8') as f:
+                relations = json.load(f)
+        logger.info(f"✓ Loaded {len(relations)} relations")
         
-        with open(CHUNKS_FILE, 'r', encoding='utf-8') as f:
-            chunks_dict = json.load(f)
-        
-        # Convert dict to list
-        chunks = list(chunks_dict.values())
-        print(f"✓ Loaded {len(chunks)} chunks")
+        # Load chunks (JSONL format for v1.1)
+        if self.chunks_file.suffix == '.jsonl':
+            chunks = list(read_jsonl(self.chunks_file))
+        else:
+            with open(self.chunks_file, 'r', encoding='utf-8') as f:
+                chunks_data = json.load(f)
+            # Handle dict structure: {chunk_id: chunk_object}
+            if isinstance(chunks_data, dict):
+                chunks = list(chunks_data.values())
+            else:
+                chunks = chunks_data
+        logger.info(f"✓ Loaded {len(chunks)} chunks")
         
         return entities, relations, chunks
     
     def _parse_scopus_csv(self) -> tuple:
         """Parse Scopus CSV to extract L1 metadata."""
-        print(f"\n{'='*70}")
-        print("STEP 1: Parsing Scopus CSV")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 1: Parsing Scopus CSV")
+        logger.info("=" * 70)
         
-        parser = ScopusParser(SCOPUS_CSV)
+        parser = ScopusParser(self.scopus_csv)
         l1_pubs, authors, journals = parser.parse_publications()
         
-        print(f"✓ Loaded {len(l1_pubs)} publications")
-        print(f"✓ Extracted {len(authors)} unique authors")
-        print(f"✓ Extracted {len(journals)} unique journals")
+        logger.info(f"✓ Loaded {len(l1_pubs)} publications")
+        logger.info(f"✓ Extracted {len(authors)} unique authors")
+        logger.info(f"✓ Extracted {len(journals)} unique journals")
         
         return l1_pubs, authors, journals
     
     def _parse_references(self) -> Dict:
         """Parse References field for all L1 publications."""
-        print(f"\n{'='*70}")
-        print("STEP 2: Parsing References")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 2: Parsing References")
+        logger.info("=" * 70)
         
         parser = ReferenceParser()
         references_lookup = parser.parse_all_references(self.l1_publications)
         
         total_refs = sum(len(refs) for refs in references_lookup.values())
-        print(f"✓ Parsed {total_refs} references from {len(references_lookup)} publications")
+        logger.info(f"✓ Parsed {total_refs} references from {len(references_lookup)} publications")
         
         return references_lookup
     
@@ -182,9 +226,9 @@ class EnrichmentProcessor:
         relations: List[Dict]
     ) -> Dict:
         """Identify which entities are academic citations with discusses relations."""
-        print(f"\n{'='*70}")
-        print("STEP 3: Identifying Citation Entities")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 3: Identifying Citation Entities")
+        logger.info("=" * 70)
         
         identifier = CitationEntityIdentifier()
         citation_entities = identifier.identify(entities, relations)
@@ -195,31 +239,32 @@ class EnrichmentProcessor:
             t = ent_data.get('type', 'unknown')
             type_counts[t] = type_counts.get(t, 0) + 1
         
-        print(f"\n✓ Identified {len(citation_entities)} citation entities with discusses relations:")
+        logger.info(f"✓ Identified {len(citation_entities)} citation entities:")
         for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
-            print(f"  - {t}: {c}")
+            logger.info(f"  - {t}: {c}")
         
         return citation_entities
     
     def _build_chunk_mapping(self, chunks: List[Dict]) -> Dict:
         """Build mapping from chunk_id to scopus_id."""
-        print(f"\n{'='*70}")
-        print("STEP 4: Building Chunk→L1 Mapping")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 4: Building Chunk→L1 Mapping")
+        logger.info("=" * 70)
         
         mapping = {}
         
         for chunk in chunks:
-            chunk_id = chunk['chunk_id']
+            # Handle both Chunk dataclass and dict
+            chunk_id = chunk.get('chunk_id') or chunk.get('chunk_ids', [''])[0]
             metadata = chunk.get('metadata', {})
             
-            # Academic chunks use 'eid', regulations use 'country_code'
+            # Academic chunks use 'eid' or 'scopus_id'
             scopus_id = metadata.get('eid') or metadata.get('scopus_id')
             
             if scopus_id:
                 mapping[chunk_id] = scopus_id
         
-        print(f"✓ Mapped {len(mapping)} chunks to L1 papers")
+        logger.info(f"✓ Mapped {len(mapping)} chunks to L1 papers")
         
         return mapping
     
@@ -230,9 +275,9 @@ class EnrichmentProcessor:
         chunk_to_l1: Dict
     ) -> List[Dict]:
         """Match citation entities to L1/L2 publications."""
-        print(f"\n{'='*70}")
-        print("STEP 5: Matching Citations to References")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 5: Matching Citations to References")
+        logger.info("=" * 70)
         
         matcher = CitationMatcher(
             references_lookup=references_lookup,
@@ -280,33 +325,30 @@ class EnrichmentProcessor:
         
         self.l2_publications = matcher.get_l2_publications()
         
-        print(f"\n✓ Matching complete:")
-        print(f"  - Total citation entities: {len(citation_entities)}")
-        print(f"  - Successfully matched: {len(matched_entities)}")
-        print(f"  - L1 overlaps detected: {stats['l1_overlap']}")
-        print(f"  - L2 publications created: {len(self.l2_publications)}")
-        print(f"\n  Unmatched reasons:")
-        print(f"  - No chunk provenance: {stats['no_chunks']}")
-        print(f"  - Chunk not from L1 paper: {stats['no_l1_mapping']}")
-        print(f"  - No fuzzy match found: {stats['no_match']}")
-        
-        self.quality_stats.update(stats)
+        logger.info(f"✓ Matching complete:")
+        logger.info(f"  - Total citation entities: {len(citation_entities)}")
+        logger.info(f"  - Successfully matched: {len(matched_entities)}")
+        logger.info(f"  - L1 overlaps detected: {stats['l1_overlap']}")
+        logger.info(f"  - L2 publications created: {len(self.l2_publications)}")
+        logger.info(f"  Unmatched reasons:")
+        logger.info(f"  - No chunk provenance: {stats['no_chunks']}")
+        logger.info(f"  - Chunk not from L1 paper: {stats['no_l1_mapping']}")
+        logger.info(f"  - No fuzzy match found: {stats['no_match']}")
         
         return matched_entities
     
     def _match_jurisdictions(self, entities: List[Dict]) -> List[Dict]:
         """Match country/region entities to jurisdiction codes."""
-        print(f"\n{'='*70}")
-        print("STEP 6: Matching Jurisdiction Entities")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 6: Matching Jurisdiction Entities")
+        logger.info("=" * 70)
         
-        valid_codes = JurisdictionMatcher.load_valid_codes(SCRAPING_SUMMARY)
-        print(f"✓ Loaded {len(valid_codes)} valid jurisdiction codes")
+        valid_codes = JurisdictionMatcher.load_valid_codes(self.scraping_summary)
         
         matcher = JurisdictionMatcher(valid_codes)
         jurisdiction_links = matcher.match_entities(entities)
         
-        print(f"\n✓ Matched {len(jurisdiction_links)} entities to jurisdictions")
+        logger.info(f"✓ Matched {len(jurisdiction_links)} entities to jurisdictions")
         
         return jurisdiction_links
     
@@ -317,9 +359,9 @@ class EnrichmentProcessor:
         jurisdiction_links: List[Dict]
     ):
         """Generate enrichment relationships."""
-        print(f"\n{'='*70}")
-        print("STEP 7: Generating Enrichment Relations")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 7: Generating Enrichment Relations")
+        logger.info("=" * 70)
         
         relations = []
         cites_set = set()
@@ -354,27 +396,32 @@ class EnrichmentProcessor:
         
         # 3. PUBLISHED_IN: L1 → Journal
         for pub in tqdm(self.l1_publications, desc="PUBLISHED_IN"):
-            journal_id = pub.get('journal_id')
-            if journal_id:
+            journal_name = pub.get('source_title')
+            if journal_name:
+                from src.foundation.id_generator import generate_journal_id
+                journal_id = generate_journal_id(journal_name)
                 relations.append({
                     'relation_type': 'PUBLISHED_IN',
-                    'source_id': f"pub_l1_{pub['scopus_id']}",
+                    'source_id': pub['publication_id'],
                     'source_type': 'Publication',
                     'target_id': journal_id,
                     'target_type': 'Journal'
                 })
         
-        # 4. CONTAINS: L1 → Chunk
+        # 4. CONTAINS: L1 → Chunk (for academic chunks)
         for chunk in tqdm(chunks, desc="CONTAINS"):
+            chunk_id = chunk.get('chunk_id') or chunk.get('chunk_ids', [''])[0]
             metadata = chunk.get('metadata', {})
-            scopus_id = metadata.get('scopus_id')
+            scopus_id = metadata.get('eid') or metadata.get('scopus_id')
             
             if scopus_id:
+                from src.foundation.id_generator import generate_publication_id
+                pub_id = generate_publication_id(scopus_id, layer=1)
                 relations.append({
                     'relation_type': 'CONTAINS',
-                    'source_id': f"pub_l1_{scopus_id}",
+                    'source_id': pub_id,
                     'source_type': 'Publication',
-                    'target_id': chunk['chunk_id'],
+                    'target_id': chunk_id,
                     'target_type': 'Chunk'
                 })
         
@@ -394,12 +441,14 @@ class EnrichmentProcessor:
         
         self.relations = relations
         
-        print(f"✓ Generated {len(relations)} enrichment relations:")
-        print(f"  - MATCHED_TO: {len([r for r in relations if r['relation_type'] == 'MATCHED_TO'])}")
-        print(f"  - CITES: {len([r for r in relations if r['relation_type'] == 'CITES'])}")
-        print(f"  - PUBLISHED_IN: {len([r for r in relations if r['relation_type'] == 'PUBLISHED_IN'])}")
-        print(f"  - CONTAINS: {len([r for r in relations if r['relation_type'] == 'CONTAINS'])}")
-        print(f"  - SAME_AS: {len([r for r in relations if r['relation_type'] == 'SAME_AS'])}")
+        # Log counts
+        counts = defaultdict(int)
+        for r in relations:
+            counts[r['relation_type']] += 1
+        
+        logger.info(f"✓ Generated {len(relations)} enrichment relations:")
+        for rel_type, count in sorted(counts.items()):
+            logger.info(f"  - {rel_type}: {count}")
     
     def _generate_quality_report(
         self,
@@ -408,9 +457,9 @@ class EnrichmentProcessor:
         jurisdiction_links: List[Dict]
     ):
         """Generate quality metrics."""
-        print(f"\n{'='*70}")
-        print("STEP 8: Generating Quality Report")
-        print(f"{'='*70}")
+        logger.info("=" * 70)
+        logger.info("STEP 8: Generating Quality Report")
+        logger.info("=" * 70)
         
         type_counts = defaultdict(int)
         for ent_data in citation_entities.values():
@@ -425,7 +474,7 @@ class EnrichmentProcessor:
         
         match_rate = len(matched_entities) / len(citation_entities) * 100 if citation_entities else 0
         
-        report = {
+        self.quality_report = {
             'timestamp': datetime.now().isoformat(),
             'summary': {
                 'total_citation_entities': len(citation_entities),
@@ -448,62 +497,55 @@ class EnrichmentProcessor:
             }
         }
         
-        self.quality_report = report
-        
-        print("\nQUALITY SUMMARY:")
-        print(f"  Match rate: {report['summary']['match_rate_pct']}%")
-        print(f"  L1 overlaps: {report['summary']['l1_matches']}")
-        print(f"  L2 created: {report['summary']['unique_l2_publications']}")
-        print(f"  Jurisdiction links: {report['jurisdiction_linking']['total_linked']}")
+        logger.info("QUALITY SUMMARY:")
+        logger.info(f"  Match rate: {self.quality_report['summary']['match_rate_pct']}%")
+        logger.info(f"  L1 overlaps: {self.quality_report['summary']['l1_matches']}")
+        logger.info(f"  L2 created: {self.quality_report['summary']['unique_l2_publications']}")
+        logger.info(f"  Jurisdiction links: {self.quality_report['jurisdiction_linking']['total_linked']}")
     
     def _save_outputs(self):
-        """Save all output files organized by node type."""
-        print(f"\n{'='*70}")
-        print("STEP 9: Saving Outputs")
-        print(f"{'='*70}")
+        """Save all output files."""
+        logger.info("=" * 70)
+        logger.info("STEP 9: Saving Outputs")
+        logger.info("=" * 70)
         
         # Merge L1 and L2 publications
         all_publications = self.l1_publications + self.l2_publications
         
-        # Entity files
-        entity_files = {
-            'publications.json': all_publications,
-            'authors.json': self.authors,
-            'journals.json': self.journals
-        }
+        # Save publications
+        pubs_path = self.output_dir / 'publications.json'
+        with open(pubs_path, 'w', encoding='utf-8') as f:
+            json.dump(all_publications, f, ensure_ascii=False, indent=2)
+        logger.info(f"✓ Saved {pubs_path}")
         
-        for filename, data in entity_files.items():
-            output_path = ENTITIES_DIR / filename
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"✓ Saved {output_path}")
+        # Save authors
+        authors_path = self.output_dir / 'authors.json'
+        with open(authors_path, 'w', encoding='utf-8') as f:
+            json.dump(self.authors, f, ensure_ascii=False, indent=2)
+        logger.info(f"✓ Saved {authors_path}")
         
-        # Relation files
-        relation_files = {
-            'enrichment_relations.json': self.relations
-        }
+        # Save journals
+        journals_path = self.output_dir / 'journals.json'
+        with open(journals_path, 'w', encoding='utf-8') as f:
+            json.dump(self.journals, f, ensure_ascii=False, indent=2)
+        logger.info(f"✓ Saved {journals_path}")
         
-        for filename, data in relation_files.items():
-            output_path = RELATIONS_DIR / filename
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"✓ Saved {output_path}")
+        # Save enrichment relations
+        relations_path = self.output_dir / 'enrichment_relations.json'
+        with open(relations_path, 'w', encoding='utf-8') as f:
+            json.dump(self.relations, f, ensure_ascii=False, indent=2)
+        logger.info(f"✓ Saved {relations_path}")
         
-        # Report files
-        report_files = {
-            'enrichment_quality_report.json': self.quality_report
-        }
-        
-        for filename, data in report_files.items():
-            output_path = REPORTS_DIR / filename
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"✓ Saved {output_path}")
+        # Save quality report
+        report_path = self.output_dir / 'enrichment_quality_report.json'
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(self.quality_report, f, ensure_ascii=False, indent=2)
+        logger.info(f"✓ Saved {report_path}")
 
 
-# ==============================================================================
+# =============================================================================
 # MAIN
-# ==============================================================================
+# =============================================================================
 
 def main():
     """Run enrichment pipeline."""

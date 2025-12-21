@@ -1,22 +1,18 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neo4j Import Processor for GraphRAG Knowledge Graph
+Neo4j Import Processor for GraphRAG Knowledge Graph.
 
 Orchestrates complete Neo4j import with checkpointing and progress tracking.
-Handles loading all input files, database clearing with confirmation,
-import in correct dependency order, and checkpoint management for resume capability.
+Handles loading all input files, database clearing, and import in correct
+dependency order.
 
-Features:
-- Checkpointing for resumable imports
-- Automatic file loading and validation
-- Dependency-ordered node and relationship creation
-- Support for both regulatory and academic data sources
-- Enrichment relation integration (citations, entity matching)
+Author: Pau Barba i Colomer
+Created: 2025-12-21
+Modified: 2025-12-21
 
-Usage:
-    python src/graph/neo4j_import_processor.py --clear --uri bolt://localhost:7687
-    python src/graph/neo4j_import_processor.py --force-restart
+References:
+    - See ARCHITECTURE.md § 3.2.2 for Phase 2B context
+    - See PHASE_2B_DESIGN.md for Neo4j schema
 """
 
 # Standard library
@@ -24,7 +20,7 @@ import json
 import csv
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 import sys
 import argparse
 
@@ -36,15 +32,14 @@ if str(PROJECT_ROOT) not in sys.path:
 # Third-party
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
-# Local
+# Project imports
+from src.foundation.io import read_jsonl
 from src.graph.neo4j_importer import Neo4jImporter
-from src.utils.logger import setup_logging, get_logger
+from src.utils.logger import get_logger
 
-# Setup logging
-setup_logging()
 logger = get_logger(__name__)
 
 
@@ -53,10 +48,11 @@ class Neo4jImportProcessor:
     Orchestrates complete Neo4j import with checkpointing.
     
     Handles:
-    - Loading all input files
+    - Loading all input files (JSON and JSONL)
     - Database clearing with confirmation
     - Import in correct dependency order
     - Checkpoint management for resume capability
+    - v1.1: PART_OF and SAME_AS relations from Phase 1C
     """
     
     def __init__(self, data_dir: Path, checkpoint_dir: Path, force_restart: bool = False):
@@ -64,7 +60,7 @@ class Neo4jImportProcessor:
         Initialize import processor.
         
         Args:
-            data_dir: Root data directory (contains raw/ and processed/)
+            data_dir: Root data directory (contains raw/, interim/, processed/)
             checkpoint_dir: Directory for checkpoint files
             force_restart: If True, ignore existing checkpoint
         """
@@ -84,12 +80,7 @@ class Neo4jImportProcessor:
             logger.info("Starting fresh import (no checkpoint)")
     
     def mark_completed(self, step: str):
-        """
-        Mark a step as completed in checkpoint.
-        
-        Args:
-            step: Step identifier
-        """
+        """Mark a step as completed in checkpoint."""
         self.completed_steps.add(step)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         with open(self.checkpoint_file, 'w', encoding='utf-8') as f:
@@ -100,8 +91,12 @@ class Neo4jImportProcessor:
         """Check if step already completed."""
         return step in self.completed_steps
     
+    # =========================================================================
+    # FILE LOADING
+    # =========================================================================
+    
     def load_json(self, relative_path: str) -> List[Dict]:
-        """Load JSON file with error handling."""
+        """Load JSON file."""
         path = self.data_dir / relative_path
         if not path.exists():
             raise FileNotFoundError(f"Required file not found: {path}")
@@ -109,21 +104,20 @@ class Neo4jImportProcessor:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
+        # Handle dict structure if present
+        if isinstance(data, dict):
+            data = list(data.values())
+        
         logger.info(f"Loaded {len(data)} items from {relative_path}")
         return data
     
     def load_jsonl(self, relative_path: str) -> List[Dict]:
-        """Load JSONL file with error handling."""
+        """Load JSONL file."""
         path = self.data_dir / relative_path
         if not path.exists():
             raise FileNotFoundError(f"Required file not found: {path}")
         
-        data = []
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    data.append(json.loads(line))
-        
+        data = list(read_jsonl(path))
         logger.info(f"Loaded {len(data)} items from {relative_path}")
         return data
     
@@ -133,7 +127,6 @@ class Neo4jImportProcessor:
         if not path.exists():
             raise FileNotFoundError(f"Required file not found: {path}")
         
-        data = []
         with open(path, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             data = list(reader)
@@ -141,12 +134,19 @@ class Neo4jImportProcessor:
         logger.info(f"Loaded {len(data)} items from {relative_path}")
         return data
     
+    # =========================================================================
+    # DATA PREPARATION
+    # =========================================================================
+    
     def prepare_jurisdictions(self) -> List[Dict]:
         """Load and prepare jurisdiction nodes."""
         scraping_summary = self.load_json('raw/dlapiper/scraping_summary.json')
         
-        # Extract countries array from wrapper dict
-        countries_list = scraping_summary.get('countries', scraping_summary)
+        # Handle nested structure
+        if isinstance(scraping_summary, dict) and 'countries' in scraping_summary:
+            countries_list = scraping_summary['countries']
+        else:
+            countries_list = scraping_summary
         
         jurisdictions = []
         for item in countries_list:
@@ -203,47 +203,61 @@ class Neo4jImportProcessor:
         return journals
     
     def prepare_chunks(self) -> List[Dict]:
-        """Load chunk nodes (without embeddings)."""
-        chunks_data = self.load_json('interim/chunks/chunks_text.json')
+        """Load chunk nodes (supports both JSON and JSONL)."""
+        # Try JSONL first (v1.1), fall back to JSON
+        jsonl_path = self.data_dir / 'interim' / 'chunks' / 'chunks_embedded.jsonl'
+        json_path = self.data_dir / 'interim' / 'chunks' / 'chunks_text.json'
         
-        # Handle dict structure: {chunk_id: chunk_object}
-        if isinstance(chunks_data, dict):
-            chunks_list = list(chunks_data.values())
+        if jsonl_path.exists():
+            chunks_data = self.load_jsonl('interim/chunks/chunks_embedded.jsonl')
+        elif json_path.exists():
+            chunks_data = self.load_json('interim/chunks/chunks_text.json')
         else:
-            chunks_list = chunks_data
+            raise FileNotFoundError("No chunks file found (tried .jsonl and .json)")
         
         chunks = []
-        for chunk in chunks_list:
+        for chunk in chunks_data:
+            # Handle both Chunk dataclass dict and raw dict
+            chunk_id = chunk.get('chunk_id') or chunk.get('chunk_ids', [''])[0]
+            metadata = chunk.get('metadata', {})
+            
             chunks.append({
-                'chunk_id': chunk['chunk_id'],
-                'text': chunk['text'],
-                'doc_type': chunk.get('metadata', {}).get('source_type', ''),
-                'jurisdiction': chunk.get('metadata', {}).get('country_code', ''),  # Fixed: country_code not jurisdiction
-                'scopus_id': chunk.get('document_id', ''),
+                'chunk_id': chunk_id,
+                'text': chunk.get('text', ''),
+                'doc_type': metadata.get('source_type', chunk.get('doc_type', '')),
+                'jurisdiction': metadata.get('country_code', chunk.get('jurisdiction', '')),
+                'scopus_id': chunk.get('document_id', metadata.get('eid', '')),
                 'section_title': chunk.get('section_header', '')
             })
         
         return chunks
     
     def prepare_entities(self) -> List[Dict]:
-        """Load entity nodes (strip embeddings for Neo4j)."""
-        entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+        """
+        Load entity nodes (strip embeddings, include aliases).
         
-        # Handle dict structure if present
-        if isinstance(entities_data, dict):
-            entities_list = list(entities_data.values())
+        v1.1: Added aliases property.
+        """
+        # Try JSONL first (v1.1), fall back to JSON
+        jsonl_path = self.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
+        json_path = self.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        
+        if jsonl_path.exists():
+            entities_data = self.load_jsonl('interim/entities/entities_semantic.jsonl')
+        elif json_path.exists():
+            entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
         else:
-            entities_list = entities_data
+            raise FileNotFoundError("No entities file found")
         
         entities = []
-        for entity in entities_list:
-            # Strip embedding - not needed in Neo4j
+        for entity in entities_data:
             entities.append({
                 'entity_id': entity['entity_id'],
                 'name': entity.get('name', ''),
                 'type': entity.get('type', ''),
                 'description': entity.get('description', ''),
-                'frequency': entity.get('frequency', 0)
+                'frequency': entity.get('frequency', entity.get('merge_count', 1)),
+                'aliases': entity.get('aliases', [])  # v1.1 addition
             })
         
         return entities
@@ -252,7 +266,6 @@ class Neo4jImportProcessor:
         """Load L2 publication nodes from Phase 2A."""
         publications_data = self.load_json('processed/entities/publications.json')
         
-        # Filter for L2 only (cited_publication type)
         l2_pubs = []
         for pub in publications_data:
             if pub.get('node_type') == 'cited_publication':
@@ -266,6 +279,10 @@ class Neo4jImportProcessor:
         
         return l2_pubs
     
+    # =========================================================================
+    # RELATIONSHIP PREPARATION
+    # =========================================================================
+    
     def prepare_contains_jurisdiction(self, chunks: List[Dict]) -> List[Dict]:
         """Prepare CONTAINS relationships: Jurisdiction -> Chunk."""
         relations = []
@@ -276,6 +293,23 @@ class Neo4jImportProcessor:
                     'jurisdiction_code': chunk['jurisdiction'],
                     'chunk_id': chunk['chunk_id']
                 })
+        
+        return relations
+    
+    def prepare_contains_publication(self, chunks: List[Dict], paper_mapping: Dict[str, str]) -> List[Dict]:
+        """Prepare CONTAINS relationships: Publication -> Chunk."""
+        relations = []
+        
+        for chunk in chunks:
+            if chunk['doc_type'] in ['academic_paper', 'paper'] and chunk['scopus_id']:
+                paper_id = chunk['scopus_id']
+                actual_scopus_id = paper_mapping.get(paper_id, paper_id)
+                
+                if actual_scopus_id:
+                    relations.append({
+                        'scopus_id': actual_scopus_id,
+                        'chunk_id': chunk['chunk_id']
+                    })
         
         return relations
     
@@ -291,34 +325,18 @@ class Neo4jImportProcessor:
         with open(mapping_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                paper_id = row['paper_id']  # e.g., "paper_145"
-                scopus_id = row['scopus_eid']  # e.g., "2-s2.0-85183649331"
-                if scopus_id:  # Only if match exists
+                paper_id = row['paper_id']
+                scopus_id = row['scopus_eid']
+                if scopus_id:
                     mapping[paper_id] = scopus_id
         
         logger.info(f"Loaded {len(mapping)} paper→scopus mappings")
         return mapping
     
-    def prepare_contains_publication(self, chunks: List[Dict], paper_mapping: Dict[str, str]) -> List[Dict]:
-        """Prepare CONTAINS relationships: Publication -> Chunk."""
-        relations = []
-        
-        for chunk in chunks:
-            if chunk['doc_type'] == 'academic_paper' and chunk['scopus_id']:
-                # Convert paper_XXX to actual scopus EID
-                paper_id = chunk['scopus_id']  # This is actually paper_XXX from document_id
-                actual_scopus_id = paper_mapping.get(paper_id)
-                
-                if actual_scopus_id:
-                    relations.append({
-                        'scopus_id': actual_scopus_id,
-                        'chunk_id': chunk['chunk_id']
-                    })
-        
-        return relations
-    
     def prepare_authored_by(self, scopus_data: List[Dict]) -> List[Dict]:
         """Prepare AUTHORED_BY relationships from Scopus CSV."""
+        from src.foundation.id_generator import generate_author_id
+        
         relations = []
         
         for row in scopus_data:
@@ -330,7 +348,7 @@ class Neo4jImportProcessor:
                 if author_id:
                     relations.append({
                         'scopus_id': scopus_id,
-                        'author_id': f'author_{author_id}'  # Fixed: prepend "author_"
+                        'author_id': generate_author_id(author_id)
                     })
         
         return relations
@@ -344,7 +362,6 @@ class Neo4jImportProcessor:
             issn = journal.get('issn', '')
             journal_id = journal['journal_id']
             
-            # Handle multiple ISSNs (semicolon-separated)
             for single_issn in issn.split(';'):
                 single_issn = single_issn.strip()
                 if single_issn:
@@ -362,57 +379,126 @@ class Neo4jImportProcessor:
             issn_str = row.get('ISSN', '').strip()
             
             if issn_str:
-                # Split multiple ISSNs (semicolon-separated)
                 for single_issn in issn_str.split(';'):
                     single_issn = single_issn.strip()
                     if single_issn:
-                        # Look up journal_id from ISSN
                         journal_id = issn_mapping.get(single_issn)
                         if journal_id:
                             relations.append({
                                 'scopus_id': scopus_id,
                                 'journal_id': journal_id
                             })
-                            break  # Found match, stop trying other ISSNs for this paper
+                            break
         
         return relations
     
-    def prepare_extracted_from(self) -> List[Dict]:
-        """Prepare EXTRACTED_FROM relationships from normalized entities."""
-        entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+    def prepare_extracted_from(self, entities: List[Dict]) -> List[Dict]:
+        """Prepare EXTRACTED_FROM relationships."""
+        # Try to load from entities file with chunk_ids
+        jsonl_path = self.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
+        json_path = self.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        
+        if jsonl_path.exists():
+            entities_data = self.load_jsonl('interim/entities/entities_semantic.jsonl')
+        elif json_path.exists():
+            entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+        else:
+            entities_data = entities
         
         relations = []
         for entity in entities_data:
-            # Each entity has chunk_ids list
-            for chunk_id in entity.get('chunk_ids', []):
+            entity_id = entity.get('entity_id')
+            chunk_ids = entity.get('chunk_ids', [])
+            
+            for chunk_id in chunk_ids:
                 relations.append({
-                    'entity_id': entity['entity_id'],
+                    'entity_id': entity_id,
                     'chunk_id': chunk_id
                 })
         
         return relations
     
     def prepare_relations(self) -> List[Dict]:
-        """Load normalized relations with IDs."""
-        relations_data = self.load_json('interim/relations/relations_normalized.json')
+        """Load semantic relations."""
+        # Try JSONL first (v1.1)
+        jsonl_path = self.data_dir / 'processed' / 'relations' / 'relations_output.jsonl'
+        json_path = self.data_dir / 'interim' / 'relations' / 'relations_normalized.json'
         
-        relations = []
-        for rel in relations_data:
-            relations.append({
+        if jsonl_path.exists():
+            # JSONL format may be nested (per-entity results)
+            raw_data = self.load_jsonl('processed/relations/relations_output.jsonl')
+            relations = []
+            for item in raw_data:
+                # Handle nested format
+                if 'relations' in item:
+                    for rel in item['relations']:
+                        relations.append({
+                            'subject_id': rel.get('subject_id', item.get('entity_id')),
+                            'predicate': rel['predicate'],
+                            'object_id': rel['object_id'],
+                            'chunk_ids': rel.get('chunk_ids', []),
+                            'confidence': rel.get('confidence', 1.0)
+                        })
+                else:
+                    relations.append({
+                        'subject_id': item['subject_id'],
+                        'predicate': item['predicate'],
+                        'object_id': item['object_id'],
+                        'chunk_ids': item.get('chunk_ids', []),
+                        'confidence': item.get('confidence', 1.0)
+                    })
+            return relations
+        elif json_path.exists():
+            relations_data = self.load_json('interim/relations/relations_normalized.json')
+            return [{
                 'subject_id': rel['subject_id'],
                 'predicate': rel['predicate'],
                 'object_id': rel['object_id'],
                 'chunk_ids': rel.get('chunk_ids', []),
                 'confidence': rel.get('confidence', 1.0)
-            })
+            } for rel in relations_data]
+        else:
+            raise FileNotFoundError("No relations file found")
+    
+    def prepare_part_of_relations(self) -> List[Dict]:
+        """
+        Load PART_OF relations from Phase 1C disambiguation.
         
-        return relations
+        v1.1 addition.
+        """
+        # These come from alias clusters
+        part_of_path = self.data_dir / 'interim' / 'entities' / 'part_of_relations.jsonl'
+        
+        if not part_of_path.exists():
+            logger.warning("No PART_OF relations file found (expected for v1.1)")
+            return []
+        
+        return self.load_jsonl('interim/entities/part_of_relations.jsonl')
+    
+    def prepare_same_as_entity_relations(self) -> List[Dict]:
+        """
+        Load SAME_AS (entity→entity) relations from Phase 1C.
+        
+        v1.1 addition.
+        """
+        same_as_path = self.data_dir / 'interim' / 'entities' / 'same_as_relations.jsonl'
+        
+        if not same_as_path.exists():
+            logger.warning("No SAME_AS entity relations file found (expected for v1.1)")
+            return []
+        
+        return self.load_jsonl('interim/entities/same_as_relations.jsonl')
     
     def prepare_enrichment_relations(self) -> Dict[str, List[Dict]]:
         """Load all enrichment relations from Phase 2A."""
+        enrichment_path = self.data_dir / 'processed' / 'relations' / 'enrichment_relations.json'
+        
+        if not enrichment_path.exists():
+            logger.warning("No enrichment relations file found")
+            return {'matched_to': [], 'cites_l2': [], 'cites_l1': [], 'same_as': []}
+        
         enrichment_data = self.load_json('processed/relations/enrichment_relations.json')
         
-        # Group by relation_type
         categorized = {
             'matched_to': [],
             'cites_l2': [],
@@ -429,7 +515,6 @@ class Neo4jImportProcessor:
                     'publication_id': rel['target_id']
                 })
             elif rel_type == 'CITES':
-                # Distinguish L1 vs L2 by target_id prefix, not target_type
                 target_id = rel['target_id']
                 if target_id.startswith('pub_l2_'):
                     categorized['cites_l2'].append({
@@ -437,19 +522,24 @@ class Neo4jImportProcessor:
                         'publication_id': target_id
                     })
                 else:
-                    # L1 publication: strip pub_l1_ prefix to get raw scopus EID
                     target_scopus_id = target_id.replace('pub_l1_', '')
                     categorized['cites_l1'].append({
                         'source_scopus_id': rel['source_id'],
                         'target_scopus_id': target_scopus_id
                     })
             elif rel_type == 'SAME_AS':
+                # Extract jurisdiction code from target_id (e.g., "jur_EU" -> "EU")
+                jur_code = rel['target_id'].replace('jur_', '')
                 categorized['same_as'].append({
                     'entity_id': rel['source_id'],
-                    'jurisdiction_code': rel['target_id']
+                    'jurisdiction_code': jur_code
                 })
         
         return categorized
+    
+    # =========================================================================
+    # IMPORT EXECUTION
+    # =========================================================================
     
     def run_import(self, uri: str, user: str, password: str, clear_db: bool = False):
         """
@@ -485,11 +575,11 @@ class Neo4jImportProcessor:
                 logger.info("Loading input files...")
                 scopus_data = self.load_scopus_csv('raw/academic/scopus_2023/scopus_export_2023_raw.csv')
                 chunks = self.prepare_chunks()
-                paper_mapping = self.load_paper_scopus_mapping()  # Load paper_XXX → scopus_id mapping
-                issn_mapping = self.load_issn_to_journal_mapping()  # Load ISSN → journal_id mapping
+                paper_mapping = self.load_paper_scopus_mapping()
+                issn_mapping = self.load_issn_to_journal_mapping()
                 
                 # ============================================================
-                # PHASE 1: IMPORT NODES (in dependency order)
+                # PHASE 1: IMPORT NODES
                 # ============================================================
                 
                 logger.info("\n=== PHASE 1: IMPORTING NODES ===")
@@ -550,7 +640,7 @@ class Neo4jImportProcessor:
                     logger.info("L2 Publications already imported (checkpoint)")
                 
                 # ============================================================
-                # PHASE 2: IMPORT RELATIONSHIPS (in dependency order)
+                # PHASE 2: IMPORT RELATIONSHIPS
                 # ============================================================
                 
                 logger.info("\n=== PHASE 2: IMPORTING RELATIONSHIPS ===")
@@ -589,13 +679,14 @@ class Neo4jImportProcessor:
                 
                 # 12. EXTRACTED_FROM
                 if not self.is_completed('rels_extracted_from'):
-                    rels = self.prepare_extracted_from()
+                    entities = self.prepare_entities()
+                    rels = self.prepare_extracted_from(entities)
                     importer.import_extracted_from(session, rels)
                     self.mark_completed('rels_extracted_from')
                 else:
                     logger.info("EXTRACTED_FROM already imported (checkpoint)")
                 
-                # 13. RELATION (largest - ~155K)
+                # 13. RELATION (semantic relations)
                 if not self.is_completed('rels_relation'):
                     rels = self.prepare_relations()
                     importer.import_relations(session, rels)
@@ -603,42 +694,64 @@ class Neo4jImportProcessor:
                 else:
                     logger.info("RELATION already imported (checkpoint)")
                 
-                # 14-16. Enrichment relations
+                # 14. PART_OF (v1.1 - from Phase 1C)
+                if not self.is_completed('rels_part_of'):
+                    rels = self.prepare_part_of_relations()
+                    if rels:
+                        importer.import_part_of(session, rels)
+                    self.mark_completed('rels_part_of')
+                else:
+                    logger.info("PART_OF already imported (checkpoint)")
+                
+                # 15. SAME_AS entity→entity (v1.1 - from Phase 1C)
+                if not self.is_completed('rels_same_as_entity'):
+                    rels = self.prepare_same_as_entity_relations()
+                    if rels:
+                        importer.import_same_as_entity(session, rels)
+                    self.mark_completed('rels_same_as_entity')
+                else:
+                    logger.info("SAME_AS (Entity→Entity) already imported (checkpoint)")
+                
+                # 16-19. Enrichment relations
                 enrichment_rels = self.prepare_enrichment_relations()
                 
-                # 14. MATCHED_TO
+                # 16. MATCHED_TO
                 if not self.is_completed('rels_matched_to'):
                     importer.import_matched_to(session, enrichment_rels['matched_to'])
                     self.mark_completed('rels_matched_to')
                 else:
                     logger.info("MATCHED_TO already imported (checkpoint)")
                 
-                # 15. CITES: L1 -> L2
+                # 17. CITES: L1 -> L2
                 if not self.is_completed('rels_cites_l2'):
                     importer.import_cites_l2(session, enrichment_rels['cites_l2'])
                     self.mark_completed('rels_cites_l2')
                 else:
                     logger.info("CITES (L1→L2) already imported (checkpoint)")
                 
-                # 16. CITES: L1 -> L1
+                # 18. CITES: L1 -> L1
                 if not self.is_completed('rels_cites_l1'):
                     importer.import_cites_l1(session, enrichment_rels['cites_l1'])
                     self.mark_completed('rels_cites_l1')
                 else:
                     logger.info("CITES (L1→L1) already imported (checkpoint)")
                 
-                # 17. SAME_AS (optional)
-                if not self.is_completed('rels_same_as'):
-                    importer.import_same_as(session, enrichment_rels['same_as'])
-                    self.mark_completed('rels_same_as')
+                # 19. SAME_AS entity→jurisdiction
+                if not self.is_completed('rels_same_as_jurisdiction'):
+                    importer.import_same_as_jurisdiction(session, enrichment_rels['same_as'])
+                    self.mark_completed('rels_same_as_jurisdiction')
                 else:
-                    logger.info("SAME_AS already imported (checkpoint)")
+                    logger.info("SAME_AS (Entity→Jurisdiction) already imported (checkpoint)")
                 
                 logger.info("\n=== IMPORT COMPLETE ===")
         
         finally:
             importer.close()
 
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 def main():
     """Main entry point for Neo4j import."""
@@ -685,18 +798,15 @@ def main():
     
     args = parser.parse_args()
     
-    # Validate required args
     if not args.uri or not args.password:
         parser.error("--uri and --password required (or set NEO4J_URI and NEO4J_PASSWORD env vars)")
     
-    # Confirm database clearing
     if args.clear:
         response = input("⚠️  This will DELETE all data in the Neo4j database. Continue? (yes/no): ")
         if response.lower() != 'yes':
             logger.info("Import cancelled")
             return
     
-    # Run import
     processor = Neo4jImportProcessor(
         data_dir=args.data_dir,
         checkpoint_dir=args.checkpoint_dir,
