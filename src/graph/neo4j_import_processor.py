@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Project imports
-from src.foundation.io import read_jsonl
+from src.utils.io import load_jsonl as _load_jsonl
 from src.graph.neo4j_importer import Neo4jImporter
 from src.utils.logger import get_logger
 
@@ -117,7 +117,7 @@ class Neo4jImportProcessor:
         if not path.exists():
             raise FileNotFoundError(f"Required file not found: {path}")
         
-        data = list(read_jsonl(path))
+        data = list(_load_jsonl(path))
         logger.info(f"Loaded {len(data)} items from {relative_path}")
         return data
     
@@ -335,7 +335,7 @@ class Neo4jImportProcessor:
     
     def prepare_authored_by(self, scopus_data: List[Dict]) -> List[Dict]:
         """Prepare AUTHORED_BY relationships from Scopus CSV."""
-        from src.foundation.id_generator import generate_author_id
+        from src.utils.id_generator import generate_author_id
         
         relations = []
         
