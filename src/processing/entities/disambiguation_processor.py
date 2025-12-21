@@ -23,8 +23,10 @@ Usage:
     python -m src.processing.entities.disambiguation_processor --resume
 
 Outputs:
-    - data/processed/entities/entities_semantic_raw.jsonl (without embeddings)
-    - data/processed/entities/entities_metadata.jsonl
+    - data/processed/entities/entities_semantic.jsonl (without embeddings)
+    - data/processed/entities/entities_semantic_embedded.jsonl (with embeddings)
+    - data/processed/entities/entities_metadata.jsonl (without embeddings)
+    - data/processed/entities/entities_metadata_embedded.jsonl (with embeddings)
     - data/processed/entities/aliases.json
     - data/processed/relations/part_of_relations.jsonl (DocumentSection → Document)
     - data/processed/relations/same_as_relations.jsonl (Document ↔ Regulation)
@@ -59,7 +61,7 @@ from src.processing.entities.metadata_disambiguator import (
 from src.utils.io import load_jsonl, save_jsonl, save_json, load_json
 from src.utils.id_generator import generate_entity_id
 from src.utils.checkpoint_manager import CheckpointManager
-from config.extraction_config import DISAMBIGUATION_CONFIG
+from src.config.extraction_config import DISAMBIGUATION_CONFIG
 
 # Configure logging
 logging.basicConfig(
@@ -81,7 +83,9 @@ CHUNKS_FILE = DATA_DIR / 'processed' / 'chunks' / 'chunks_embedded.jsonl'
 
 # Outputs (v2.0)
 SEMANTIC_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_semantic.jsonl'
+SEMANTIC_OUTPUT_EMBEDDED = DATA_DIR / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl'
 METADATA_OUTPUT = DATA_DIR / 'processed' / 'entities' / 'entities_metadata.jsonl'
+METADATA_OUTPUT_EMBEDDED = DATA_DIR / 'processed' / 'entities' / 'entities_metadata_embedded.jsonl'
 ALIASES_FILE = DATA_DIR / 'processed' / 'entities' / 'aliases.json'
 PART_OF_FILE = DATA_DIR / 'processed' / 'relations' / 'part_of_relations.jsonl'
 SAME_AS_FILE = DATA_DIR / 'processed' / 'relations' / 'same_as_relations.jsonl'
@@ -251,18 +255,38 @@ class DisambiguationProcessor:
         self.stats['part_of_relations'] = len(part_of_relations)
         self.stats['same_as_relations'] = len(same_as_relations)
         
-        # =================================================================
-        # STEP 6: Save outputs (without embeddings)
-        # =================================================================
-        logger.info("\n[6/7] Saving outputs (raw, without embeddings)...")
+        # Embed metadata entities for search
+        logger.info("  Embedding metadata entities...")
+        metadata_entities = self._embed_entities(metadata_entities)
         
-        # Save semantic entities (raw - will embed separately)
-        save_jsonl(semantic_entities, str(SEMANTIC_OUTPUT))
-        logger.info(f"  Saved {len(semantic_entities)} semantic entities → {SEMANTIC_OUTPUT}")
+        # =================================================================
+        # STEP 6: Save outputs
+        # =================================================================
+        logger.info("\n[6/7] Saving outputs...")
         
-        # Save metadata entities
-        save_jsonl(metadata_entities, str(METADATA_OUTPUT))
-        logger.info(f"  Saved {len(metadata_entities)} metadata entities → {METADATA_OUTPUT}")
+        # Save semantic entities - embedded version
+        save_jsonl(semantic_entities, str(SEMANTIC_OUTPUT_EMBEDDED))
+        logger.info(f"  Saved {len(semantic_entities)} semantic entities (embedded) → {SEMANTIC_OUTPUT_EMBEDDED}")
+        
+        # Save semantic entities - non-embedded version (strip embeddings)
+        semantic_no_embed = []
+        for e in semantic_entities:
+            e_copy = {k: v for k, v in e.items() if k != 'embedding'}
+            semantic_no_embed.append(e_copy)
+        save_jsonl(semantic_no_embed, str(SEMANTIC_OUTPUT))
+        logger.info(f"  Saved {len(semantic_no_embed)} semantic entities (no embeddings) → {SEMANTIC_OUTPUT}")
+        
+        # Save metadata entities - embedded version
+        save_jsonl(metadata_entities, str(METADATA_OUTPUT_EMBEDDED))
+        logger.info(f"  Saved {len(metadata_entities)} metadata entities (embedded) → {METADATA_OUTPUT_EMBEDDED}")
+        
+        # Save metadata entities - non-embedded version
+        metadata_no_embed = []
+        for e in metadata_entities:
+            e_copy = {k: v for k, v in e.items() if k != 'embedding'}
+            metadata_no_embed.append(e_copy)
+        save_jsonl(metadata_no_embed, str(METADATA_OUTPUT))
+        logger.info(f"  Saved {len(metadata_no_embed)} metadata entities (no embeddings) → {METADATA_OUTPUT}")
         
         # Save aliases
         save_json(self.aliases, str(ALIASES_FILE))
