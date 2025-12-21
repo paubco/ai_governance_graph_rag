@@ -152,8 +152,8 @@ def run_preflight_test(verbose: bool = False) -> bool:
     print()
     
     # File paths
-    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic.jsonl"
-    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata.jsonl"
+    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic_embedded.jsonl"
+    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata_embedded.jsonl"
     chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
     lookup_file = PROJECT_ROOT / "data/interim/entities/entity_id_lookup.json"
     cooccur_semantic = PROJECT_ROOT / "data/interim/entities/cooccurrence_semantic.json"
@@ -162,7 +162,7 @@ def run_preflight_test(verbose: bool = False) -> bool:
     # Check prerequisites
     missing = []
     for name, path in [
-        ("entities_semantic.jsonl", semantic_file),
+        ("entities_semantic_embedded.jsonl", semantic_file),
         ("chunks_embedded.jsonl", chunks_file),
         ("entity_id_lookup.json", lookup_file),
         ("cooccurrence_semantic.json", cooccur_semantic),

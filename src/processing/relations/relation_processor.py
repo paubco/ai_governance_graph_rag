@@ -250,8 +250,8 @@ def load_entities(track: str) -> List[Dict]:
     """Load entities based on track selection."""
     entities = []
     
-    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic.jsonl"
-    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata.jsonl"
+    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic_embedded.jsonl"
+    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata_embedded.jsonl"
     
     if track in ('semantic', 'all'):
         if semantic_file.exists():
@@ -301,7 +301,7 @@ def load_chunks() -> List[Dict]:
 def validate_prerequisites() -> bool:
     """Validate required input files exist."""
     required = [
-        ("entities_semantic.jsonl", "data/processed/entities/entities_semantic.jsonl"),
+        ("entities_semantic_embedded.jsonl", "data/processed/entities/entities_semantic_embedded.jsonl"),
         ("chunks_embedded.jsonl", "data/processed/chunks/chunks_embedded.jsonl"),
         ("cooccurrence_semantic.json", "data/interim/entities/cooccurrence_semantic.json"),
         ("entity_id_lookup.json", "data/interim/entities/entity_id_lookup.json"),

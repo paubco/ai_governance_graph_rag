@@ -289,8 +289,8 @@ def main():
     """Build typed entity co-occurrence matrices with entity_id output."""
     
     # File paths
-    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic.jsonl"
-    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata.jsonl"
+    semantic_file = PROJECT_ROOT / "data/processed/entities/entities_semantic_embedded.jsonl"
+    metadata_file = PROJECT_ROOT / "data/processed/entities/entities_metadata_embedded.jsonl"
     chunks_file = PROJECT_ROOT / "data/processed/chunks/chunks_embedded.jsonl"
     
     output_dir = PROJECT_ROOT / "data/interim/entities"
