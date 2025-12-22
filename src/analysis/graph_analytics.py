@@ -141,10 +141,8 @@ class GraphAnalyzer:
     def get_top_connected_entities(self, limit: int = 20) -> List[Dict]:
         """Get most highly connected entities by degree."""
         query = f"""
-        MATCH (e:Entity)
-        OPTIONAL MATCH (e)-[r:RELATION]-()
+        MATCH (e:Entity)-[r:RELATION]-()
         WITH e, count(r) as degree
-        WHERE degree > 0
         ORDER BY degree DESC
         LIMIT {limit}
         RETURN e.name as entity, e.type as type, degree
@@ -304,9 +302,7 @@ class GraphAnalyzer:
         # 1. Get total entities and isolated entities
         isolation_query = """
         MATCH (e:Entity)
-        OPTIONAL MATCH (e)-[:RELATION]-()
-        WITH e, count(*) as degree
-        WHERE degree = 0
+        WHERE NOT (e)-[:RELATION]-()
         RETURN count(e) as isolated_entities
         """
         isolated = self.run_query(isolation_query, "Isolated entities")
@@ -420,75 +416,45 @@ class GraphAnalyzer:
         
         Higher density within a type suggests tighter semantic cohesion.
         """
-        query = """
+        # Two separate queries to avoid Cypher scope issues
+        # First get type counts
+        type_query = """
         MATCH (e:Entity)
         WITH e.type as entity_type, count(e) as type_count
         WHERE type_count >= 5
+        RETURN entity_type, type_count
+        ORDER BY type_count DESC
+        LIMIT 20
+        """
+        type_results = self.run_query(type_query, "Entity type counts")
         
+        # Then get intra-type relation counts
+        intra_query = """
         MATCH (a:Entity)-[r:RELATION]-(b:Entity)
         WHERE a.type = b.type AND id(a) < id(b)
-        WITH a.type as rel_type, count(*) as intra_relations
+        RETURN a.type as entity_type, count(r) as intra_relations
+        """
+        intra_results = self.run_query(intra_query, "Intra-type relation counts")
         
-        MATCH (e:Entity)
-        WITH e.type as entity_type, count(e) as type_count, 
-             coalesce(
-                 (SELECT r.intra_relations FROM (
-                     MATCH (a:Entity)-[r:RELATION]-(b:Entity) 
-                     WHERE a.type = e.type AND a.type = b.type AND id(a) < id(b)
-                     RETURN a.type as t, count(*) as intra_relations
-                 ) WHERE t = e.type), 
-                 0
-             ) as intra_rels
-        RETURN entity_type, type_count, intra_rels,
-               type_count * (type_count - 1) / 2 as possible_relations,
-               round(100.0 * intra_rels / (type_count * (type_count - 1) / 2), 4) as density_pct
-        ORDER BY type_count DESC
-        LIMIT 20
-        """
-        # Simpler query that works without subqueries
-        simple_query = """
-        MATCH (e:Entity)
-        WITH e.type as entity_type, collect(e) as entities, count(e) as type_count
-        WHERE type_count >= 5
-        UNWIND entities as a
-        UNWIND entities as b
-        WITH entity_type, type_count, a, b
-        WHERE id(a) < id(b)
-        OPTIONAL MATCH (a)-[r:RELATION]-(b)
-        WITH entity_type, type_count, count(r) as intra_relations
-        WITH entity_type, type_count, intra_relations,
-             type_count * (type_count - 1) / 2 as possible_relations
-        RETURN 
-            entity_type,
-            type_count,
-            intra_relations,
-            possible_relations,
-            round(100.0 * intra_relations / possible_relations, 4) as density_pct
-        ORDER BY type_count DESC
-        LIMIT 20
-        """
-        # Even simpler - just count intra-type relations per type
-        query = """
-        MATCH (a:Entity)-[r:RELATION]-(b:Entity)
-        WHERE a.type = b.type AND id(a) < id(b)
-        WITH a.type as entity_type, count(*) as intra_relations
+        # Join in Python
+        intra_map = {r['entity_type']: r['intra_relations'] for r in intra_results}
         
-        MATCH (e:Entity)
-        WHERE e.type = entity_type
-        WITH entity_type, intra_relations, count(e) as type_count
-        WHERE type_count >= 5
-        WITH entity_type, type_count, intra_relations,
-             type_count * (type_count - 1) / 2 as possible_relations
-        RETURN 
-            entity_type,
-            type_count,
-            intra_relations,
-            possible_relations,
-            round(100.0 * intra_relations / possible_relations, 4) as density_pct
-        ORDER BY type_count DESC
-        LIMIT 20
-        """
-        return self.run_query(query, "Intra-type density (type cohesion)")
+        results = []
+        for t in type_results:
+            entity_type = t['entity_type']
+            type_count = t['type_count']
+            intra_relations = intra_map.get(entity_type, 0)
+            possible = type_count * (type_count - 1) // 2
+            density = round(100.0 * intra_relations / possible, 4) if possible > 0 else 0
+            results.append({
+                'entity_type': entity_type,
+                'type_count': type_count,
+                'intra_relations': intra_relations,
+                'possible_relations': possible,
+                'density_pct': density
+            })
+        
+        return results
     
     def get_layer_integration_score(self) -> Dict:
         """
@@ -565,10 +531,8 @@ class GraphAnalyzer:
         Shows which types are central to the knowledge graph.
         """
         query = """
-        MATCH (e:Entity)
-        OPTIONAL MATCH (e)-[r:RELATION]-()
+        MATCH (e:Entity)-[r:RELATION]-()
         WITH e, count(r) as degree
-        WHERE degree > 0
         WITH e.type as entity_type, degree,
              CASE 
                  WHEN degree >= 100 THEN 'mega_hub'
