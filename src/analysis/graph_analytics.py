@@ -6,44 +6,19 @@ Graph Analytics for GraphRAG Knowledge Graph
 Runs analytical queries on Neo4j to compute network statistics,
 coverage metrics, and entity centrality measures.
 
-Analytics Categories:
-1. Basic Counts: Nodes, relationships, coverage
-2. KG-Specific Metrics:
-   - Relation density (relations per entity)
-   - Predicate diversity (semantic richness)
-   - Degree distribution (power-law analysis)
-   - Property completeness (metadata quality)
-   - Cross-type connectivity (integration quality)
-3. Network Science Metrics:
-   - Author collaboration network (avg degree, E-R comparison)
-   - Citation network analysis (in-degree distribution, preferential attachment)
-   - Academic-regulatory bridges (cohesion, domain distribution)
-4. Domain Metrics:
-   - Cross-jurisdictional coverage
-   - Academic-regulatory bridges
-   - Citation enrichment statistics
-5. Quality Metrics:
-   - Provenance coverage
-   - Orphan detection
-
 Usage:
-    python tests/graph/analyze_graph.py
-    python tests/graph/analyze_graph.py --output reports/graph_stats.json
+    python -m src.analysis.graph_analytics
+    python -m src.analysis.graph_analytics --verbose
+    python -m src.analysis.graph_analytics --output reports/graph_stats.json
 """
 
-# Standard library
 import os
-from pathlib import Path
 import sys
 import json
+import logging
 import argparse
+from pathlib import Path
 from typing import Dict, List, Any
-from datetime import datetime
-
-# Project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Third-party
 from neo4j import GraphDatabase
@@ -51,13 +26,6 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-# Local
-from src.utils.logger import setup_logging, get_logger
-
-# Setup logging
-setup_logging()
-logger = get_logger(__name__)
 
 
 class GraphAnalyzer:
@@ -1238,16 +1206,12 @@ def main():
     parser.add_argument('--user', type=str, default='neo4j', help='Neo4j user (default: neo4j)')
     parser.add_argument('--password', type=str, help='Neo4j password (default: env NEO4J_PASSWORD)')
     parser.add_argument('--output', type=str, help='Output JSON file path (optional)')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed query logs and full report')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show query-by-query progress and full report')
     
     args = parser.parse_args()
     
-    # Suppress neo4j notification warnings (deprecated function warnings, missing properties, etc)
-    logging.getLogger('neo4j.notifications').setLevel(logging.ERROR)
-    
-    # Set log level based on verbose flag
-    if not args.verbose:
-        logger.setLevel(logging.WARNING)
+    # Suppress neo4j driver warnings (deprecated functions, missing properties)
+    logging.getLogger('neo4j').setLevel(logging.ERROR)
     
     # Get credentials
     uri = args.uri or os.getenv('NEO4J_URI')
@@ -1272,7 +1236,7 @@ def main():
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)
             
-            print(f"Results saved to {output_path}")
+            print(f"\nResults saved to {output_path}")
         
     finally:
         analyzer.close()
