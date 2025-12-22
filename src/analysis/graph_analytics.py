@@ -281,8 +281,8 @@ def get_academic_regulatory_bridges(driver: Driver) -> Dict[str, Any]:
     distribution_query = """
     MATCH (e:Entity)-[:EXTRACTED_FROM]->(c:Chunk)
     WITH e, 
-         sum(CASE WHEN c.doc_type = 'regulatory' THEN 1 ELSE 0 END) as in_reg,
-         sum(CASE WHEN c.doc_type = 'academic' THEN 1 ELSE 0 END) as in_acad
+         sum(CASE WHEN c.doc_type = 'regulation' THEN 1 ELSE 0 END) as in_reg,
+         sum(CASE WHEN c.doc_type = 'paper' THEN 1 ELSE 0 END) as in_acad
     WITH 
       CASE 
         WHEN in_reg > 0 AND in_acad > 0 THEN 'bridging'
@@ -298,8 +298,8 @@ def get_academic_regulatory_bridges(driver: Driver) -> Dict[str, Any]:
     top_bridges_query = """
     MATCH (e:Entity)-[:EXTRACTED_FROM]->(c:Chunk)
     WITH e, 
-         sum(CASE WHEN c.doc_type = 'regulatory' THEN 1 ELSE 0 END) as reg_count,
-         sum(CASE WHEN c.doc_type = 'academic' THEN 1 ELSE 0 END) as acad_count
+         sum(CASE WHEN c.doc_type = 'regulation' THEN 1 ELSE 0 END) as reg_count,
+         sum(CASE WHEN c.doc_type = 'paper' THEN 1 ELSE 0 END) as acad_count
     WHERE reg_count > 0 AND acad_count > 0
     WITH e, reg_count, acad_count, reg_count + acad_count as total
     ORDER BY total DESC
