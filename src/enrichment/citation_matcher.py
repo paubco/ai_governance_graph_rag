@@ -1084,7 +1084,7 @@ class ProvenanceConstrainedMatcher:
                         results['stats']['author_structured'] += 1
                     elif is_reference:
                         results['stats']['author_reference'] += 1
-                        results['reference_matches'].append(match)
+                        # Authors don't create L2s - they link to existing ones
                         
                 elif entity_type == 'Journal':
                     results['journal_matches'].append(match)
@@ -1093,7 +1093,7 @@ class ProvenanceConstrainedMatcher:
                         results['stats']['journal_structured'] += 1
                     elif is_reference:
                         results['stats']['journal_reference'] += 1
-                        # Don't add journals to reference_matches (too noisy)
+                        # Journals don't create L2s - they link to existing ones
                         
                 else:  # Document or Citation
                     results['document_matches'].append(match)
@@ -1102,6 +1102,7 @@ class ProvenanceConstrainedMatcher:
                         results['stats']['document_structured'] += 1
                     elif is_reference:
                         results['stats']['document_reference'] += 1
+                        # Only Document/Citation create L2s
                         results['reference_matches'].append(match)
             else:
                 results['unmatched'].append(entity)

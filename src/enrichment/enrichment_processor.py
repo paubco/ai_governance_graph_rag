@@ -164,18 +164,18 @@ class EnrichmentProcessor:
         self._save_outputs()
         
         # Step 10: Print summary stats
-        self._print_summary_stats(metadata_matches)
+        self._print_summary_stats(metadata_matches, jurisdiction_links)
         
         logger.info("✓ Pipeline complete!")
     
-    def _print_summary_stats(self, metadata_matches: Dict = None):
+    def _print_summary_stats(self, metadata_matches: Dict = None, jurisdiction_links: List[Dict] = None):
         """Print summary statistics to stdout."""
         print("\n" + "=" * 70)
         print("PIPELINE SUMMARY")
         print("=" * 70)
         
         # Node counts
-        print("\n📦 NODES CREATED:")
+        print("\nNODES CREATED:")
         print(f"   L1 Publications: {len(self.l1_publications)}")
         print(f"   L2 Publications: {len(self.l2_publications)}")
         print(f"   Authors:         {len(self.authors)}")
@@ -187,81 +187,88 @@ class EnrichmentProcessor:
             rel_type = r['relation_type']
             rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 1
         
-        print("\n🔗 RELATIONS GENERATED:")
+        print("\nRELATIONS GENERATED:")
         for rel_type, count in sorted(rel_counts.items()):
             print(f"   {rel_type}: {count}")
         
-        # Citation matching
-        report = self.quality_report.get('summary', {})
-        print("\n📖 CITATION MATCHING:")
-        print(f"   Total citations:  {report.get('total_citation_entities', 0)}")
-        print(f"   Matched:          {report.get('matched_entities', 0)} ({report.get('match_rate_pct', 0)}%)")
-        print(f"   L1 overlaps:      {report.get('l1_matches', 0)}")
-        print(f"   L2 created:       {report.get('unique_l2_publications', 0)}")
-        
-        # Metadata matching
+        # Citation matching (Document/Citation entities)
         if metadata_matches and metadata_matches.get('stats'):
             stats = metadata_matches['stats']
             results = metadata_matches.get('results', {})
             
-            print("\n🏷️ UNIFIED METADATA MATCHING:")
+            doc_matched = stats.get('document_matched', 0)
+            doc_total = stats.get('document_total', 0)
+            doc_rate = doc_matched / max(1, doc_total) * 100
             
-            author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
-            journal_rate = stats['journal_matched'] / max(1, stats['journal_total']) * 100
-            document_rate = stats['document_matched'] / max(1, stats['document_total']) * 100
+            l2_from_refs = len(metadata_matches.get('l2_publications', []))
+            cites_rels = len(metadata_matches.get('all_relations', {}).get('cites', []))
             
-            print(f"   Authors:   {stats['author_matched']:>4}/{stats['author_total']:<4} ({author_rate:>5.1f}%)")
-            print(f"      → Structured: {stats.get('author_structured', 0)}, Reference: {stats.get('author_reference', 0)}")
-            print(f"   Journals:  {stats['journal_matched']:>4}/{stats['journal_total']:<4} ({journal_rate:>5.1f}%)")
-            print(f"      → Structured: {stats.get('journal_structured', 0)}, Reference: {stats.get('journal_reference', 0)}")
-            print(f"   Documents: {stats['document_matched']:>4}/{stats['document_total']:<4} ({document_rate:>5.1f}%)")
-            print(f"      → Structured: {stats.get('document_structured', 0)}, Reference: {stats.get('document_reference', 0)}")
+            print("\nCITATION MATCHING (Document/Citation entities):")
+            print(f"   Matched:     {doc_matched}/{doc_total} ({doc_rate:.1f}%)")
+            print(f"   L1 overlaps: {stats.get('document_structured', 0)}")
+            print(f"   L2 created:  {l2_from_refs}")
+            print(f"   CITES rels:  {cites_rels}")
             
-            print(f"\n   📊 RELATIONS GENERATED:")
-            print(f"      SAME_AS:   {len(metadata_matches.get('relations', []))} (structured → L1)")
-            if metadata_matches.get('l2_publications'):
-                print(f"      L2 Created: {len(metadata_matches['l2_publications'])} (from references)")
-            if metadata_matches.get('all_relations', {}).get('authored'):
-                print(f"      AUTHORED:  {len(metadata_matches['all_relations']['authored'])} (author → L2)")
-            if metadata_matches.get('all_relations', {}).get('cites'):
-                print(f"      CITES:     {len(metadata_matches['all_relations']['cites'])} (L1 → L2)")
+            # Sample document matches
+            document_matches = results.get('document_matches', [])
+            if document_matches:
+                print("\n   Samples:")
+                for m in document_matches[:5]:
+                    conf = m.get('confidence', 0)
+                    target_type = m.get('target_type', '?')
+                    print(f"      {m['entity_name'][:35]:<35} -> {m['target_name'][:25]:<25} [{target_type}]")
             
-            # Sample matches
-            print("\n📋 SAMPLE MATCHES:")
+            # Authors
+            author_matched = stats.get('author_matched', 0)
+            author_total = stats.get('author_total', 0)
+            author_rate = author_matched / max(1, author_total) * 100
+            authored_rels = len(metadata_matches.get('all_relations', {}).get('authored', []))
+            
+            print(f"\nAUTHOR MATCHING:")
+            print(f"   Matched:       {author_matched}/{author_total} ({author_rate:.1f}%)")
+            print(f"   AUTHORED rels: {authored_rels}")
             
             author_matches = results.get('author_matches', [])
             if author_matches:
-                print("\n   Authors:")
+                print("\n   Samples:")
                 for m in author_matches[:5]:
-                    conf = m.get('confidence', 0)
                     method = m.get('method', '?')
-                    print(f"      {m['entity_name'][:25]:<25} → {m['target_name'][:25]:<25} [{method}, {conf:.2f}]")
+                    print(f"      {m['entity_name'][:25]:<25} -> {m['target_name'][:25]:<25} [{method}]")
+            
+            # Journals
+            journal_matched = stats.get('journal_matched', 0)
+            journal_total = stats.get('journal_total', 0)
+            journal_rate = journal_matched / max(1, journal_total) * 100
+            
+            print(f"\nJOURNAL MATCHING:")
+            print(f"   Matched: {journal_matched}/{journal_total} ({journal_rate:.1f}%)")
             
             journal_matches = results.get('journal_matches', [])
             if journal_matches:
-                print("\n   Journals:")
+                print("\n   Samples:")
                 for m in journal_matches[:5]:
-                    conf = m.get('confidence', 0)
                     method = m.get('method', '?')
-                    print(f"      {m['entity_name'][:30]:<30} → {m['target_name'][:25]:<25} [{method}, {conf:.2f}]")
-            
-            document_matches = results.get('document_matches', [])
-            if document_matches:
-                print("\n   Documents:")
-                for m in document_matches[:5]:
-                    conf = m.get('confidence', 0)
-                    method = m.get('method', '?')
-                    target_type = m.get('target_type', '?')
-                    print(f"      {m['entity_name'][:35]:<35} → {m['target_name'][:20]:<20} [{target_type}, {conf:.2f}]")
+                    print(f"      {m['entity_name'][:30]:<30} -> {m['target_name'][:20]:<20} [{method}]")
         
         # Jurisdiction linking
         jur_report = self.quality_report.get('jurisdiction_linking', {})
-        print("\n🌍 JURISDICTION LINKING:")
+        print(f"\nJURISDICTION LINKING:")
         print(f"   Entities linked:      {jur_report.get('total_linked', 0)}")
         print(f"   Unique jurisdictions: {jur_report.get('unique_jurisdictions', 0)}")
         
+        if jurisdiction_links:
+            print("\n   Samples:")
+            # Group by jurisdiction for variety
+            by_jur = {}
+            for jl in jurisdiction_links:
+                code = jl.get('jurisdiction_code', '?')
+                if code not in by_jur:
+                    by_jur[code] = jl
+            for code, jl in list(by_jur.items())[:5]:
+                print(f"      {jl['entity_name'][:30]:<30} -> {code}")
+        
         print("\n" + "=" * 70)
-        print("✓ Pipeline complete!")
+        print("Pipeline complete!")
     
     def _load_input_data(self) -> tuple:
         """Load entities, relations, and chunks."""
@@ -518,12 +525,21 @@ class EnrichmentProcessor:
         
         logger.info(f"Entities with DISCUSSES relations: {len(discussed_entity_ids)}")
         
-        # Filter to matchable types that have DISCUSSES relations
+        # Filter to matchable types
+        # - Document/Citation: Must have DISCUSSES relation (semantic validation)
+        # - Author/Journal: Allow all with provenance (validation via reference matching)
         matchable_types = {'Author', 'Journal', 'Document', 'Citation'}
         all_matchable = [e for e in entities if e.get('type') in matchable_types]
-        matchable = [e for e in all_matchable if e.get('entity_id') in discussed_entity_ids]
         
-        logger.info(f"Matchable entities (with DISCUSSES): {len(matchable)} / {len(all_matchable)} total")
+        matchable = [e for e in all_matchable 
+                     if e.get('type') in ('Author', 'Journal')  # Authors/Journals: provenance only
+                     or e.get('entity_id') in discussed_entity_ids]  # Docs/Citations: need DISCUSSES
+        
+        docs_filtered = len([e for e in all_matchable if e.get('type') in ('Document', 'Citation')]) - \
+                        len([e for e in matchable if e.get('type') in ('Document', 'Citation')])
+        
+        logger.info(f"Matchable entities: {len(matchable)} / {len(all_matchable)} total")
+        logger.info(f"  (filtered {docs_filtered} Document/Citation without DISCUSSES)")
         
         # Run matching
         results = matcher.match_all(matchable)
