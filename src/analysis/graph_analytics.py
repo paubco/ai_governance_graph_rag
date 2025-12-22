@@ -159,7 +159,7 @@ def get_degree_stats(driver: Driver) -> Dict[str, float]:
     """Get aggregate degree statistics."""
     query = """
     MATCH (n)
-    WITH n, size((n)--()) AS degree
+    WITH n, COUNT { (n)--() } AS degree
     RETURN 
         avg(degree) AS avg_degree,
         min(degree) AS min_degree,
@@ -213,7 +213,7 @@ def get_degree_distribution_raw(driver: Driver) -> List[Dict]:
     """Get raw degree distribution for plotting."""
     query = """
     MATCH (e:Entity)
-    WITH e, size((e)-[:RELATION]-()) AS degree
+    WITH e, COUNT { (e)-[:RELATION]-() } AS degree
     RETURN degree, count(e) AS count
     ORDER BY degree
     """
@@ -226,7 +226,7 @@ def get_top_entities_by_degree(driver: Driver, limit: int = 50) -> List[Dict]:
     """Get top entities by total degree."""
     query = f"""
     MATCH (e:Entity)
-    WITH e, size((e)-[:RELATION]-()) AS degree
+    WITH e, COUNT { (e)-[:RELATION]-() } AS degree
     ORDER BY degree DESC
     LIMIT {limit}
     RETURN 
