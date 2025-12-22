@@ -1182,8 +1182,8 @@ class ProvenanceConstrainedMatcher:
         """
         Create L2 publications from reference matches.
         
-        Deduplicates by (paper_id, reference_index) to avoid creating
-        multiple L2s for the same reference.
+        Deduplicates by content (author surname, year, title prefix) to avoid
+        creating multiple L2s when different papers cite the same work.
         
         Returns:
             Tuple of (l2_publications list, ref_key_to_l2_id mapping)
@@ -1192,7 +1192,10 @@ class ProvenanceConstrainedMatcher:
         
         l2_publications = []
         ref_key_to_l2_id = {}  # (paper_id, ref_idx) -> l2_id
-        seen_refs = set()
+        
+        # Content-based deduplication: (author_surname, year, title_prefix) -> l2_id
+        content_to_l2_id = {}
+        content_to_l2_data = {}
         
         for match in results['reference_matches']:
             paper_id = match.get('paper_id', '')
@@ -1202,9 +1205,10 @@ class ProvenanceConstrainedMatcher:
                 continue
             
             ref_key = (paper_id, ref_idx)
-            if ref_key in seen_refs:
+            
+            # Skip if we've already processed this exact (paper_id, ref_idx)
+            if ref_key in ref_key_to_l2_id:
                 continue
-            seen_refs.add(ref_key)
             
             # Get raw reference string
             paper_meta = self.paper_metadata.get(paper_id, {})
@@ -1216,9 +1220,31 @@ class ProvenanceConstrainedMatcher:
             raw_ref = references[ref_idx]
             parsed = self._parse_reference_string(raw_ref)
             
-            # Generate L2 ID
+            # Create content-based dedup key
+            first_author = ''
+            if parsed.get('authors'):
+                first_author = parsed['authors'][0].get('surname', '').lower().strip()
+            year = parsed.get('year')
+            title = parsed.get('title') or ''
+            # Use first 50 chars of title, normalized
+            title_prefix = re.sub(r'[^\w\s]', '', title.lower())[:50].strip()
+            
+            content_key = (first_author, year, title_prefix)
+            
+            # Check if we've seen this content before
+            if content_key in content_to_l2_id and content_key != ('', None, ''):
+                # Reuse existing L2
+                l2_id = content_to_l2_id[content_key]
+                ref_key_to_l2_id[ref_key] = l2_id
+                continue
+            
+            # Generate new L2 ID
             l2_id = generate_l2_publication_id(raw_ref)
+            
+            # Register in both mappings
             ref_key_to_l2_id[ref_key] = l2_id
+            if content_key != ('', None, ''):
+                content_to_l2_id[content_key] = l2_id
             
             # Create L2 publication
             l2_pub = {
@@ -1234,6 +1260,10 @@ class ProvenanceConstrainedMatcher:
             }
             
             l2_publications.append(l2_pub)
+        
+        logger.info(f"Created {len(l2_publications)} unique L2 publications from {len(ref_key_to_l2_id)} references")
+        if len(ref_key_to_l2_id) > len(l2_publications):
+            logger.info(f"  Deduplicated {len(ref_key_to_l2_id) - len(l2_publications)} duplicate citations")
         
         return l2_publications, ref_key_to_l2_id
     
