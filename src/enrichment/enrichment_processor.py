@@ -510,8 +510,9 @@ class EnrichmentProcessor:
         # (either as subject or object)
         discussed_entity_ids = set()
         for rel in relations:
-            rel_type = rel.get('relation_type', rel.get('type', ''))
-            if rel_type.upper() == 'DISCUSSES':
+            # Handle different field names: predicate, relation_type, type
+            rel_type = rel.get('predicate', rel.get('relation_type', rel.get('type', '')))
+            if rel_type.lower() == 'discusses':
                 discussed_entity_ids.add(rel.get('subject_id', rel.get('source_id', '')))
                 discussed_entity_ids.add(rel.get('object_id', rel.get('target_id', '')))
         
