@@ -610,6 +610,8 @@ class ProvenanceConstrainedMatcher:
         
         Academic chunks use paper_XXX pattern in chunk_id.
         Regulatory chunks use reg_XX pattern (not matched here).
+        
+        Note: chunks_embedded.jsonl uses 'chunk_ids' (list) not 'chunk_id' (str)
         """
         mapping = {}
         
@@ -621,8 +623,12 @@ class ProvenanceConstrainedMatcher:
                 eid_to_paper[eid] = paper_id
         
         for chunk in chunks:
-            chunk_id = chunk.get('chunk_id', '')
-            doc_id = chunk.get('document_id', '')
+            # Handle both 'chunk_id' (str) and 'chunk_ids' (list) formats
+            chunk_id = chunk.get('chunk_id') or (chunk.get('chunk_ids', [None])[0] if chunk.get('chunk_ids') else None)
+            if not chunk_id:
+                continue
+                
+            doc_id = chunk.get('document_id') or (chunk.get('document_ids', [None])[0] if chunk.get('document_ids') else None)
             
             # Try to extract paper_id from chunk_id pattern (paper_XXX_CHUNK_YYY)
             if chunk_id.startswith('paper_'):
