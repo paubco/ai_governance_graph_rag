@@ -234,28 +234,51 @@ class Neo4jImportProcessor:
         
         v1.1: Added aliases property.
         """
-        # Try JSONL first (v1.1), fall back to JSON
-        jsonl_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
-        json_path = self.data_dir / 'processed' / 'entities' / 'normalized_entities_with_ids.json'
-        
-        if jsonl_path.exists():
-            entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
-        elif json_path.exists():
-            entities_data = self.load_json('processed/entities/normalized_entities_with_ids.json')
-        else:
-            raise FileNotFoundError("No entities file found")
-        
         entities = []
-        for entity in entities_data:
-            entities.append({
-                'entity_id': entity['entity_id'],
-                'name': entity.get('name', ''),
-                'type': entity.get('type', ''),
-                'description': entity.get('description', ''),
-                'frequency': entity.get('frequency', entity.get('merge_count', 1)),
-                'aliases': entity.get('aliases', [])  # v1.1 addition
-            })
+        seen_ids = set()
         
+        # Load semantic entities
+        semantic_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
+        if semantic_path.exists():
+            semantic_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+            for entity in semantic_data:
+                eid = entity['entity_id']
+                if eid not in seen_ids:
+                    seen_ids.add(eid)
+                    entities.append({
+                        'entity_id': eid,
+                        'name': entity.get('name', ''),
+                        'type': entity.get('type', ''),
+                        'description': entity.get('description', ''),
+                        'frequency': entity.get('frequency', entity.get('merge_count', 1)),
+                        'aliases': entity.get('aliases', [])
+                    })
+            logger.info(f"Loaded {len(entities)} semantic entities")
+        
+        # Load metadata entities (for PART_OF, SAME_AS relations)
+        metadata_path = self.data_dir / 'processed' / 'entities' / 'entities_metadata.jsonl'
+        if metadata_path.exists():
+            metadata_data = self.load_jsonl('processed/entities/entities_metadata.jsonl')
+            metadata_count = 0
+            for entity in metadata_data:
+                eid = entity['entity_id']
+                if eid not in seen_ids:
+                    seen_ids.add(eid)
+                    entities.append({
+                        'entity_id': eid,
+                        'name': entity.get('name', ''),
+                        'type': entity.get('type', ''),
+                        'description': entity.get('description', ''),
+                        'frequency': entity.get('frequency', entity.get('merge_count', 1)),
+                        'aliases': entity.get('aliases', [])
+                    })
+                    metadata_count += 1
+            logger.info(f"Loaded {metadata_count} metadata entities (skipped {len(metadata_data) - metadata_count} duplicates)")
+        
+        if not entities:
+            raise FileNotFoundError("No entities files found")
+        
+        logger.info(f"Total entities: {len(entities)}")
         return entities
     
     def prepare_l2_publications(self) -> List[Dict]:
@@ -388,44 +411,67 @@ class Neo4jImportProcessor:
         
         return relations
     
-    def prepare_extracted_from(self, entities: List[Dict]) -> List[Dict]:
-        """Prepare EXTRACTED_FROM relationships."""
-        # Try to load from entities file with chunk_ids
-        jsonl_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
-        json_path = self.data_dir / 'processed' / 'entities' / 'normalized_entities_with_ids.json'
+    def prepare_extracted_from(self, entities: List[Dict] = None) -> List[Dict]:
+        """
+        Prepare EXTRACTED_FROM relationships: Entity → Chunk.
         
-        if jsonl_path.exists():
-            entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
-        elif json_path.exists():
-            entities_data = self.load_json('processed/entities/normalized_entities_with_ids.json')
-        else:
-            entities_data = entities
-        
+        Loads from entity files (not passed entities) because we need chunk_ids
+        which aren't included in the node data.
+        """
         relations = []
-        for entity in entities_data:
-            entity_id = entity.get('entity_id')
-            chunk_ids = entity.get('chunk_ids', [])
-            
-            for chunk_id in chunk_ids:
-                relations.append({
-                    'entity_id': entity_id,
-                    'chunk_id': chunk_id
-                })
         
+        # Load semantic entities (with chunk_ids)
+        semantic_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
+        if semantic_path.exists():
+            entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+            for entity in entities_data:
+                entity_id = entity.get('entity_id')
+                chunk_ids = entity.get('chunk_ids', [])
+                for chunk_id in chunk_ids:
+                    relations.append({
+                        'entity_id': entity_id,
+                        'chunk_id': chunk_id
+                    })
+            logger.info(f"Loaded {len(relations)} EXTRACTED_FROM from semantic entities")
+        
+        # Load metadata entities (with chunk_ids)
+        metadata_path = self.data_dir / 'processed' / 'entities' / 'entities_metadata.jsonl'
+        if metadata_path.exists():
+            metadata_data = self.load_jsonl('processed/entities/entities_metadata.jsonl')
+            metadata_count = 0
+            for entity in metadata_data:
+                entity_id = entity.get('entity_id')
+                chunk_ids = entity.get('chunk_ids', [])
+                for chunk_id in chunk_ids:
+                    relations.append({
+                        'entity_id': entity_id,
+                        'chunk_id': chunk_id
+                    })
+                    metadata_count += 1
+            logger.info(f"Loaded {metadata_count} EXTRACTED_FROM from metadata entities")
+        
+        if not relations:
+            raise FileNotFoundError("No entity files found for EXTRACTED_FROM")
+        
+        logger.info(f"Total EXTRACTED_FROM: {len(relations)}")
         return relations
     
     def prepare_relations(self) -> List[Dict]:
-        """Load semantic relations."""
-        # Try JSONL first (v1.1)
-        jsonl_path = self.data_dir / 'processed' / 'relations' / 'relations_semantic.jsonl'
-        json_path = self.data_dir / 'interim' / 'relations' / 'relations_normalized.json'
+        """
+        Load all RELATION edges (semantic + discusses tracks).
         
-        if jsonl_path.exists():
-            # JSONL format may be nested (per-entity results)
+        Two-track design per ARCHITECTURE.md § 3.1.4:
+        - relations_semantic.jsonl: OpenIE predicates (appliesto, requires, etc.)
+        - relations_discusses.jsonl: Academic track (discusses only)
+        """
+        relations = []
+        
+        # Track 1: Semantic relations (OpenIE)
+        semantic_path = self.data_dir / 'processed' / 'relations' / 'relations_semantic.jsonl'
+        if semantic_path.exists():
             raw_data = self.load_jsonl('processed/relations/relations_semantic.jsonl')
-            relations = []
             for item in raw_data:
-                # Handle nested format
+                # Handle nested format (per-entity results)
                 if 'relations' in item:
                     for rel in item['relations']:
                         relations.append({
@@ -443,18 +489,30 @@ class Neo4jImportProcessor:
                         'chunk_ids': item.get('chunk_ids', []),
                         'confidence': item.get('confidence', 1.0)
                     })
-            return relations
-        elif json_path.exists():
-            relations_data = self.load_json('interim/relations/relations_normalized.json')
-            return [{
-                'subject_id': rel['subject_id'],
-                'predicate': rel['predicate'],
-                'object_id': rel['object_id'],
-                'chunk_ids': rel.get('chunk_ids', []),
-                'confidence': rel.get('confidence', 1.0)
-            } for rel in relations_data]
+            logger.info(f"Loaded {len(relations)} semantic relations")
         else:
-            raise FileNotFoundError("No relations file found")
+            raise FileNotFoundError(f"Required file not found: {semantic_path}")
+        
+        # Track 2: Discusses relations (academic/citation)
+        discusses_path = self.data_dir / 'processed' / 'relations' / 'relations_discusses.jsonl'
+        if discusses_path.exists():
+            discusses_data = self.load_jsonl('processed/relations/relations_discusses.jsonl')
+            discusses_count = 0
+            for item in discusses_data:
+                relations.append({
+                    'subject_id': item['subject_id'],
+                    'predicate': item['predicate'],
+                    'object_id': item['object_id'],
+                    'chunk_ids': item.get('chunk_ids', []),
+                    'confidence': item.get('confidence', 1.0)
+                })
+                discusses_count += 1
+            logger.info(f"Loaded {discusses_count} discusses relations")
+        else:
+            logger.warning(f"No discusses relations file found: {discusses_path}")
+        
+        logger.info(f"Total relations: {len(relations)}")
+        return relations
     
     def prepare_part_of_relations(self) -> List[Dict]:
         """
