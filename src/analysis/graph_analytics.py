@@ -869,10 +869,6 @@ class GraphAnalyzer:
         Returns:
             Dictionary containing all analysis results
         """
-        print("\n" + "="*60)
-        print("GRAPH ANALYTICS REPORT")
-        print("="*60 + "\n")
-        
         results = {
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
