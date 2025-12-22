@@ -176,7 +176,7 @@ class Neo4jImportProcessor:
     
     def prepare_authors(self) -> List[Dict]:
         """Load author nodes from Phase 2A."""
-        authors_data = self.load_json('processed/entities/authors.json')
+        authors_data = self.load_json('processed/enrichment/authors.json')
         
         authors = []
         for author in authors_data:
@@ -190,7 +190,7 @@ class Neo4jImportProcessor:
     
     def prepare_journals(self) -> List[Dict]:
         """Load journal nodes from Phase 2A."""
-        journals_data = self.load_json('processed/entities/journals.json')
+        journals_data = self.load_json('processed/enrichment/journals.json')
         
         journals = []
         for journal in journals_data:
@@ -264,7 +264,7 @@ class Neo4jImportProcessor:
     
     def prepare_l2_publications(self) -> List[Dict]:
         """Load L2 publication nodes from Phase 2A."""
-        publications_data = self.load_json('processed/entities/publications.json')
+        publications_data = self.load_json('processed/enrichment/publications.json')
         
         l2_pubs = []
         for pub in publications_data:
@@ -355,7 +355,7 @@ class Neo4jImportProcessor:
     
     def load_issn_to_journal_mapping(self) -> Dict[str, str]:
         """Create mapping from ISSN to journal_id."""
-        journals = self.load_json('processed/entities/journals.json')
+        journals = self.load_json('processed/enrichment/journals.json')
         
         mapping = {}
         for journal in journals:
