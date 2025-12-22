@@ -226,7 +226,7 @@ def get_top_entities_by_degree(driver: Driver, limit: int = 50) -> List[Dict]:
     """Get top entities by total degree."""
     query = f"""
     MATCH (e:Entity)
-    WITH e, COUNT { (e)-[:RELATION]-() } AS degree
+    WITH e, COUNT {{(e)-[:RELATION]-()}} AS degree
     ORDER BY degree DESC
     LIMIT {limit}
     RETURN 
