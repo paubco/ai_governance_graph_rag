@@ -537,8 +537,8 @@ RELATION_EXTRACTION_CONFIG = {
 ENRICHMENT_CONFIG = {
     # Input paths (relative to PROJECT_ROOT)
     'scopus_csv_path': 'data/raw/academic/scopus_2023/scopus_export_2023_raw.csv',
-    'entities_path': 'data/processed/entities/entities_semantic.jsonl',
-    'relations_path': 'data/processed/relations/relations_semantic.jsonl',
+    'entities_path': 'data/processed/entities/entities_metadata.jsonl',
+    'relations_path': 'data/processed/relations/relations_discusses.jsonl',',
     'chunks_path': 'data/processed/chunks/chunks_embedded.jsonl',
     'scraping_summary_path': 'data/raw/dlapiper/scraping_summary.json',
     
