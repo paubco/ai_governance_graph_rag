@@ -34,7 +34,7 @@ from src.utils.logger import get_logger
 
 # Config - import with fallback
 try:
-    from src.config.extraction import NEO4J_CONFIG
+    from config.extraction_config import NEO4J_CONFIG
 except ImportError:
     NEO4J_CONFIG = {'batch_size': 500}
 
@@ -415,12 +415,12 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            relations: List of dicts with source_id, target_id
+            relations: List of dicts with subject_id, object_id (from JSONL)
         """
         query = """
         UNWIND $batch AS rel
-        MATCH (s:Entity {entity_id: rel.source_id})
-        MATCH (t:Entity {entity_id: rel.target_id})
+        MATCH (s:Entity {entity_id: rel.subject_id})
+        MATCH (t:Entity {entity_id: rel.object_id})
         CREATE (s)-[:PART_OF]->(t)
         """
         return self.batch_import(session, query, relations, desc="PART_OF")
@@ -433,12 +433,12 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            relations: List of dicts with source_id, target_id
+            relations: List of dicts with subject_id, object_id (from JSONL)
         """
         query = """
         UNWIND $batch AS rel
-        MATCH (s:Entity {entity_id: rel.source_id})
-        MATCH (t:Entity {entity_id: rel.target_id})
+        MATCH (s:Entity {entity_id: rel.subject_id})
+        MATCH (t:Entity {entity_id: rel.object_id})
         CREATE (s)-[:SAME_AS]->(t)
         """
         return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Entity)")
