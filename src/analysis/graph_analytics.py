@@ -63,7 +63,7 @@ logger = get_logger(__name__)
 class GraphAnalyzer:
     """Analyzes GraphRAG knowledge graph structure and statistics."""
     
-    def __init__(self, uri: str, user: str, password: str):
+    def __init__(self, uri: str, user: str, password: str, verbose: bool = False):
         """
         Initialize Neo4j connection.
         
@@ -71,14 +71,18 @@ class GraphAnalyzer:
             uri: Neo4j connection URI
             user: Neo4j username
             password: Neo4j password
+            verbose: If True, show detailed query logs
         """
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        logger.info(f"Connected to Neo4j at {uri}")
+        self.verbose = verbose
+        if verbose:
+            print(f"Connected to Neo4j at {uri}")
     
     def close(self):
         """Close Neo4j connection."""
         self.driver.close()
-        logger.info("Connection closed")
+        if self.verbose:
+            print("Connection closed")
     
     def run_query(self, query: str, description: str) -> List[Dict]:
         """
@@ -91,11 +95,13 @@ class GraphAnalyzer:
         Returns:
             List of result dictionaries
         """
-        logger.info(f"Running: {description}")
+        if self.verbose:
+            print(f"Running: {description}")
         with self.driver.session() as session:
             result = session.run(query)
             data = [dict(record) for record in result]
-            logger.info(f"  → Returned {len(data)} results")
+            if self.verbose:
+                print(f"  -> Returned {len(data)} results")
             return data
     
     def get_node_counts(self) -> List[Dict]:
@@ -238,8 +244,8 @@ class GraphAnalyzer:
             low_degree = sum(r['entity_count'] for r in results if r['bucket'] in ['1-5', '6-20'])
             high_degree = sum(r['entity_count'] for r in results if r['bucket'] in ['21-100', '101-500', '500+'])
             
-            if low_degree > high_degree * 3:
-                logger.info("  → Power-law distribution detected (typical for KGs) ")
+            if low_degree > high_degree * 3 and self.verbose:
+                print("  -> Power-law distribution detected (typical for KGs)")
         
         return results
     
@@ -431,7 +437,7 @@ class GraphAnalyzer:
         # Then get intra-type relation counts
         intra_query = """
         MATCH (a:Entity)-[r:RELATION]-(b:Entity)
-        WHERE a.type = b.type AND id(a) < id(b)
+        WHERE a.type = b.type AND elementId(a) < elementId(b)
         RETURN a.type as entity_type, count(r) as intra_relations
         """
         intra_results = self.run_query(intra_query, "Intra-type relation counts")
@@ -568,7 +574,7 @@ class GraphAnalyzer:
         # Get author collaboration stats
         collab_query = """
         MATCH (a1:Author)<-[:AUTHORED_BY]-(p:Publication)-[:AUTHORED_BY]->(a2:Author)
-        WHERE id(a1) < id(a2)
+        WHERE elementId(a1) < elementId(a2)
         WITH a1, a2, count(p) as papers_together
         WITH count(*) as total_collaborations, 
              collect({author1: a1.name, author2: a2.name, papers: papers_together}) as collabs
@@ -894,9 +900,9 @@ class GraphAnalyzer:
         Returns:
             Dictionary containing all analysis results
         """
-        logger.info("\n" + "="*60)
-        logger.info("GRAPH ANALYTICS REPORT")
-        logger.info("="*60 + "\n")
+        print("\n" + "="*60)
+        print("GRAPH ANALYTICS REPORT")
+        print("="*60 + "\n")
         
         results = {
             'metadata': {
@@ -932,215 +938,297 @@ class GraphAnalyzer:
             'bridge_network_analysis': self.analyze_academic_regulatory_bridges()
         }
         
-        # Log summary
-        self._print_summary(results)
+        # Print report
+        if self.verbose:
+            self._print_verbose_report(results)
+        else:
+            self._print_report(results)
         
         return results
     
-    def _print_summary(self, results: Dict[str, Any]):
-        """Print formatted summary to console."""
-        logger.info("\n=== COVERAGE SUMMARY ===")
-        cov = results['coverage_stats']
-        logger.info(f"Jurisdictions: {cov.get('jurisdictions', 0)}")
-        logger.info(f"Publications: {cov.get('publications', 0)}")
-        logger.info(f"Entities: {cov.get('entities', 0):,}")
-        logger.info(f"Chunks: {cov.get('chunks', 0):,}")
-        logger.info(f"Semantic Relations: {cov.get('semantic_relations', 0):,}")
+    def _print_report(self, results: Dict[str, Any]):
+        """Print clean summary report."""
+        print("\n" + "="*70)
+        print("GRAPHRAG KNOWLEDGE GRAPH ANALYTICS REPORT")
+        print("="*70)
         
-        logger.info("\n=== KG-SPECIFIC METRICS ===")
+        # Coverage
+        cov = results['coverage_stats']
+        print(f"\nGRAPH OVERVIEW")
+        print(f"  Entities: {cov.get('entities', 0):,}  |  Relations: {cov.get('semantic_relations', 0):,}  |  Chunks: {cov.get('chunks', 0):,}")
+        print(f"  Jurisdictions: {cov.get('jurisdictions', 0)}  |  Publications: {cov.get('publications', 0)} L1 + {results.get('citation_network', {}).get('total_l2_publications', 0)} L2")
+        
+        # Cohesion metrics table
+        print(f"\nGRAPH COHESION METRICS")
+        print("-"*70)
+        cc = results.get('connected_components', {})
+        homophily = results.get('type_homophily', {})
+        integration = results.get('layer_integration', {})
+        density = results['relation_density']
+        
+        print(f"  {'Metric':<30} {'Value':<20} {'Interpretation'}")
+        print(f"  {'-'*28} {'-'*18} {'-'*20}")
+        print(f"  {'Connectivity':<30} {cc.get('connectivity_rate_pct', 0):.1f}%{'':<14} {cc.get('interpretation', 'N/A')}")
+        print(f"  {'Isolated entities':<30} {cc.get('isolated_entities', 0):,}{'':<14}")
+        print(f"  {'Type homophily':<30} {homophily.get('homophily_pct', 0):.1f}% intra-type{'':<6} {homophily.get('interpretation', 'N/A')}")
+        print(f"  {'Layer integration':<30} {integration.get('composite_integration_score', 0):.0f}/100{'':<12} {integration.get('interpretation', 'N/A')}")
+        print(f"  {'Relation density':<30} {density.get('relations_per_entity', 0):.1f}/entity{'':<9} {density.get('interpretation', 'N/A')}")
+        
+        # Layer integration breakdown
+        print(f"\n  Layer Integration Breakdown:")
+        print(f"    Provenance (Entity->Chunk):    {integration.get('provenance_coverage_pct', 0):.1f}%")
+        print(f"    Jurisdiction links:            {integration.get('jurisdiction_coverage_pct', 0):.1f}%")
+        print(f"    Publication links:             {integration.get('publication_coverage_pct', 0):.1f}%")
+        print(f"    SAME_AS links:                 {integration.get('same_as_coverage_pct', 0):.1f}%")
+        
+        # Top entities
+        print(f"\nTOP CONNECTED ENTITIES")
+        print("-"*70)
+        for i, entity in enumerate(results['top_connected_entities'][:5], 1):
+            print(f"  {i}. {entity['entity'][:40]:<40} ({entity['type']:<18}) {entity['degree']:,} conn")
+        
+        # Cross-jurisdictional
+        cross_jur = results['cross_jurisdictional_entities']
+        if cross_jur:
+            print(f"\nCROSS-JURISDICTIONAL COVERAGE")
+            print("-"*70)
+            print(f"  Entities in 2+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 2])}")
+            print(f"  Max coverage: {max(e['coverage'] for e in cross_jur)} jurisdictions")
+            print(f"  Top: {cross_jur[0]['entity']} ({cross_jur[0]['coverage']} jurs)")
+        
+        # Academic-regulatory bridges
+        bridge_net = results.get('bridge_network_analysis', {})
+        bridge_stats = bridge_net.get('bridge_stats', {})
+        print(f"\nACADEMIC-REGULATORY BRIDGES")
+        print("-"*70)
+        print(f"  Bridging entities: {bridge_stats.get('bridging_entities', 0):,}")
+        cohesion = bridge_net.get('cohesion', {})
+        if cohesion:
+            print(f"  Bridge percentage: {cohesion.get('bridging_percentage', 0):.1f}% -> {cohesion.get('interpretation', 'N/A')}")
+        
+        # Issues/warnings
+        orphans = results['orphan_stats']
+        print(f"\nISSUES DETECTED")
+        print("-"*70)
+        if orphans:
+            for node_type, count in orphans.items():
+                print(f"  WARNING: {count} orphan {node_type} nodes")
+        if integration.get('same_as_coverage_pct', 0) == 0:
+            print(f"  WARNING: No SAME_AS links imported (0% entity->metadata integration)")
+        cite_net = results.get('citation_network', {})
+        if cite_net.get('in_degree_stats', {}).get('max_citations', 0) <= 1:
+            print(f"  NOTE: All L2 publications cited exactly once (no preferential attachment)")
+        if not orphans and integration.get('same_as_coverage_pct', 0) > 0:
+            print(f"  None detected")
+        
+        print("\n" + "="*70)
+        print("Use --verbose for detailed metrics and distributions")
+        print("="*70 + "\n")
+    
+    def _print_verbose_report(self, results: Dict[str, Any]):
+        """Print formatted summary to console."""
+        print("\n=== COVERAGE SUMMARY ===")
+        cov = results['coverage_stats']
+        print(f"Jurisdictions: {cov.get('jurisdictions', 0)}")
+        print(f"Publications: {cov.get('publications', 0)}")
+        print(f"Entities: {cov.get('entities', 0):,}")
+        print(f"Chunks: {cov.get('chunks', 0):,}")
+        print(f"Semantic Relations: {cov.get('semantic_relations', 0):,}")
+        
+        print("\n=== KG-SPECIFIC METRICS ===")
         
         # Relation Density
         density = results['relation_density']
-        logger.info(f"\n Relation Density: {density.get('relations_per_entity', 0):.2f} relations/entity")
-        logger.info(f"   Interpretation: {density.get('interpretation', 'N/A')}")
-        logger.info(f"   Benchmark: Domain KGs typically 2-5 relations/entity")
+        print(f"\n Relation Density: {density.get('relations_per_entity', 0):.2f} relations/entity")
+        print(f"   Interpretation: {density.get('interpretation', 'N/A')}")
+        print(f"   Benchmark: Domain KGs typically 2-5 relations/entity")
         
         # Predicate Diversity
         pred_div = results['predicate_diversity']
-        logger.info(f"\n Predicate Diversity (Semantic Richness):")
-        logger.info(f"   Avg predicates per entity: {pred_div.get('avg_predicates_per_entity', 0):.2f}")
-        logger.info(f"   Max predicates (richest entity): {pred_div.get('max_predicates', 0)}")
-        logger.info(f"   Median: {pred_div.get('median_predicates', 0):.1f}")
+        print(f"\n Predicate Diversity (Semantic Richness):")
+        print(f"   Avg predicates per entity: {pred_div.get('avg_predicates_per_entity', 0):.2f}")
+        print(f"   Max predicates (richest entity): {pred_div.get('max_predicates', 0)}")
+        print(f"   Median: {pred_div.get('median_predicates', 0):.1f}")
         
         # Degree Distribution
-        logger.info(f"\n Degree Distribution (Power-Law Analysis):")
+        print(f"\n Degree Distribution (Power-Law Analysis):")
         deg_dist = results['degree_distribution']
         for bucket in deg_dist:
-            logger.info(f"   {bucket['bucket']:15} → {bucket['entity_count']:,} entities")
+            print(f"   {bucket['bucket']:15} → {bucket['entity_count']:,} entities")
         
         # Property Completeness
         completeness = results['property_completeness']
-        logger.info(f"\n Metadata Completeness:")
-        logger.info(f"   Publications: {completeness.get('publication_completeness_pct', 0):.1f}%")
-        logger.info(f"   Authors: {completeness.get('author_completeness_pct', 0):.1f}%")
-        logger.info(f"   Journals: {completeness.get('journal_completeness_pct', 0):.1f}%")
+        print(f"\n Metadata Completeness:")
+        print(f"   Publications: {completeness.get('publication_completeness_pct', 0):.1f}%")
+        print(f"   Authors: {completeness.get('author_completeness_pct', 0):.1f}%")
+        print(f"   Journals: {completeness.get('journal_completeness_pct', 0):.1f}%")
         
         # Cross-Type Connectivity
-        logger.info(f"\n Cross-Type Connectivity (Top 10 Integrations):")
+        print(f"\n Cross-Type Connectivity (Top 10 Integrations):")
         cross_type = results['cross_type_connectivity'][:10]
         for conn in cross_type:
-            logger.info(f"   {conn['from_type']:15} →[{conn['rel_type']:15}]→ {conn['to_type']:15} ({conn['connections']:,})")
+            print(f"   {conn['from_type']:15} →[{conn['rel_type']:15}]→ {conn['to_type']:15} ({conn['connections']:,})")
         
-        logger.info("\n" + "="*60)
-        logger.info("GRAPH COHESION METRICS")
-        logger.info("="*60)
+        print("\n" + "="*60)
+        print("GRAPH COHESION METRICS")
+        print("="*60)
         
         # Connected Components
         cc = results.get('connected_components', {})
-        logger.info(f"\n Connected Components:")
-        logger.info(f"   Total entities: {cc.get('total_entities', 0):,}")
-        logger.info(f"   Connected (in graph): {cc.get('connected_entities', 0):,} ({cc.get('connectivity_rate_pct', 0):.1f}%)")
-        logger.info(f"   Isolated (no relations): {cc.get('isolated_entities', 0):,} ({cc.get('isolation_rate_pct', 0):.1f}%)")
-        logger.info(f"   → {cc.get('interpretation', 'N/A')}")
+        print(f"\n Connected Components:")
+        print(f"   Total entities: {cc.get('total_entities', 0):,}")
+        print(f"   Connected (in graph): {cc.get('connected_entities', 0):,} ({cc.get('connectivity_rate_pct', 0):.1f}%)")
+        print(f"   Isolated (no relations): {cc.get('isolated_entities', 0):,} ({cc.get('isolation_rate_pct', 0):.1f}%)")
+        print(f"   → {cc.get('interpretation', 'N/A')}")
         
         # Type Homophily
         homophily = results.get('type_homophily', {})
-        logger.info(f"\n Type Homophily (Do same-type entities cluster?):")
-        logger.info(f"   Total relations: {homophily.get('total_relations', 0):,}")
-        logger.info(f"   Intra-type (same type): {homophily.get('intra_type_relations', 0):,} ({homophily.get('homophily_pct', 0):.1f}%)")
-        logger.info(f"   Inter-type (cross type): {homophily.get('inter_type_relations', 0):,}")
-        logger.info(f"   → {homophily.get('interpretation', 'N/A')}")
+        print(f"\n Type Homophily (Do same-type entities cluster?):")
+        print(f"   Total relations: {homophily.get('total_relations', 0):,}")
+        print(f"   Intra-type (same type): {homophily.get('intra_type_relations', 0):,} ({homophily.get('homophily_pct', 0):.1f}%)")
+        print(f"   Inter-type (cross type): {homophily.get('inter_type_relations', 0):,}")
+        print(f"   → {homophily.get('interpretation', 'N/A')}")
         
         # Type Homophily Breakdown (top 5)
         homophily_breakdown = results.get('type_homophily_breakdown', [])
         if homophily_breakdown:
-            logger.info(f"\n   Top types by homophily:")
+            print(f"\n   Top types by homophily:")
             for h in homophily_breakdown[:5]:
-                logger.info(f"      {h['source_type']:20} → {h['homophily_pct']:.1f}% intra-type ({h['total']:,} total)")
+                print(f"      {h['source_type']:20} → {h['homophily_pct']:.1f}% intra-type ({h['total']:,} total)")
         
         # Layer Integration
         integration = results.get('layer_integration', {})
-        logger.info(f"\n Layer Integration Score:")
-        logger.info(f"   Provenance (Entity→Chunk): {integration.get('provenance_coverage_pct', 0):.1f}%")
-        logger.info(f"   Jurisdiction (Entity→Jur): {integration.get('jurisdiction_coverage_pct', 0):.1f}%")
-        logger.info(f"   Publication (Entity→Pub): {integration.get('publication_coverage_pct', 0):.1f}%")
-        logger.info(f"   Any SAME_AS link: {integration.get('same_as_coverage_pct', 0):.1f}%")
-        logger.info(f"   Composite Score: {integration.get('composite_integration_score', 0):.1f}/100")
-        logger.info(f"   → {integration.get('interpretation', 'N/A')}")
+        print(f"\n Layer Integration Score:")
+        print(f"   Provenance (Entity→Chunk): {integration.get('provenance_coverage_pct', 0):.1f}%")
+        print(f"   Jurisdiction (Entity→Jur): {integration.get('jurisdiction_coverage_pct', 0):.1f}%")
+        print(f"   Publication (Entity→Pub): {integration.get('publication_coverage_pct', 0):.1f}%")
+        print(f"   Any SAME_AS link: {integration.get('same_as_coverage_pct', 0):.1f}%")
+        print(f"   Composite Score: {integration.get('composite_integration_score', 0):.1f}/100")
+        print(f"   → {integration.get('interpretation', 'N/A')}")
         
         # Hub Centrality by Type
         hub_types = results.get('hub_centrality_by_type', [])
         if hub_types:
-            logger.info(f"\n Hub Centrality by Type (which types produce hubs):")
+            print(f"\n Hub Centrality by Type (which types produce hubs):")
             for h in hub_types[:10]:
-                logger.info(f"   {h['entity_type']:20} → {h['total_hubs']:3} hubs ({h['hub_rate_pct']:.1f}%) [mega:{h['mega_hubs']}, major:{h['major_hubs']}, minor:{h['minor_hubs']}]")
+                print(f"   {h['entity_type']:20} → {h['total_hubs']:3} hubs ({h['hub_rate_pct']:.1f}%) [mega:{h['mega_hubs']}, major:{h['major_hubs']}, minor:{h['minor_hubs']}]")
         
-        logger.info("\n=== TOP CONNECTED ENTITIES ===")
+        print("\n=== TOP CONNECTED ENTITIES ===")
         for i, entity in enumerate(results['top_connected_entities'][:10], 1):
-            logger.info(f"{i:2}. {entity['entity'][:50]:50} ({entity['type']}) → {entity['degree']} connections")
+            print(f"{i:2}. {entity['entity'][:50]:50} ({entity['type']}) → {entity['degree']} connections")
         
-        logger.info("\n=== CROSS-JURISDICTIONAL COVERAGE ===")
+        print("\n=== CROSS-JURISDICTIONAL COVERAGE ===")
         cross_jur = results['cross_jurisdictional_entities']
         if cross_jur:
-            logger.info(f"Entities in 2+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 2])}")
-            logger.info(f"Entities in 3+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 3])}")
-            logger.info(f"Max coverage: {max(e['coverage'] for e in cross_jur)} jurisdictions")
-            logger.info(f"\nTop cross-jurisdictional concepts:")
+            print(f"Entities in 2+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 2])}")
+            print(f"Entities in 3+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 3])}")
+            print(f"Max coverage: {max(e['coverage'] for e in cross_jur)} jurisdictions")
+            print(f"\nTop cross-jurisdictional concepts:")
             for i, entity in enumerate(cross_jur[:5], 1):
-                logger.info(f"{i}. {entity['entity'][:40]:40} → {entity['coverage']} jurisdictions")
+                print(f"{i}. {entity['entity'][:40]:40} → {entity['coverage']} jurisdictions")
         
-        logger.info("\n=== ACADEMIC-REGULATORY BRIDGES ===")
+        print("\n=== ACADEMIC-REGULATORY BRIDGES ===")
         bridges = results['academic_regulation_bridge'][:5]
         if bridges:
-            logger.info(f"Entities connecting regulations + papers: {len(results['academic_regulation_bridge'])}")
-            logger.info(f"\nTop bridging concepts:")
+            print(f"Entities connecting regulations + papers: {len(results['academic_regulation_bridge'])}")
+            print(f"\nTop bridging concepts:")
             for i, bridge in enumerate(bridges, 1):
-                logger.info(f"{i}. {bridge['entity'][:40]:40} → {bridge['jur_count']} jurs, {bridge['paper_count']} papers")
+                print(f"{i}. {bridge['entity'][:40]:40} → {bridge['jur_count']} jurs, {bridge['paper_count']} papers")
         
-        logger.info("\n=== PROVENANCE COVERAGE ===")
+        print("\n=== PROVENANCE COVERAGE ===")
         prov = results['provenance_coverage']
-        logger.info(f"Entities with chunks: {prov.get('entity_coverage_pct', 0):.1f}%")
-        logger.info(f"Chunks with source: {prov.get('chunk_coverage_pct', 0):.1f}%")
+        print(f"Entities with chunks: {prov.get('entity_coverage_pct', 0):.1f}%")
+        print(f"Chunks with source: {prov.get('chunk_coverage_pct', 0):.1f}%")
         
-        logger.info("\n=== ENTITY TYPE DISTRIBUTION (Top 10) ===")
+        print("\n=== ENTITY TYPE DISTRIBUTION (Top 10) ===")
         entity_types = results['entity_type_distribution'][:10]
         for et in entity_types:
-            logger.info(f"{et['entity_type']:20} → {et['count']:,}")
+            print(f"{et['entity_type']:20} → {et['count']:,}")
         
-        logger.info("\n=== ORPHAN NODES ===")
+        print("\n=== ORPHAN NODES ===")
         orphans = results['orphan_stats']
         if orphans:
             for node_type, count in orphans.items():
-                logger.info(f"{node_type}: {count} orphans")
+                print(f"{node_type}: {count} orphans")
         else:
-            logger.info("No orphan nodes detected ")
+            print("No orphan nodes detected ")
         
-        logger.info("\n" + "="*60)
-        logger.info("NETWORK SCIENCE ANALYSIS")
-        logger.info("="*60)
+        print("\n" + "="*60)
+        print("NETWORK SCIENCE ANALYSIS")
+        print("="*60)
         
         # Author Collaboration Network
-        logger.info("\n===  AUTHOR COLLABORATION NETWORK ===")
+        print("\n===  AUTHOR COLLABORATION NETWORK ===")
         author_net = results['author_collaboration_network']
         deg_stats = author_net.get('degree_stats', {})
-        logger.info(f"Total authors: {author_net.get('total_authors', 0)}")
-        logger.info(f"Authors with collaborators: {deg_stats.get('authors_with_collaborators', 0)}")
-        logger.info(f"Avg collaborators per author: {deg_stats.get('avg_collaborators', 0):.2f}")
-        logger.info(f"Max collaborators: {deg_stats.get('max_collaborators', 0)}")
-        logger.info(f"Median collaborators: {deg_stats.get('median_collaborators', 0):.1f}")
+        print(f"Total authors: {author_net.get('total_authors', 0)}")
+        print(f"Authors with collaborators: {deg_stats.get('authors_with_collaborators', 0)}")
+        print(f"Avg collaborators per author: {deg_stats.get('avg_collaborators', 0):.2f}")
+        print(f"Max collaborators: {deg_stats.get('max_collaborators', 0)}")
+        print(f"Median collaborators: {deg_stats.get('median_collaborators', 0):.1f}")
         
         if 'erdos_renyi_comparison' in author_net:
             er = author_net['erdos_renyi_comparison']
-            logger.info(f"\n Erdős-Rényi Comparison:")
-            logger.info(f"   Actual avg degree: {er['actual_avg_degree']:.2f}")
-            logger.info(f"   E-R expected (random): {er['er_expected_avg_degree']:.2f}")
-            logger.info(f"   → {er['interpretation']}")
+            print(f"\n Erdős-Rényi Comparison:")
+            print(f"   Actual avg degree: {er['actual_avg_degree']:.2f}")
+            print(f"   E-R expected (random): {er['er_expected_avg_degree']:.2f}")
+            print(f"   → {er['interpretation']}")
         
-        logger.info(f"\n Collaboration Degree Distribution:")
+        print(f"\n Collaboration Degree Distribution:")
         for bucket in author_net.get('degree_distribution', []):
-            logger.info(f"   {bucket['bucket']:6} collaborators → {bucket['author_count']:3} authors")
+            print(f"   {bucket['bucket']:6} collaborators → {bucket['author_count']:3} authors")
         
         # Citation Network
-        logger.info("\n===  CITATION NETWORK (L2 Publications) ===")
+        print("\n===  CITATION NETWORK (L2 Publications) ===")
         cite_net = results['citation_network']
         in_stats = cite_net.get('in_degree_stats', {})
-        logger.info(f"Total L2 publications: {cite_net.get('total_l2_publications', 0)}")
-        logger.info(f"Total citation links: {cite_net.get('total_citations', 0)}")
-        logger.info(f"Cited publications: {in_stats.get('cited_publications', 0)}")
-        logger.info(f"Avg citations per L2 paper: {in_stats.get('avg_citations', 0):.2f}")
-        logger.info(f"Max citations: {in_stats.get('max_citations', 0)}")
-        logger.info(f"Median citations: {in_stats.get('median_citations', 0):.1f}")
+        print(f"Total L2 publications: {cite_net.get('total_l2_publications', 0)}")
+        print(f"Total citation links: {cite_net.get('total_citations', 0)}")
+        print(f"Cited publications: {in_stats.get('cited_publications', 0)}")
+        print(f"Avg citations per L2 paper: {in_stats.get('avg_citations', 0):.2f}")
+        print(f"Max citations: {in_stats.get('max_citations', 0)}")
+        print(f"Median citations: {in_stats.get('median_citations', 0):.1f}")
         
         if 'erdos_renyi_comparison' in cite_net:
             er = cite_net['erdos_renyi_comparison']
-            logger.info(f"\n Erdős-Rényi Comparison:")
-            logger.info(f"   Actual avg in-degree: {er['actual_avg_in_degree']:.2f}")
-            logger.info(f"   E-R expected (random): {er['er_expected_avg_in_degree']:.2f}")
-            logger.info(f"   → {er['interpretation']}")
+            print(f"\n Erdős-Rényi Comparison:")
+            print(f"   Actual avg in-degree: {er['actual_avg_in_degree']:.2f}")
+            print(f"   E-R expected (random): {er['er_expected_avg_in_degree']:.2f}")
+            print(f"   → {er['interpretation']}")
         
-        logger.info(f"\n Citation In-Degree Distribution:")
+        print(f"\n Citation In-Degree Distribution:")
         for bucket in cite_net.get('in_degree_distribution', []):
-            logger.info(f"   {bucket['bucket']:6} citations → {bucket['pub_count']:3} publications")
+            print(f"   {bucket['bucket']:6} citations → {bucket['pub_count']:3} publications")
         
-        logger.info(f"\n Top 10 Most Cited L2 Publications:")
+        print(f"\n Top 10 Most Cited L2 Publications:")
         for i, pub in enumerate(cite_net.get('top_cited', [])[:10], 1):
             title = pub['title'][:50] if pub['title'] else 'N/A'
             author = pub['author'][:30] if pub['author'] else 'N/A'
-            logger.info(f"{i:2}. {title:50} by {author:30} ({pub['times_cited']} cites)")
+            print(f"{i:2}. {title:50} by {author:30} ({pub['times_cited']} cites)")
         
         # Academic-Regulatory Bridges
-        logger.info("\n===  ACADEMIC-REGULATORY BRIDGE NETWORK ===")
+        print("\n===  ACADEMIC-REGULATORY BRIDGE NETWORK ===")
         bridge_net = results['bridge_network_analysis']
         bridge_stats = bridge_net.get('bridge_stats', {})
-        logger.info(f"Bridging entities: {bridge_stats.get('bridging_entities', 0):,}")
-        logger.info(f"Avg jurisdictions per bridge: {bridge_stats.get('avg_jurisdictions_per_bridge', 0):.2f}")
-        logger.info(f"Avg papers per bridge: {bridge_stats.get('avg_papers_per_bridge', 0):.2f}")
-        logger.info(f"Max jurisdictions: {bridge_stats.get('max_jurisdictions', 0)}")
-        logger.info(f"Max papers: {bridge_stats.get('max_papers', 0)}")
+        print(f"Bridging entities: {bridge_stats.get('bridging_entities', 0):,}")
+        print(f"Avg jurisdictions per bridge: {bridge_stats.get('avg_jurisdictions_per_bridge', 0):.2f}")
+        print(f"Avg papers per bridge: {bridge_stats.get('avg_papers_per_bridge', 0):.2f}")
+        print(f"Max jurisdictions: {bridge_stats.get('max_jurisdictions', 0)}")
+        print(f"Max papers: {bridge_stats.get('max_papers', 0)}")
         
         if 'cohesion' in bridge_net:
             cohesion = bridge_net['cohesion']
-            logger.info(f"\n Network Cohesion:")
-            logger.info(f"   Bridging entities: {cohesion['bridging_entities']:,} ({cohesion['bridging_percentage']:.1f}%)")
-            logger.info(f"   → {cohesion['interpretation']}")
+            print(f"\n Network Cohesion:")
+            print(f"   Bridging entities: {cohesion['bridging_entities']:,} ({cohesion['bridging_percentage']:.1f}%)")
+            print(f"   → {cohesion['interpretation']}")
         
-        logger.info(f"\n Domain Distribution:")
+        print(f"\n Domain Distribution:")
         for dist in bridge_net.get('domain_distribution', []):
-            logger.info(f"   {dist['category']:20} → {dist['entity_count']:,} entities")
+            print(f"   {dist['category']:20} → {dist['entity_count']:,} entities")
         
-        logger.info(f"\n Top 10 Bridging Entities:")
+        print(f"\n Top 10 Bridging Entities:")
         for i, bridge in enumerate(bridge_net.get('top_bridges', [])[:10], 1):
-            logger.info(f"{i:2}. {bridge['entity'][:40]:40} ({bridge['type']:15}) → {bridge['num_jurisdictions']} jurs, {bridge['num_papers']} papers")
+            print(f"{i:2}. {bridge['entity'][:40]:40} ({bridge['type']:15}) → {bridge['num_jurisdictions']} jurs, {bridge['num_papers']} papers")
 
 
 def main():
@@ -1150,8 +1238,16 @@ def main():
     parser.add_argument('--user', type=str, default='neo4j', help='Neo4j user (default: neo4j)')
     parser.add_argument('--password', type=str, help='Neo4j password (default: env NEO4J_PASSWORD)')
     parser.add_argument('--output', type=str, help='Output JSON file path (optional)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed query logs and full report')
     
     args = parser.parse_args()
+    
+    # Suppress neo4j notification warnings (deprecated function warnings, missing properties, etc)
+    logging.getLogger('neo4j.notifications').setLevel(logging.ERROR)
+    
+    # Set log level based on verbose flag
+    if not args.verbose:
+        logger.setLevel(logging.WARNING)
     
     # Get credentials
     uri = args.uri or os.getenv('NEO4J_URI')
@@ -1159,11 +1255,11 @@ def main():
     password = args.password or os.getenv('NEO4J_PASSWORD')
     
     if not uri or not password:
-        logger.error("--uri and --password required (or set NEO4J_URI and NEO4J_PASSWORD env vars)")
+        print("ERROR: --uri and --password required (or set NEO4J_URI and NEO4J_PASSWORD env vars)")
         sys.exit(1)
     
     # Run analysis
-    analyzer = GraphAnalyzer(uri, user, password)
+    analyzer = GraphAnalyzer(uri, user, password, verbose=args.verbose)
     
     try:
         results = analyzer.run_all_analyses()
@@ -1176,11 +1272,7 @@ def main():
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"\n Results saved to {output_path}")
-        
-        logger.info("\n" + "="*60)
-        logger.info("ANALYSIS COMPLETE")
-        logger.info("="*60)
+            print(f"Results saved to {output_path}")
         
     finally:
         analyzer.close()
