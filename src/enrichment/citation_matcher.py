@@ -22,6 +22,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 from difflib import SequenceMatcher
+from tqdm import tqdm
 
 # Third-party
 from rapidfuzz import fuzz
