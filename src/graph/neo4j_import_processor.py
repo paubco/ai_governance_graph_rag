@@ -205,13 +205,13 @@ class Neo4jImportProcessor:
     def prepare_chunks(self) -> List[Dict]:
         """Load chunk nodes (supports both JSON and JSONL)."""
         # Try JSONL first (v1.1), fall back to JSON
-        jsonl_path = self.data_dir / 'interim' / 'chunks' / 'chunks_embedded.jsonl'
-        json_path = self.data_dir / 'interim' / 'chunks' / 'chunks_text.json'
+        jsonl_path = self.data_dir / 'processed' / 'chunks' / 'chunks_embedded.jsonl'
+        json_path = self.data_dir / 'processed' / 'chunks' / 'chunks.json'
         
         if jsonl_path.exists():
-            chunks_data = self.load_jsonl('interim/chunks/chunks_embedded.jsonl')
+            chunks_data = self.load_jsonl('processed/chunks/chunks_embedded.jsonl')
         elif json_path.exists():
-            chunks_data = self.load_json('interim/chunks/chunks_text.json')
+            chunks_data = self.load_json('processed/chunks/chunks.json')
         else:
             raise FileNotFoundError("No chunks file found (tried .jsonl and .json)")
         
@@ -239,13 +239,13 @@ class Neo4jImportProcessor:
         v1.1: Added aliases property.
         """
         # Try JSONL first (v1.1), fall back to JSON
-        jsonl_path = self.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
-        json_path = self.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        jsonl_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
+        json_path = self.data_dir / 'processed' / 'entities' / 'normalized_entities_with_ids.json'
         
         if jsonl_path.exists():
-            entities_data = self.load_jsonl('interim/entities/entities_semantic.jsonl')
+            entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
         elif json_path.exists():
-            entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+            entities_data = self.load_json('processed/entities/normalized_entities_with_ids.json')
         else:
             raise FileNotFoundError("No entities file found")
         
@@ -395,13 +395,13 @@ class Neo4jImportProcessor:
     def prepare_extracted_from(self, entities: List[Dict]) -> List[Dict]:
         """Prepare EXTRACTED_FROM relationships."""
         # Try to load from entities file with chunk_ids
-        jsonl_path = self.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
-        json_path = self.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        jsonl_path = self.data_dir / 'processed' / 'entities' / 'entities_semantic.jsonl'
+        json_path = self.data_dir / 'processed' / 'entities' / 'normalized_entities_with_ids.json'
         
         if jsonl_path.exists():
-            entities_data = self.load_jsonl('interim/entities/entities_semantic.jsonl')
+            entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
         elif json_path.exists():
-            entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+            entities_data = self.load_json('processed/entities/normalized_entities_with_ids.json')
         else:
             entities_data = entities
         
@@ -467,13 +467,13 @@ class Neo4jImportProcessor:
         v1.1 addition.
         """
         # These come from alias clusters
-        part_of_path = self.data_dir / 'interim' / 'entities' / 'part_of_relations.jsonl'
+        part_of_path = self.data_dir / 'processed' / 'entities' / 'part_of_relations.jsonl'
         
         if not part_of_path.exists():
             logger.warning("No PART_OF relations file found (expected for v1.1)")
             return []
         
-        return self.load_jsonl('interim/entities/part_of_relations.jsonl')
+        return self.load_jsonl('processed/entities/part_of_relations.jsonl')
     
     def prepare_same_as_entity_relations(self) -> List[Dict]:
         """
@@ -481,13 +481,13 @@ class Neo4jImportProcessor:
         
         v1.1 addition.
         """
-        same_as_path = self.data_dir / 'interim' / 'entities' / 'same_as_relations.jsonl'
+        same_as_path = self.data_dir / 'processed' / 'entities' / 'same_as_relations.jsonl'
         
         if not same_as_path.exists():
             logger.warning("No SAME_AS entity relations file found (expected for v1.1)")
             return []
         
-        return self.load_jsonl('interim/entities/same_as_relations.jsonl')
+        return self.load_jsonl('processed/entities/same_as_relations.jsonl')
     
     def prepare_enrichment_relations(self) -> Dict[str, List[Dict]]:
         """Load all enrichment relations from Phase 2A."""
