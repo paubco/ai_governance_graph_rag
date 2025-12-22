@@ -151,7 +151,8 @@ class EnrichmentProcessor:
         jurisdiction_links = self._match_jurisdictions(entities)
         
         # Step 6b: Match metadata entities (Author/Journal/Document)
-        metadata_matches = self._match_metadata_entities(entities, chunks)
+        # Only match entities that have DISCUSSES relations (semantic validation)
+        metadata_matches = self._match_metadata_entities(entities, chunks, relations)
         
         # Step 7: Generate relations
         self._generate_relations(matched_entities, chunks, jurisdiction_links, metadata_matches)
@@ -203,16 +204,27 @@ class EnrichmentProcessor:
             stats = metadata_matches['stats']
             results = metadata_matches.get('results', {})
             
-            print("\n🏷️ METADATA MATCHING:")
+            print("\n🏷️ UNIFIED METADATA MATCHING:")
             
             author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
             journal_rate = stats['journal_matched'] / max(1, stats['journal_total']) * 100
             document_rate = stats['document_matched'] / max(1, stats['document_total']) * 100
             
             print(f"   Authors:   {stats['author_matched']:>4}/{stats['author_total']:<4} ({author_rate:>5.1f}%)")
+            print(f"      → Structured: {stats.get('author_structured', 0)}, Reference: {stats.get('author_reference', 0)}")
             print(f"   Journals:  {stats['journal_matched']:>4}/{stats['journal_total']:<4} ({journal_rate:>5.1f}%)")
+            print(f"      → Structured: {stats.get('journal_structured', 0)}, Reference: {stats.get('journal_reference', 0)}")
             print(f"   Documents: {stats['document_matched']:>4}/{stats['document_total']:<4} ({document_rate:>5.1f}%)")
-            print(f"   SAME_AS:   {len(metadata_matches.get('relations', []))} relations")
+            print(f"      → Structured: {stats.get('document_structured', 0)}, Reference: {stats.get('document_reference', 0)}")
+            
+            print(f"\n   📊 RELATIONS GENERATED:")
+            print(f"      SAME_AS:   {len(metadata_matches.get('relations', []))} (structured → L1)")
+            if metadata_matches.get('l2_publications'):
+                print(f"      L2 Created: {len(metadata_matches['l2_publications'])} (from references)")
+            if metadata_matches.get('all_relations', {}).get('authored'):
+                print(f"      AUTHORED:  {len(metadata_matches['all_relations']['authored'])} (author → L2)")
+            if metadata_matches.get('all_relations', {}).get('cites'):
+                print(f"      CITES:     {len(metadata_matches['all_relations']['cites'])} (L1 → L2)")
             
             # Sample matches
             print("\n📋 SAMPLE MATCHES:")
@@ -449,16 +461,20 @@ class EnrichmentProcessor:
         
         return jurisdiction_links
     
-    def _match_metadata_entities(self, entities: List[Dict], chunks: List[Dict]) -> Dict:
+    def _match_metadata_entities(self, entities: List[Dict], chunks: List[Dict], relations: List[Dict]) -> Dict:
         """
         Match Author/Journal/Document entities with provenance constraints.
         
+        Only matches entities that have DISCUSSES relations (semantic validation).
+        This ensures we only create L2 publications for citations that are
+        actively discussed in the text, not just mentioned.
+        
         Uses two-tier matching:
         1. Structured: Against source paper's Scopus metadata (authors, journal, title)
-        2. Fallback: Against source paper's reference strings
+        2. Fallback: Against source paper's reference strings → Creates L2 publications
         """
         logger.info("=" * 70)
-        logger.info("STEP 6b: Matching Metadata Entities (Provenance-Constrained)")
+        logger.info("STEP 6b: Unified Metadata Matching (Provenance-Constrained)")
         logger.info("=" * 70)
         
         # Load paper_mapping.json (has scopus_metadata per paper)
@@ -487,47 +503,60 @@ class EnrichmentProcessor:
             paper_mapping=paper_mapping,
             paper_references=paper_references,
             chunks=chunks,
-            threshold=0.85
+            threshold=0.70  # Aligned with MinerUMatcher
         )
         
-        # Filter to matchable types (including Citation now)
+        # Build set of entity IDs that participate in DISCUSSES relations
+        # (either as subject or object)
+        discussed_entity_ids = set()
+        for rel in relations:
+            rel_type = rel.get('relation_type', rel.get('type', ''))
+            if rel_type.upper() == 'DISCUSSES':
+                discussed_entity_ids.add(rel.get('subject_id', rel.get('source_id', '')))
+                discussed_entity_ids.add(rel.get('object_id', rel.get('target_id', '')))
+        
+        logger.info(f"Entities with DISCUSSES relations: {len(discussed_entity_ids)}")
+        
+        # Filter to matchable types that have DISCUSSES relations
         matchable_types = {'Author', 'Journal', 'Document', 'Citation'}
-        matchable = [e for e in entities if e.get('type') in matchable_types]
-        logger.info(f"Matchable entities: {len(matchable)}")
+        all_matchable = [e for e in entities if e.get('type') in matchable_types]
+        matchable = [e for e in all_matchable if e.get('entity_id') in discussed_entity_ids]
+        
+        logger.info(f"Matchable entities (with DISCUSSES): {len(matchable)} / {len(all_matchable)} total")
         
         # Run matching
         results = matcher.match_all(matchable)
         stats = results['stats']
         
-        # Log results
-        author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
-        journal_rate = stats['journal_matched'] / max(1, stats['journal_total']) * 100
-        document_rate = stats['document_matched'] / max(1, stats['document_total']) * 100
-        
+        # Log results with structured vs reference breakdown
         logger.info(f"✓ Metadata matching complete:")
-        logger.info(f"  - Authors:   {stats['author_matched']}/{stats['author_total']} ({author_rate:.1f}%)")
-        logger.info(f"  - Journals:  {stats['journal_matched']}/{stats['journal_total']} ({journal_rate:.1f}%)")
-        logger.info(f"  - Documents: {stats['document_matched']}/{stats['document_total']} ({document_rate:.1f}%)")
+        logger.info(f"  - Authors:   {stats['author_matched']}/{stats['author_total']} "
+                   f"(structured: {stats['author_structured']}, reference: {stats['author_reference']})")
+        logger.info(f"  - Journals:  {stats['journal_matched']}/{stats['journal_total']} "
+                   f"(structured: {stats['journal_structured']}, reference: {stats['journal_reference']})")
+        logger.info(f"  - Documents: {stats['document_matched']}/{stats['document_total']} "
+                   f"(structured: {stats['document_structured']}, reference: {stats['document_reference']})")
         logger.info(f"  - No provenance: {stats['no_provenance']}")
         
-        # Log method breakdown
-        method_counts = {}
-        for match_list in [results['author_matches'], results['journal_matches'], results['document_matches']]:
-            for m in match_list:
-                method = m.get('method', 'unknown')
-                method_counts[method] = method_counts.get(method, 0) + 1
+        # Create L2 publications from reference matches
+        l2_publications, ref_key_to_l2_id = matcher.create_l2_publications(results)
+        logger.info(f"  - L2 publications created: {len(l2_publications)}")
         
-        logger.info(f"  Match methods:")
-        for method, count in sorted(method_counts.items(), key=lambda x: -x[1]):
-            logger.info(f"    - {method}: {count}")
+        # Add L2 publications to processor's list
+        self.l2_publications.extend(l2_publications)
         
-        # Generate SAME_AS relations (only for structured matches)
-        same_as_relations = matcher.generate_same_as_relations(results)
-        logger.info(f"  - SAME_AS relations: {len(same_as_relations)}")
+        # Generate all relations (SAME_AS, AUTHORED, CITES)
+        all_relations = matcher.generate_all_relations(results, ref_key_to_l2_id)
+        
+        logger.info(f"  - SAME_AS relations:  {len(all_relations['same_as'])}")
+        logger.info(f"  - AUTHORED relations: {len(all_relations['authored'])}")
+        logger.info(f"  - CITES relations:    {len(all_relations['cites'])}")
         
         return {
             'results': results,
-            'relations': same_as_relations,
+            'relations': all_relations['same_as'],  # Backward compat
+            'all_relations': all_relations,
+            'l2_publications': l2_publications,
             'stats': dict(stats)
         }
     
@@ -634,6 +663,40 @@ class EnrichmentProcessor:
                     }
                 })
         
+        # 7. AUTHORED: Author Entity → L2 Publication (from reference matching)
+        if metadata_matches and metadata_matches.get('all_relations', {}).get('authored'):
+            for rel in tqdm(metadata_matches['all_relations']['authored'], desc="AUTHORED"):
+                relations.append({
+                    'relation_type': 'AUTHORED',
+                    'source_id': rel['subject_id'],
+                    'source_type': 'Entity',
+                    'target_id': rel['object_id'],
+                    'target_type': 'L2Publication',
+                    'properties': {
+                        'confidence': rel['confidence'],
+                        'method': rel['method']
+                    }
+                })
+        
+        # 8. CITES: L1 → L2 (from reference matching - adds to existing CITES)
+        if metadata_matches and metadata_matches.get('all_relations', {}).get('cites'):
+            for rel in tqdm(metadata_matches['all_relations']['cites'], desc="CITES (Reference)"):
+                # Avoid duplicates with existing CITES from citation matching
+                cite_key = (rel['subject_id'], rel['object_id'])
+                if cite_key not in cites_set:
+                    cites_set.add(cite_key)
+                    relations.append({
+                        'relation_type': 'CITES',
+                        'source_id': rel['subject_id'],
+                        'source_type': 'L1Publication',
+                        'target_id': rel['object_id'],
+                        'target_type': 'L2Publication',
+                        'properties': {
+                            'confidence': rel['confidence'],
+                            'method': rel['method']
+                        }
+                    })
+        
         self.relations = relations
         
         # Log counts
@@ -699,11 +762,20 @@ class EnrichmentProcessor:
             self.quality_report['metadata_matching'] = {
                 'author_matched': stats.get('author_matched', 0),
                 'author_total': stats.get('author_total', 0),
+                'author_structured': stats.get('author_structured', 0),
+                'author_reference': stats.get('author_reference', 0),
                 'journal_matched': stats.get('journal_matched', 0),
                 'journal_total': stats.get('journal_total', 0),
+                'journal_structured': stats.get('journal_structured', 0),
+                'journal_reference': stats.get('journal_reference', 0),
                 'document_matched': stats.get('document_matched', 0),
                 'document_total': stats.get('document_total', 0),
-                'total_same_as_relations': len(metadata_matches.get('relations', []))
+                'document_structured': stats.get('document_structured', 0),
+                'document_reference': stats.get('document_reference', 0),
+                'total_same_as_relations': len(metadata_matches.get('relations', [])),
+                'l2_from_references': len(metadata_matches.get('l2_publications', [])),
+                'authored_relations': len(metadata_matches.get('all_relations', {}).get('authored', [])),
+                'cites_from_references': len(metadata_matches.get('all_relations', {}).get('cites', []))
             }
         
         logger.info("QUALITY SUMMARY:")
@@ -713,6 +785,10 @@ class EnrichmentProcessor:
         logger.info(f"  Jurisdiction links: {self.quality_report['jurisdiction_linking']['total_linked']}")
         if metadata_matches:
             logger.info(f"  Metadata SAME_AS: {len(metadata_matches.get('relations', []))}")
+            if metadata_matches.get('l2_publications'):
+                logger.info(f"  L2 from references: {len(metadata_matches['l2_publications'])}")
+            if metadata_matches.get('all_relations', {}).get('authored'):
+                logger.info(f"  AUTHORED relations: {len(metadata_matches['all_relations']['authored'])}")
     
     def _save_outputs(self):
         """Save all output files."""

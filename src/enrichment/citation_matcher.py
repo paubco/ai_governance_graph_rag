@@ -1025,20 +1025,27 @@ class ProvenanceConstrainedMatcher:
         Match all metadata entities with provenance constraints.
         
         Returns:
-            Dict with matches, unmatched, and stats
+            Dict with matches (structured + reference), unmatched, and stats
         """
         results = {
-            'author_matches': [],
-            'journal_matches': [],
-            'document_matches': [],
+            'author_matches': [],      # All author matches
+            'journal_matches': [],     # All journal matches  
+            'document_matches': [],    # All document/citation matches
+            'reference_matches': [],   # Reference-based matches for L2 creation
             'unmatched': [],
             'stats': {
                 'author_total': 0,
                 'author_matched': 0,
+                'author_structured': 0,
+                'author_reference': 0,
                 'journal_total': 0,
                 'journal_matched': 0,
+                'journal_structured': 0,
+                'journal_reference': 0,
                 'document_total': 0,
                 'document_matched': 0,
+                'document_structured': 0,
+                'document_reference': 0,
                 'no_provenance': 0
             }
         }
@@ -1067,19 +1074,286 @@ class ProvenanceConstrainedMatcher:
             match = self.match_entity(entity)
             
             if match:
+                is_structured = match['method'].startswith('structured')
+                is_reference = match['method'].startswith('reference')
+                
                 if entity_type == 'Author':
                     results['author_matches'].append(match)
                     results['stats']['author_matched'] += 1
+                    if is_structured:
+                        results['stats']['author_structured'] += 1
+                    elif is_reference:
+                        results['stats']['author_reference'] += 1
+                        results['reference_matches'].append(match)
+                        
                 elif entity_type == 'Journal':
                     results['journal_matches'].append(match)
                     results['stats']['journal_matched'] += 1
-                else:
+                    if is_structured:
+                        results['stats']['journal_structured'] += 1
+                    elif is_reference:
+                        results['stats']['journal_reference'] += 1
+                        # Don't add journals to reference_matches (too noisy)
+                        
+                else:  # Document or Citation
                     results['document_matches'].append(match)
                     results['stats']['document_matched'] += 1
+                    if is_structured:
+                        results['stats']['document_structured'] += 1
+                    elif is_reference:
+                        results['stats']['document_reference'] += 1
+                        results['reference_matches'].append(match)
             else:
                 results['unmatched'].append(entity)
         
         return results
+    
+    def _parse_reference_string(self, ref_string: str) -> Dict:
+        """
+        Parse a raw reference string into structured data.
+        
+        Handles common formats:
+        - "Author, A., Author, B., 2020. Title. Journal, Vol(Issue), pp."
+        - "Author et al. (2020) Title..."
+        
+        Returns:
+            Dict with authors, year, title (best effort extraction)
+        """
+        result = {
+            'authors': [],
+            'year': None,
+            'title': None,
+            'raw': ref_string
+        }
+        
+        if not ref_string:
+            return result
+        
+        # Extract year (4-digit number 1900-2099)
+        year_match = re.search(r'\b(19|20)\d{2}\b', ref_string)
+        if year_match:
+            result['year'] = int(year_match.group())
+        
+        # Try to extract authors (before year or before title)
+        # Pattern 1: "Surname, I., Surname, I., Year"
+        # Pattern 2: "Surname et al. (Year)"
+        
+        if result['year']:
+            # Split at year
+            parts = re.split(rf'\b{result["year"]}\b', ref_string, maxsplit=1)
+            author_part = parts[0].strip()
+            title_part = parts[1].strip() if len(parts) > 1 else ''
+            
+            # Clean author part
+            author_part = re.sub(r'[,\s]+$', '', author_part)  # Remove trailing comma/space
+            author_part = re.sub(r'^\s*and\s+', '', author_part)  # Remove leading "and"
+            
+            # Extract individual authors
+            # Split by semicolon or " and " or ", and "
+            author_splits = re.split(r';\s*|\s+and\s+|,\s+and\s+', author_part)
+            
+            for author in author_splits:
+                author = author.strip()
+                if author and len(author) > 1:
+                    # Extract surname (first part before comma or last word)
+                    surname = self._extract_surname(author)
+                    initial = self._extract_initial(author)
+                    if surname and len(surname) > 1:
+                        result['authors'].append({
+                            'name': author,
+                            'surname': surname,
+                            'initial': initial
+                        })
+            
+            # Extract title (text after year, before journal/volume info)
+            if title_part:
+                # Remove leading punctuation
+                title_part = re.sub(r'^[\s.,:\-]+', '', title_part)
+                # Take text up to first period that's followed by a capital letter
+                # (likely journal name) or end
+                title_match = re.match(r'^([^.]+(?:\.[^.A-Z][^.]*)*)', title_part)
+                if title_match:
+                    result['title'] = title_match.group(1).strip()[:200]
+        
+        return result
+    
+    def create_l2_publications(self, results: Dict) -> Tuple[List[Dict], Dict[str, str]]:
+        """
+        Create L2 publications from reference matches.
+        
+        Deduplicates by (paper_id, reference_index) to avoid creating
+        multiple L2s for the same reference.
+        
+        Returns:
+            Tuple of (l2_publications list, ref_key_to_l2_id mapping)
+        """
+        from src.utils.id_generator import generate_l2_publication_id
+        
+        l2_publications = []
+        ref_key_to_l2_id = {}  # (paper_id, ref_idx) -> l2_id
+        seen_refs = set()
+        
+        for match in results['reference_matches']:
+            paper_id = match.get('paper_id', '')
+            ref_idx = match.get('reference_index', -1)
+            
+            if ref_idx < 0 or not paper_id:
+                continue
+            
+            ref_key = (paper_id, ref_idx)
+            if ref_key in seen_refs:
+                continue
+            seen_refs.add(ref_key)
+            
+            # Get raw reference string
+            paper_meta = self.paper_metadata.get(paper_id, {})
+            references = paper_meta.get('references', [])
+            
+            if ref_idx >= len(references):
+                continue
+            
+            raw_ref = references[ref_idx]
+            parsed = self._parse_reference_string(raw_ref)
+            
+            # Generate L2 ID
+            l2_id = generate_l2_publication_id(raw_ref)
+            ref_key_to_l2_id[ref_key] = l2_id
+            
+            # Create L2 publication
+            l2_pub = {
+                'publication_id': l2_id,
+                'title': parsed.get('title') or raw_ref[:100],
+                'year': parsed.get('year'),
+                'authors': parsed.get('authors', []),
+                'source': 'reference_extraction',
+                'source_paper': paper_id,
+                'reference_index': ref_idx,
+                'raw_reference': raw_ref[:500],
+                'confidence': match.get('confidence', 0.7)
+            }
+            
+            l2_publications.append(l2_pub)
+        
+        return l2_publications, ref_key_to_l2_id
+    
+    def generate_all_relations(self, results: Dict, ref_key_to_l2_id: Dict[str, str]) -> Dict[str, List[Dict]]:
+        """
+        Generate all relations from matching results.
+        
+        Returns:
+            Dict with:
+            - same_as: SAME_AS relations (structured matches to L1)
+            - authored: AUTHORED relations (authors to L2 via references)
+            - cites: CITES relations (source paper to L2)
+        """
+        relations = {
+            'same_as': [],
+            'authored': [],
+            'cites': []
+        }
+        
+        # 1. SAME_AS: Structured matches to L1 nodes
+        for match in results['author_matches']:
+            if match['method'].startswith('structured'):
+                relations['same_as'].append({
+                    'relation_type': 'SAME_AS',
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Author',
+                    'confidence': match['confidence'],
+                    'method': match['method']
+                })
+        
+        for match in results['journal_matches']:
+            if match['method'].startswith('structured'):
+                relations['same_as'].append({
+                    'relation_type': 'SAME_AS',
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Journal',
+                    'confidence': match['confidence'],
+                    'method': match['method']
+                })
+        
+        for match in results['document_matches']:
+            if match['method'].startswith('structured'):
+                relations['same_as'].append({
+                    'relation_type': 'SAME_AS',
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Publication',
+                    'confidence': match['confidence'],
+                    'method': match['method']
+                })
+        
+        # 2. AUTHORED: Author entities linked to L2 publications via reference matches
+        seen_authored = set()
+        for match in results['author_matches']:
+            if not match['method'].startswith('reference'):
+                continue
+            
+            paper_id = match.get('paper_id', '')
+            ref_idx = match.get('reference_index', -1)
+            ref_key = (paper_id, ref_idx)
+            
+            if ref_key not in ref_key_to_l2_id:
+                continue
+            
+            l2_id = ref_key_to_l2_id[ref_key]
+            entity_id = match['entity_id']
+            
+            # Deduplicate
+            auth_key = (entity_id, l2_id)
+            if auth_key in seen_authored:
+                continue
+            seen_authored.add(auth_key)
+            
+            relations['authored'].append({
+                'relation_type': 'AUTHORED',
+                'subject_id': entity_id,
+                'subject_type': 'Author',
+                'object_id': l2_id,
+                'object_type': 'L2Publication',
+                'confidence': match['confidence'],
+                'method': match['method']
+            })
+        
+        # 3. CITES: Source L1 paper cites the L2 publication
+        seen_cites = set()
+        for match in results['reference_matches']:
+            paper_id = match.get('paper_id', '')
+            ref_idx = match.get('reference_index', -1)
+            ref_key = (paper_id, ref_idx)
+            
+            if ref_key not in ref_key_to_l2_id:
+                continue
+            
+            l2_id = ref_key_to_l2_id[ref_key]
+            
+            # Get L1 publication ID for source paper
+            paper_meta = self.paper_metadata.get(paper_id, {})
+            source_eid = paper_meta.get('eid', '')
+            
+            if not source_eid:
+                continue
+            
+            # Deduplicate
+            cite_key = (source_eid, l2_id)
+            if cite_key in seen_cites:
+                continue
+            seen_cites.add(cite_key)
+            
+            relations['cites'].append({
+                'relation_type': 'CITES',
+                'subject_id': source_eid,
+                'subject_type': 'L1Publication',
+                'object_id': l2_id,
+                'object_type': 'L2Publication',
+                'confidence': match['confidence'],
+                'method': 'reference_match'
+            })
+        
+        return relations
     
     def generate_same_as_relations(self, results: Dict) -> List[Dict]:
         """
@@ -1087,6 +1361,8 @@ class ProvenanceConstrainedMatcher:
         
         Note: Only structured matches (to Scopus nodes) get SAME_AS.
         Reference matches are for validation/filtering only.
+        
+        DEPRECATED: Use generate_all_relations() for full relation generation.
         """
         relations = []
         
