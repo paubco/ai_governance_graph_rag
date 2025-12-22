@@ -1095,39 +1095,33 @@ class ProvenanceConstrainedMatcher:
             if match['method'].startswith('structured'):
                 relations.append({
                     'relation_type': 'SAME_AS',
-                    'source_id': match['entity_id'],
-                    'target_id': match['target_id'],
-                    'target_type': 'Author',
-                    'properties': {
-                        'confidence': match['confidence'],
-                        'method': match['method']
-                    }
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Author',
+                    'confidence': match['confidence'],
+                    'method': match['method']
                 })
         
         for match in results['journal_matches']:
             if match['method'].startswith('structured'):
                 relations.append({
                     'relation_type': 'SAME_AS',
-                    'source_id': match['entity_id'],
-                    'target_id': match['target_id'],
-                    'target_type': 'Journal',
-                    'properties': {
-                        'confidence': match['confidence'],
-                        'method': match['method']
-                    }
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Journal',
+                    'confidence': match['confidence'],
+                    'method': match['method']
                 })
         
         for match in results['document_matches']:
             if match['method'].startswith('structured'):
                 relations.append({
                     'relation_type': 'SAME_AS',
-                    'source_id': match['entity_id'],
-                    'target_id': match['target_id'],
-                    'target_type': 'Publication',
-                    'properties': {
-                        'confidence': match['confidence'],
-                        'method': match['method']
-                    }
+                    'subject_id': match['entity_id'],
+                    'object_id': match['target_id'],
+                    'object_type': 'Publication',
+                    'confidence': match['confidence'],
+                    'method': match['method']
                 })
         
         return relations
