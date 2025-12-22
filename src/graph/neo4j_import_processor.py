@@ -219,23 +219,26 @@ class Neo4jImportProcessor:
     
     def prepare_chunks(self) -> List[Dict]:
         """Load chunk nodes (without embeddings)."""
-        chunks_data = self.load_json('interim/chunks/chunks_text.json')
-        
-        # Handle dict structure: {chunk_id: chunk_object}
-        if isinstance(chunks_data, dict):
-            chunks_list = list(chunks_data.values())
-        else:
-            chunks_list = chunks_data
+        # Try chunks_embedded.jsonl first, fallback to chunks.jsonl
+        try:
+            chunks_data = self.load_jsonl('processed/chunks/chunks_embedded.jsonl')
+        except FileNotFoundError:
+            chunks_data = self.load_jsonl('interim/chunks/chunks.jsonl')
         
         chunks = []
-        for chunk in chunks_list:
+        for chunk in chunks_data:
+            # Handle both chunk_id and chunk_ids formats
+            chunk_id = chunk.get('chunk_id') or (chunk.get('chunk_ids', [''])[0])
+            doc_id = chunk.get('document_id') or (chunk.get('document_ids', [''])[0])
+            
+            metadata = chunk.get('metadata', {})
             chunks.append({
-                'chunk_id': chunk['chunk_id'],
-                'text': chunk['text'],
-                'doc_type': chunk.get('metadata', {}).get('source_type', ''),
-                'jurisdiction': chunk.get('metadata', {}).get('country_code', ''),  # Fixed: country_code not jurisdiction
-                'scopus_id': chunk.get('document_id', ''),
-                'section_title': chunk.get('section_header', '')
+                'chunk_id': chunk_id,
+                'text': chunk.get('text', ''),
+                'doc_type': metadata.get('source_type', ''),
+                'jurisdiction': metadata.get('country_code', ''),
+                'scopus_id': doc_id,
+                'section_title': chunk.get('section_header', metadata.get('section_header', ''))
             })
         
         return chunks
