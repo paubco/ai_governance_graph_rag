@@ -142,7 +142,8 @@ class GraphAnalyzer:
         """Get most highly connected entities by degree."""
         query = f"""
         MATCH (e:Entity)
-        WITH e, count {{ (e)-[:RELATION]-() }} as degree
+        OPTIONAL MATCH (e)-[r:RELATION]-()
+        WITH e, count(r) as degree
         WHERE degree > 0
         ORDER BY degree DESC
         LIMIT {limit}
@@ -320,21 +321,7 @@ class GraphAnalyzer:
         total_count = total[0]['total_entities'] if total else 0
         
         # 3. Sample reachability from top hubs to estimate giant component
-        reachability_query = """
-        MATCH (hub:Entity)
-        WHERE EXISTS { (hub)-[:RELATION]-() }
-        WITH hub, count { (hub)-[:RELATION]-() } as degree
-        ORDER BY degree DESC
-        LIMIT 5
-        WITH collect(hub) as hubs
-        UNWIND hubs as hub
-        CALL {
-            WITH hub
-            MATCH path = (hub)-[:RELATION*1..3]-(connected:Entity)
-            RETURN count(DISTINCT connected) as reachable
-        }
-        RETURN sum(reachable) as total_reachable_from_hubs
-        """
+        # Note: Full reachability requires GDS plugin, using simple connected count
         # Simpler query for approximation
         giant_query = """
         MATCH (e:Entity)-[:RELATION]-()
@@ -579,7 +566,8 @@ class GraphAnalyzer:
         """
         query = """
         MATCH (e:Entity)
-        WITH e, count { (e)-[:RELATION]-() } as degree
+        OPTIONAL MATCH (e)-[r:RELATION]-()
+        WITH e, count(r) as degree
         WHERE degree > 0
         WITH e.type as entity_type, degree,
              CASE 
