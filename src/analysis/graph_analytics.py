@@ -637,20 +637,21 @@ class GraphAnalyzer:
             if n > 1:
                 # Expected avg degree in E-R random graph with same N, E
                 er_avg_degree = (2 * e) / n
+                actual_avg = result['degree_stats'].get('avg_collaborators') or 0
                 result['erdos_renyi_comparison'] = {
-                    'actual_avg_degree': result['degree_stats'].get('avg_collaborators', 0),
+                    'actual_avg_degree': actual_avg,
                     'er_expected_avg_degree': round(er_avg_degree, 2),
-                    'interpretation': 'Similar to random' if abs(result['degree_stats'].get('avg_collaborators', 0) - er_avg_degree) < 0.5 else 'Structured (non-random)'
+                    'interpretation': 'Similar to random' if abs(actual_avg - er_avg_degree) < 0.5 else 'Structured (non-random)'
                 }
         
         return result
     
     def analyze_citation_network(self) -> Dict[str, Any]:
-        """Analyze citation network structure (L2 publications)."""
+        """Analyze citation network structure (L1 -> L2 citations via CITES)."""
         # In-degree distribution (most cited L2 papers)
         in_degree_query = """
-        MATCH (l2:L2Publication)<-[:MATCHED_TO]-(e:Entity)
-        WITH l2, count(e) as times_cited
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
         RETURN 
             avg(times_cited) as avg_citations,
             max(times_cited) as max_citations,
@@ -661,8 +662,8 @@ class GraphAnalyzer:
         
         # In-degree distribution histogram
         in_hist_query = """
-        MATCH (l2:L2Publication)<-[:MATCHED_TO]-(e:Entity)
-        WITH l2, count(e) as times_cited
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
         WITH 
           CASE 
             WHEN times_cited = 1 THEN '1'
@@ -686,8 +687,8 @@ class GraphAnalyzer:
         
         # Top cited L2 papers
         top_cited_query = """
-        MATCH (l2:L2Publication)<-[:MATCHED_TO]-(e:Entity)
-        WITH l2, count(e) as times_cited
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
         ORDER BY times_cited DESC
         LIMIT 10
         RETURN l2.title as title, l2.author as author, times_cited
@@ -701,10 +702,10 @@ class GraphAnalyzer:
         """
         l2_count_results = self.run_query(total_l2_query, "Total L2 publications")
         
-        # Total citations
+        # Total citations (CITES relationships)
         total_citations_query = """
-        MATCH (:L2Publication)<-[:MATCHED_TO]-(:Entity)
-        RETURN count(*) as total_citations
+        MATCH (:Publication)-[c:CITES]->(:L2Publication)
+        RETURN count(c) as total_citations
         """
         citation_count_results = self.run_query(total_citations_query, "Total citation links")
         
@@ -723,10 +724,11 @@ class GraphAnalyzer:
             if n > 0:
                 # Expected avg in-degree in E-R directed graph
                 er_avg_in_degree = e / n
+                actual_avg = result['in_degree_stats'].get('avg_citations') or 0
                 result['erdos_renyi_comparison'] = {
-                    'actual_avg_in_degree': result['in_degree_stats'].get('avg_citations', 0),
+                    'actual_avg_in_degree': actual_avg,
                     'er_expected_avg_in_degree': round(er_avg_in_degree, 2),
-                    'interpretation': 'Similar to random' if abs(result['in_degree_stats'].get('avg_citations', 0) - er_avg_in_degree) < 0.5 else 'Preferential attachment (non-random)'
+                    'interpretation': 'Similar to random' if abs(actual_avg - er_avg_in_degree) < 0.5 else 'Preferential attachment (non-random)'
                 }
         
         return result
