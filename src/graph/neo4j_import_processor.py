@@ -417,12 +417,12 @@ class Neo4jImportProcessor:
     def prepare_relations(self) -> List[Dict]:
         """Load semantic relations."""
         # Try JSONL first (v1.1)
-        jsonl_path = self.data_dir / 'processed' / 'relations' / 'relations_output.jsonl'
+        jsonl_path = self.data_dir / 'processed' / 'relations' / 'relations_semantic.jsonl'
         json_path = self.data_dir / 'interim' / 'relations' / 'relations_normalized.json'
         
         if jsonl_path.exists():
             # JSONL format may be nested (per-entity results)
-            raw_data = self.load_jsonl('processed/relations/relations_output.jsonl')
+            raw_data = self.load_jsonl('processed/relations/relations_semantic.jsonl')
             relations = []
             for item in raw_data:
                 # Handle nested format
@@ -463,13 +463,13 @@ class Neo4jImportProcessor:
         v1.1 addition.
         """
         # These come from alias clusters
-        part_of_path = self.data_dir / 'processed' / 'entities' / 'part_of_relations.jsonl'
+        part_of_path = self.data_dir / 'processed' / 'relations' / 'part_of_relations.jsonl'
         
         if not part_of_path.exists():
             logger.warning("No PART_OF relations file found (expected for v1.1)")
             return []
         
-        return self.load_jsonl('processed/entities/part_of_relations.jsonl')
+        return self.load_jsonl('processed/relations/part_of_relations.jsonl')
     
     def prepare_same_as_entity_relations(self) -> List[Dict]:
         """
@@ -477,13 +477,13 @@ class Neo4jImportProcessor:
         
         v1.1 addition.
         """
-        same_as_path = self.data_dir / 'processed' / 'entities' / 'same_as_relations.jsonl'
+        same_as_path = self.data_dir / 'processed' / 'relations' / 'same_as_relations.jsonl'
         
         if not same_as_path.exists():
             logger.warning("No SAME_AS entity relations file found (expected for v1.1)")
             return []
         
-        return self.load_jsonl('processed/entities/same_as_relations.jsonl')
+        return self.load_jsonl('processed/relations/same_as_relations.jsonl')
     
     def prepare_enrichment_relations(self) -> Dict[str, List[Dict]]:
         """Load all enrichment relations from Phase 2A."""
