@@ -37,7 +37,7 @@ from src.utils.logger import get_logger
 
 # Config - import with fallback
 try:
-    from extraction_config import FAISS_CONFIG
+    from config.extraction_config import FAISS_CONFIG
 except ImportError:
     FAISS_CONFIG = {
         'hnsw_m': 32,

@@ -53,7 +53,7 @@ DEFAULT_ENRICHMENT_CONFIG = {
 
 # Try to import from config, fall back to defaults
 try:
-    from extraction_config import ENRICHMENT_CONFIG as _cfg
+    from config.extraction_config import ENRICHMENT_CONFIG as _cfg
     # Merge with defaults (config overrides defaults)
     ENRICHMENT_CONFIG = {**DEFAULT_ENRICHMENT_CONFIG, **_cfg}
 except ImportError:
