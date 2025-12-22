@@ -338,14 +338,14 @@ def main():
     # Set default paths if not provided
     if args.entities_file is None:
         # Try JSONL first, fall back to JSON
-        jsonl_path = args.data_dir / 'interim' / 'entities' / 'entities_semantic.jsonl'
-        json_path = args.data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
+        jsonl_path = args.data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl'
+        json_path = args.data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.json'
         args.entities_file = jsonl_path if jsonl_path.exists() else json_path
     
     if args.chunks_file is None:
         # Try JSONL first, fall back to JSON
-        jsonl_path = args.data_dir / 'interim' / 'chunks' / 'chunks_embedded.jsonl'
-        json_path = args.data_dir / 'interim' / 'chunks' / 'chunks_embedded.json'
+        jsonl_path = args.data_dir / 'processed' / 'chunks' / 'chunks_embedded.jsonl'
+        json_path = args.data_dir / 'processed' / 'chunks' / 'chunks_embedded.json'
         args.chunks_file = jsonl_path if jsonl_path.exists() else json_path
     
     # Verify files exist
