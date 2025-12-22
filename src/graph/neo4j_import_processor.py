@@ -95,7 +95,7 @@ class Neo4jImportProcessor:
     # FILE LOADING
     # =========================================================================
     
-    def load_json(self, relative_path: str) -> List[Dict]:
+    def load_json(self, relative_path: str):
         """Load JSON file."""
         path = self.data_dir / relative_path
         if not path.exists():
@@ -104,11 +104,7 @@ class Neo4jImportProcessor:
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Handle dict structure if present
-        if isinstance(data, dict):
-            data = list(data.values())
-        
-        logger.info(f"Loaded {len(data)} items from {relative_path}")
+        logger.info(f"Loaded from {relative_path}")
         return data
     
     def load_jsonl(self, relative_path: str) -> List[Dict]:
@@ -491,13 +487,13 @@ class Neo4jImportProcessor:
     
     def prepare_enrichment_relations(self) -> Dict[str, List[Dict]]:
         """Load all enrichment relations from Phase 2A."""
-        enrichment_path = self.data_dir / 'processed' / 'relations' / 'enrichment_relations.json'
+        enrichment_path = self.data_dir / 'processed' / 'enrichment' / 'enrichment_relations.json'
         
         if not enrichment_path.exists():
             logger.warning("No enrichment relations file found")
             return {'matched_to': [], 'cites_l2': [], 'cites_l1': [], 'same_as': []}
         
-        enrichment_data = self.load_json('processed/relations/enrichment_relations.json')
+        enrichment_data = self.load_json('processed/enrichment/enrichment_relations.json')
         
         categorized = {
             'matched_to': [],
