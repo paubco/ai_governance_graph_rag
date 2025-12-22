@@ -162,7 +162,63 @@ class EnrichmentProcessor:
         # Step 9: Save outputs
         self._save_outputs()
         
+        # Step 10: Print summary stats
+        self._print_summary_stats(metadata_matches)
+        
         logger.info("✓ Pipeline complete!")
+    
+    def _print_summary_stats(self, metadata_matches: Dict = None):
+        """Print summary statistics."""
+        logger.info("=" * 70)
+        logger.info("PIPELINE SUMMARY")
+        logger.info("=" * 70)
+        
+        # Node counts
+        logger.info("\n📦 NODES CREATED:")
+        logger.info(f"   L1 Publications: {len(self.l1_publications)}")
+        logger.info(f"   L2 Publications: {len(self.l2_publications)}")
+        logger.info(f"   Authors:         {len(self.authors)}")
+        logger.info(f"   Journals:        {len(self.journals)}")
+        
+        # Relation counts
+        rel_counts = {}
+        for r in self.relations:
+            rel_type = r['relation_type']
+            rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 1
+        
+        logger.info("\n🔗 RELATIONS GENERATED:")
+        for rel_type, count in sorted(rel_counts.items()):
+            logger.info(f"   {rel_type}: {count}")
+        
+        # Citation matching
+        report = self.quality_report.get('summary', {})
+        logger.info("\n📖 CITATION MATCHING:")
+        logger.info(f"   Total citations:  {report.get('total_citation_entities', 0)}")
+        logger.info(f"   Matched:          {report.get('matched_entities', 0)} ({report.get('match_rate_pct', 0)}%)")
+        logger.info(f"   L1 overlaps:      {report.get('l1_matches', 0)}")
+        logger.info(f"   L2 created:       {report.get('unique_l2_publications', 0)}")
+        
+        # Metadata matching
+        if metadata_matches and metadata_matches.get('stats'):
+            stats = metadata_matches['stats']
+            logger.info("\n🏷️ METADATA MATCHING:")
+            
+            author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
+            journal_rate = stats['journal_matched'] / max(1, stats['journal_total']) * 100
+            document_rate = stats['document_matched'] / max(1, stats['document_total']) * 100
+            
+            logger.info(f"   Authors:   {stats['author_matched']:>4}/{stats['author_total']:<4} ({author_rate:>5.1f}%)")
+            logger.info(f"   Journals:  {stats['journal_matched']:>4}/{stats['journal_total']:<4} ({journal_rate:>5.1f}%)")
+            logger.info(f"   Documents: {stats['document_matched']:>4}/{stats['document_total']:<4} ({document_rate:>5.1f}%)")
+            logger.info(f"   SAME_AS:   {len(metadata_matches.get('relations', []))} relations")
+        
+        # Jurisdiction linking
+        jur_report = self.quality_report.get('jurisdiction_linking', {})
+        logger.info("\n🌍 JURISDICTION LINKING:")
+        logger.info(f"   Entities linked:      {jur_report.get('total_linked', 0)}")
+        logger.info(f"   Unique jurisdictions: {jur_report.get('unique_jurisdictions', 0)}")
+        
+        logger.info("\n" + "=" * 70)
     
     def _load_input_data(self) -> tuple:
         """Load entities, relations, and chunks."""
