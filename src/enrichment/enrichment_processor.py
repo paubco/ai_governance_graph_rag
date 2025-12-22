@@ -61,7 +61,7 @@ except ImportError:
 
 # Local imports
 from src.enrichment.scopus_parser import ScopusParser, ReferenceParser
-from src.enrichment.citation_matcher import CitationEntityIdentifier, CitationMatcher
+from src.enrichment.citation_matcher import CitationEntityIdentifier, CitationMatcher, MetadataMatcher
 from src.enrichment.jurisdiction_matcher import JurisdictionMatcher
 from src.utils.logger import get_logger
 
@@ -150,11 +150,14 @@ class EnrichmentProcessor:
         # Step 6: Match jurisdiction entities
         jurisdiction_links = self._match_jurisdictions(entities)
         
+        # Step 6b: Match metadata entities (Author/Journal/Document)
+        metadata_matches = self._match_metadata_entities(entities)
+        
         # Step 7: Generate relations
-        self._generate_relations(matched_entities, chunks, jurisdiction_links)
+        self._generate_relations(matched_entities, chunks, jurisdiction_links, metadata_matches)
         
         # Step 8: Generate quality report
-        self._generate_quality_report(citation_entities, matched_entities, jurisdiction_links)
+        self._generate_quality_report(citation_entities, matched_entities, jurisdiction_links, metadata_matches)
         
         # Step 9: Save outputs
         self._save_outputs()
@@ -359,11 +362,64 @@ class EnrichmentProcessor:
         
         return jurisdiction_links
     
+    def _match_metadata_entities(self, entities: List[Dict]) -> Dict:
+        """Match Author/Journal/Document entities to Scopus nodes."""
+        logger.info("=" * 70)
+        logger.info("STEP 6b: Matching Metadata Entities")
+        logger.info("=" * 70)
+        
+        # Load jurisdiction data for Document matching
+        with open(self.scraping_summary, 'r', encoding='utf-8') as f:
+            jur_data = json.load(f)
+            if isinstance(jur_data, dict) and 'countries' in jur_data:
+                jurisdictions = jur_data['countries']
+            else:
+                jurisdictions = jur_data
+        
+        # Initialize matcher with target pools
+        matcher = MetadataMatcher(
+            authors=self.authors,
+            journals=self.journals,
+            publications=self.l1_publications,
+            jurisdictions=jurisdictions,
+            threshold=0.85
+        )
+        
+        # Filter to matchable types
+        matchable_types = {'Author', 'Journal', 'Document'}
+        matchable = [e for e in entities if e.get('type') in matchable_types]
+        logger.info(f"Matchable entities: {len(matchable)}")
+        
+        # Run matching
+        results = matcher.match_all(matchable)
+        stats = results['stats']
+        
+        # Log results
+        author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
+        journal_rate = stats['journal_matched'] / max(1, stats['journal_total']) * 100
+        document_rate = stats['document_matched'] / max(1, stats['document_total']) * 100
+        
+        logger.info(f"✓ Metadata matching complete:")
+        logger.info(f"  - Authors:   {stats['author_matched']}/{stats['author_total']} ({author_rate:.1f}%)")
+        logger.info(f"  - Journals:  {stats['journal_matched']}/{stats['journal_total']} ({journal_rate:.1f}%)")
+        logger.info(f"  - Documents: {stats['document_matched']}/{stats['document_total']} ({document_rate:.1f}%)")
+        
+        # Generate SAME_AS relations
+        same_as_relations = matcher.generate_same_as_relations(results)
+        logger.info(f"  - SAME_AS relations: {len(same_as_relations)}")
+        
+        return {
+            'results': results,
+            'relations': same_as_relations,
+            'stats': dict(stats)
+        }
+    
     def _generate_relations(
         self,
         matched_entities: List[Dict],
         chunks: List[Dict],
-        jurisdiction_links: List[Dict]
+        jurisdiction_links: List[Dict],
+        metadata_matches: Dict = None
     ):
         """Generate enrichment relationships."""
         logger.info("=" * 70)
@@ -433,7 +489,7 @@ class EnrichmentProcessor:
                 })
         
         # 5. SAME_AS: Entity → Jurisdiction
-        for jur_link in tqdm(jurisdiction_links, desc="SAME_AS"):
+        for jur_link in tqdm(jurisdiction_links, desc="SAME_AS (Jurisdiction)"):
             relations.append({
                 'relation_type': 'SAME_AS',
                 'source_id': jur_link['entity_id'],
@@ -445,6 +501,21 @@ class EnrichmentProcessor:
                     'jurisdiction_code': jur_link['jurisdiction_code']
                 }
             })
+        
+        # 6. SAME_AS: Entity → Author/Journal/Publication (from metadata matching)
+        if metadata_matches and metadata_matches.get('relations'):
+            for rel in tqdm(metadata_matches['relations'], desc="SAME_AS (Metadata)"):
+                relations.append({
+                    'relation_type': 'SAME_AS',
+                    'source_id': rel['subject_id'],
+                    'source_type': 'Entity',
+                    'target_id': rel['object_id'],
+                    'target_type': rel['object_type'],
+                    'properties': {
+                        'confidence': rel['confidence'],
+                        'method': rel['method']
+                    }
+                })
         
         self.relations = relations
         
@@ -461,7 +532,8 @@ class EnrichmentProcessor:
         self,
         citation_entities: Dict,
         matched_entities: List[Dict],
-        jurisdiction_links: List[Dict]
+        jurisdiction_links: List[Dict],
+        metadata_matches: Dict = None
     ):
         """Generate quality metrics."""
         logger.info("=" * 70)
@@ -504,11 +576,26 @@ class EnrichmentProcessor:
             }
         }
         
+        # Add metadata matching stats
+        if metadata_matches and metadata_matches.get('stats'):
+            stats = metadata_matches['stats']
+            self.quality_report['metadata_matching'] = {
+                'author_matched': stats.get('author_matched', 0),
+                'author_total': stats.get('author_total', 0),
+                'journal_matched': stats.get('journal_matched', 0),
+                'journal_total': stats.get('journal_total', 0),
+                'document_matched': stats.get('document_matched', 0),
+                'document_total': stats.get('document_total', 0),
+                'total_same_as_relations': len(metadata_matches.get('relations', []))
+            }
+        
         logger.info("QUALITY SUMMARY:")
         logger.info(f"  Match rate: {self.quality_report['summary']['match_rate_pct']}%")
         logger.info(f"  L1 overlaps: {self.quality_report['summary']['l1_matches']}")
         logger.info(f"  L2 created: {self.quality_report['summary']['unique_l2_publications']}")
         logger.info(f"  Jurisdiction links: {self.quality_report['jurisdiction_linking']['total_linked']}")
+        if metadata_matches:
+            logger.info(f"  Metadata SAME_AS: {len(metadata_matches.get('relations', []))}")
     
     def _save_outputs(self):
         """Save all output files."""
