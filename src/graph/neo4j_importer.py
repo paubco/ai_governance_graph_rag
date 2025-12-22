@@ -459,6 +459,60 @@ class Neo4jImporter:
         """
         return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Jurisdiction)")
     
+    def import_same_as_author(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Author.
+        
+        From metadata matching: Author entities matched to Scopus Author nodes.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with subject_id (entity), object_id (author)
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.subject_id})
+        MATCH (a:Author {author_id: rel.object_id})
+        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(a)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Author)")
+    
+    def import_same_as_journal(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Journal.
+        
+        From metadata matching: Journal entities matched to Scopus Journal nodes.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with subject_id (entity), object_id (journal)
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.subject_id})
+        MATCH (j:Journal {journal_id: rel.object_id})
+        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(j)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Journal)")
+    
+    def import_same_as_publication(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Publication (L1).
+        
+        From metadata matching: Document entities matched to L1 Publications.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with subject_id (entity), object_id (publication)
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.subject_id})
+        MATCH (p:L1Publication {scopus_id: rel.object_id})
+        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(p)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Publication)")
+    
     def import_matched_to(self, session: Session, relations: List[Dict]) -> int:
         """
         Import MATCHED_TO relationships: Entity -> L2Publication.

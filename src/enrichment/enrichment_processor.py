@@ -61,7 +61,7 @@ except ImportError:
 
 # Local imports
 from src.enrichment.scopus_parser import ScopusParser, ReferenceParser
-from src.enrichment.citation_matcher import CitationEntityIdentifier, CitationMatcher, MetadataMatcher
+from src.enrichment.citation_matcher import CitationEntityIdentifier, CitationMatcher, ProvenanceConstrainedMatcher
 from src.enrichment.jurisdiction_matcher import JurisdictionMatcher
 from src.utils.logger import get_logger
 
@@ -151,7 +151,7 @@ class EnrichmentProcessor:
         jurisdiction_links = self._match_jurisdictions(entities)
         
         # Step 6b: Match metadata entities (Author/Journal/Document)
-        metadata_matches = self._match_metadata_entities(entities)
+        metadata_matches = self._match_metadata_entities(entities, chunks)
         
         # Step 7: Generate relations
         self._generate_relations(matched_entities, chunks, jurisdiction_links, metadata_matches)
@@ -201,6 +201,8 @@ class EnrichmentProcessor:
         # Metadata matching
         if metadata_matches and metadata_matches.get('stats'):
             stats = metadata_matches['stats']
+            results = metadata_matches.get('results', {})
+            
             print("\n🏷️ METADATA MATCHING:")
             
             author_rate = stats['author_matched'] / max(1, stats['author_total']) * 100
@@ -211,6 +213,34 @@ class EnrichmentProcessor:
             print(f"   Journals:  {stats['journal_matched']:>4}/{stats['journal_total']:<4} ({journal_rate:>5.1f}%)")
             print(f"   Documents: {stats['document_matched']:>4}/{stats['document_total']:<4} ({document_rate:>5.1f}%)")
             print(f"   SAME_AS:   {len(metadata_matches.get('relations', []))} relations")
+            
+            # Sample matches
+            print("\n📋 SAMPLE MATCHES:")
+            
+            author_matches = results.get('author_matches', [])
+            if author_matches:
+                print("\n   Authors:")
+                for m in author_matches[:5]:
+                    conf = m.get('confidence', 0)
+                    method = m.get('method', '?')
+                    print(f"      {m['entity_name'][:25]:<25} → {m['target_name'][:25]:<25} [{method}, {conf:.2f}]")
+            
+            journal_matches = results.get('journal_matches', [])
+            if journal_matches:
+                print("\n   Journals:")
+                for m in journal_matches[:5]:
+                    conf = m.get('confidence', 0)
+                    method = m.get('method', '?')
+                    print(f"      {m['entity_name'][:30]:<30} → {m['target_name'][:25]:<25} [{method}, {conf:.2f}]")
+            
+            document_matches = results.get('document_matches', [])
+            if document_matches:
+                print("\n   Documents:")
+                for m in document_matches[:5]:
+                    conf = m.get('confidence', 0)
+                    method = m.get('method', '?')
+                    target_type = m.get('target_type', '?')
+                    print(f"      {m['entity_name'][:35]:<35} → {m['target_name'][:20]:<20} [{target_type}, {conf:.2f}]")
         
         # Jurisdiction linking
         jur_report = self.quality_report.get('jurisdiction_linking', {})
@@ -419,31 +449,52 @@ class EnrichmentProcessor:
         
         return jurisdiction_links
     
-    def _match_metadata_entities(self, entities: List[Dict]) -> Dict:
-        """Match Author/Journal/Document entities to Scopus nodes."""
+    def _match_metadata_entities(self, entities: List[Dict], chunks: List[Dict]) -> Dict:
+        """
+        Match Author/Journal/Document entities with provenance constraints.
+        
+        Uses two-tier matching:
+        1. Structured: Against source paper's Scopus metadata (authors, journal, title)
+        2. Fallback: Against source paper's reference strings
+        """
         logger.info("=" * 70)
-        logger.info("STEP 6b: Matching Metadata Entities")
+        logger.info("STEP 6b: Matching Metadata Entities (Provenance-Constrained)")
         logger.info("=" * 70)
         
-        # Load jurisdiction data for Document matching
-        with open(self.scraping_summary, 'r', encoding='utf-8') as f:
-            jur_data = json.load(f)
-            if isinstance(jur_data, dict) and 'countries' in jur_data:
-                jurisdictions = jur_data['countries']
-            else:
-                jurisdictions = jur_data
+        # Load paper_mapping.json (has scopus_metadata per paper)
+        paper_mapping_path = self.data_dir / 'raw' / 'academic' / 'scopus_2023' / 'paper_mapping.json'
+        if paper_mapping_path.exists():
+            with open(paper_mapping_path, 'r', encoding='utf-8') as f:
+                paper_mapping = json.load(f)
+            logger.info(f"Loaded paper_mapping for {len(paper_mapping)} papers")
+        else:
+            logger.warning(f"No paper_mapping.json found at {paper_mapping_path}")
+            paper_mapping = {}
         
-        # Initialize matcher with target pools
-        matcher = MetadataMatcher(
-            authors=self.authors,
-            journals=self.journals,
-            publications=self.l1_publications,
-            jurisdictions=jurisdictions,
+        # Load paper references
+        paper_references_path = self.data_dir / 'processed' / 'papers' / 'paper_references.json'
+        if not paper_references_path.exists():
+            # Try alternate location
+            paper_references_path = self.data_dir / 'raw' / 'academic' / 'scopus_2023' / 'paper_references.json'
+        
+        if paper_references_path.exists():
+            with open(paper_references_path, 'r', encoding='utf-8') as f:
+                paper_references = json.load(f)
+            logger.info(f"Loaded references for {len(paper_references)} papers")
+        else:
+            logger.warning(f"No paper_references.json found")
+            paper_references = {}
+        
+        # Initialize provenance-constrained matcher
+        matcher = ProvenanceConstrainedMatcher(
+            paper_mapping=paper_mapping,
+            paper_references=paper_references,
+            chunks=chunks,
             threshold=0.85
         )
         
-        # Filter to matchable types
-        matchable_types = {'Author', 'Journal', 'Document'}
+        # Filter to matchable types (including Citation now)
+        matchable_types = {'Author', 'Journal', 'Document', 'Citation'}
         matchable = [e for e in entities if e.get('type') in matchable_types]
         logger.info(f"Matchable entities: {len(matchable)}")
         
@@ -460,8 +511,20 @@ class EnrichmentProcessor:
         logger.info(f"  - Authors:   {stats['author_matched']}/{stats['author_total']} ({author_rate:.1f}%)")
         logger.info(f"  - Journals:  {stats['journal_matched']}/{stats['journal_total']} ({journal_rate:.1f}%)")
         logger.info(f"  - Documents: {stats['document_matched']}/{stats['document_total']} ({document_rate:.1f}%)")
+        logger.info(f"  - No provenance: {stats['no_provenance']}")
         
-        # Generate SAME_AS relations
+        # Log method breakdown
+        method_counts = {}
+        for match_list in [results['author_matches'], results['journal_matches'], results['document_matches']]:
+            for m in match_list:
+                method = m.get('method', 'unknown')
+                method_counts[method] = method_counts.get(method, 0) + 1
+        
+        logger.info(f"  Match methods:")
+        for method, count in sorted(method_counts.items(), key=lambda x: -x[1]):
+            logger.info(f"    - {method}: {count}")
+        
+        # Generate SAME_AS relations (only for structured matches)
         same_as_relations = matcher.generate_same_as_relations(results)
         logger.info(f"  - SAME_AS relations: {len(same_as_relations)}")
         

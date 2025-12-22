@@ -549,7 +549,15 @@ class Neo4jImportProcessor:
         
         if not enrichment_path.exists():
             logger.warning("No enrichment relations file found")
-            return {'matched_to': [], 'cites_l2': [], 'cites_l1': [], 'same_as': []}
+            return {
+                'matched_to': [],
+                'cites_l2': [],
+                'cites_l1': [],
+                'same_as_jurisdiction': [],
+                'same_as_author': [],
+                'same_as_journal': [],
+                'same_as_publication': []
+            }
         
         enrichment_data = self.load_json('processed/enrichment/enrichment_relations.json')
         
@@ -557,7 +565,10 @@ class Neo4jImportProcessor:
             'matched_to': [],
             'cites_l2': [],
             'cites_l1': [],
-            'same_as': []
+            'same_as_jurisdiction': [],
+            'same_as_author': [],
+            'same_as_journal': [],
+            'same_as_publication': []
         }
         
         for rel in enrichment_data:
@@ -582,12 +593,37 @@ class Neo4jImportProcessor:
                         'target_scopus_id': target_scopus_id
                     })
             elif rel_type == 'SAME_AS':
-                # Extract jurisdiction code from target_id (e.g., "jur_EU" -> "EU")
-                jur_code = rel['target_id'].replace('jur_', '')
-                categorized['same_as'].append({
-                    'entity_id': rel['source_id'],
-                    'jurisdiction_code': jur_code
-                })
+                target_type = rel.get('target_type', '')
+                props = rel.get('properties', {})
+                
+                if target_type == 'Jurisdiction':
+                    # Extract jurisdiction code from target_id (e.g., "jur_EU" -> "EU")
+                    jur_code = rel['target_id'].replace('jur_', '')
+                    categorized['same_as_jurisdiction'].append({
+                        'entity_id': rel['source_id'],
+                        'jurisdiction_code': jur_code
+                    })
+                elif target_type == 'Author':
+                    categorized['same_as_author'].append({
+                        'subject_id': rel['source_id'],
+                        'object_id': rel['target_id'],
+                        'confidence': props.get('confidence', 1.0),
+                        'method': props.get('method', 'unknown')
+                    })
+                elif target_type == 'Journal':
+                    categorized['same_as_journal'].append({
+                        'subject_id': rel['source_id'],
+                        'object_id': rel['target_id'],
+                        'confidence': props.get('confidence', 1.0),
+                        'method': props.get('method', 'unknown')
+                    })
+                elif target_type == 'Publication':
+                    categorized['same_as_publication'].append({
+                        'subject_id': rel['source_id'],
+                        'object_id': rel['target_id'],
+                        'confidence': props.get('confidence', 1.0),
+                        'method': props.get('method', 'unknown')
+                    })
         
         return categorized
     
@@ -792,10 +828,34 @@ class Neo4jImportProcessor:
                 
                 # 19. SAME_AS entity→jurisdiction
                 if not self.is_completed('rels_same_as_jurisdiction'):
-                    importer.import_same_as_jurisdiction(session, enrichment_rels['same_as'])
+                    importer.import_same_as_jurisdiction(session, enrichment_rels['same_as_jurisdiction'])
                     self.mark_completed('rels_same_as_jurisdiction')
                 else:
                     logger.info("SAME_AS (Entity→Jurisdiction) already imported (checkpoint)")
+                
+                # 20. SAME_AS entity→author (from metadata matching)
+                if not self.is_completed('rels_same_as_author'):
+                    if enrichment_rels['same_as_author']:
+                        importer.import_same_as_author(session, enrichment_rels['same_as_author'])
+                    self.mark_completed('rels_same_as_author')
+                else:
+                    logger.info("SAME_AS (Entity→Author) already imported (checkpoint)")
+                
+                # 21. SAME_AS entity→journal (from metadata matching)
+                if not self.is_completed('rels_same_as_journal'):
+                    if enrichment_rels['same_as_journal']:
+                        importer.import_same_as_journal(session, enrichment_rels['same_as_journal'])
+                    self.mark_completed('rels_same_as_journal')
+                else:
+                    logger.info("SAME_AS (Entity→Journal) already imported (checkpoint)")
+                
+                # 22. SAME_AS entity→publication (from metadata matching)
+                if not self.is_completed('rels_same_as_publication'):
+                    if enrichment_rels['same_as_publication']:
+                        importer.import_same_as_publication(session, enrichment_rels['same_as_publication'])
+                    self.mark_completed('rels_same_as_publication')
+                else:
+                    logger.info("SAME_AS (Entity→Publication) already imported (checkpoint)")
                 
                 logger.info("\n=== IMPORT COMPLETE ===")
         

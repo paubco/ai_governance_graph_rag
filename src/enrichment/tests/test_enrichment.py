@@ -195,50 +195,75 @@ def test_citation_matcher():
 
 
 def test_metadata_matcher():
-    """Test MetadataMatcher with mock data."""
-    print("\n=== TEST: MetadataMatcher ===")
+    """Test ProvenanceConstrainedMatcher with mock data."""
+    print("\n=== TEST: ProvenanceConstrainedMatcher ===")
     
-    from src.enrichment.citation_matcher import MetadataMatcher
+    from src.enrichment.citation_matcher import ProvenanceConstrainedMatcher
     
-    # Mock Scopus target pools
-    authors = [
-        {'author_id': 'author_123', 'name': 'Floridi, Luciano', 'scopus_author_id': '123'},
-        {'author_id': 'author_456', 'name': 'Smith, John', 'scopus_author_id': '456'},
+    # Mock paper_mapping.json format (with scopus_metadata)
+    paper_mapping = {
+        'paper_001': {
+            'scopus_metadata': {
+                'eid': '2-s2.0-85147326963',
+                'title': 'The EU AI Act and Its Implications for Machine Learning',
+                'authors': 'Floridi, Luciano; Smith, John',
+                'journal': 'Nature Machine Intelligence',
+                'year': 2024
+            }
+        },
+        'paper_002': {
+            'scopus_metadata': {
+                'eid': '2-s2.0-85149886538',
+                'title': 'Machine Learning Governance',
+                'authors': 'Jones, Alice',
+                'journal': 'AI and Ethics',
+                'year': 2023
+            }
+        }
+    }
+    
+    # Mock paper references (raw strings)
+    paper_references = {
+        'paper_001': [
+            'Bender, E.M., Gebru, T., 2021. On the Dangers of Stochastic Parrots. FAccT 2021.',
+            'Russell, S., Norvig, P., 2020. Artificial Intelligence: A Modern Approach. Pearson.',
+            'GDPR, 2016. General Data Protection Regulation. Official Journal EU.'
+        ],
+        'paper_002': [
+            'Goodfellow, I., Bengio, Y., Courville, A., 2016. Deep Learning. MIT Press.'
+        ]
+    }
+    
+    # Mock chunks with provenance (paper_XXX_CHUNK_YYY pattern)
+    chunks = [
+        {'chunk_id': 'paper_001_CHUNK_001', 'document_id': ''},
+        {'chunk_id': 'paper_001_CHUNK_002', 'document_id': ''},
+        {'chunk_id': 'paper_002_CHUNK_001', 'document_id': ''}
     ]
     
-    journals = [
-        {'journal_id': 'journal_abc', 'name': 'Nature Machine Intelligence', 'issn': '1234-5678'},
-        {'journal_id': 'journal_def', 'name': 'AI and Ethics', 'issn': '2345-6789'},
-    ]
-    
-    publications = [
-        {'scopus_id': 'scopus_001', 'title': 'The EU AI Act and Its Implications', 'year': 2024},
-        {'scopus_id': 'scopus_002', 'title': 'Machine Learning Governance', 'year': 2023},
-    ]
-    
-    jurisdictions = [
-        {'code': 'EU', 'name': 'European Union'},
-        {'code': 'US', 'name': 'United States'},
-    ]
-    
-    # Mock metadata entities (mix of real and garbage)
+    # Mock metadata entities
     entities = [
-        # Should match
-        {'entity_id': 'ent_a1', 'name': 'Floridi, L.', 'type': 'Author'},
-        {'entity_id': 'ent_j1', 'name': 'Nature Machine Intelligence', 'type': 'Journal'},
-        {'entity_id': 'ent_d1', 'name': 'EU AI Act', 'type': 'Document'},
-        # Should NOT match (garbage from broken extraction)
-        {'entity_id': 'ent_a2', 'name': 'Developers', 'type': 'Author'},
-        {'entity_id': 'ent_j2', 'name': 'NIST Framework', 'type': 'Journal'},
-        {'entity_id': 'ent_d2', 'name': 'GPAI models', 'type': 'Document'},
+        # Should match - Author from paper's own authors
+        {'entity_id': 'ent_a1', 'name': 'Floridi, L.', 'type': 'Author', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should match - Journal from paper's own venue
+        {'entity_id': 'ent_j1', 'name': 'Nature Machine Intelligence', 'type': 'Journal', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should match - Document matches paper's title
+        {'entity_id': 'ent_d1', 'name': 'EU AI Act and Its Implications', 'type': 'Document', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should match via fallback - Author in references
+        {'entity_id': 'ent_a2', 'name': 'Bender, E.', 'type': 'Author', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should NOT match - Author not in paper_001's metadata or refs
+        {'entity_id': 'ent_a3', 'name': 'Developers', 'type': 'Author', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should NOT match - Journal not associated with paper
+        {'entity_id': 'ent_j2', 'name': 'NIST Framework', 'type': 'Journal', 'chunk_ids': ['paper_001_CHUNK_001']},
+        # Should NOT match - No provenance (no chunk_ids)
+        {'entity_id': 'ent_x1', 'name': 'Mystery Author', 'type': 'Author', 'chunk_ids': []},
     ]
     
     try:
-        matcher = MetadataMatcher(
-            authors=authors,
-            journals=journals,
-            publications=publications,
-            jurisdictions=jurisdictions,
+        matcher = ProvenanceConstrainedMatcher(
+            paper_mapping=paper_mapping,
+            paper_references=paper_references,
+            chunks=chunks,
             threshold=0.85
         )
         
@@ -249,18 +274,29 @@ def test_metadata_matcher():
         print(f"  Authors:   {stats['author_matched']}/{stats['author_total']}")
         print(f"  Journals:  {stats['journal_matched']}/{stats['journal_total']}")
         print(f"  Documents: {stats['document_matched']}/{stats['document_total']}")
+        print(f"  No provenance: {stats['no_provenance']}")
         
         # Verify expected matches
         assert stats['author_matched'] >= 1, "Expected at least 1 author match (Floridi)"
         assert stats['journal_matched'] >= 1, "Expected at least 1 journal match"
+        assert stats['no_provenance'] >= 1, "Expected at least 1 entity without provenance"
         
         print(f"  ✓ Matched {stats['author_matched']} authors, {stats['journal_matched']} journals, {stats['document_matched']} documents")
         
-        # Test relation generation
-        relations = matcher.generate_same_as_relations(results)
-        assert len(relations) > 0, "Expected SAME_AS relations"
+        # Show match methods
+        print(f"\n  Match methods:")
+        for m in results['author_matches']:
+            print(f"    Author: {m['entity_name'][:20]} → {m['target_name'][:20]} [{m['method']}]")
+        for m in results['journal_matches']:
+            print(f"    Journal: {m['entity_name'][:20]} → {m['target_name'][:20]} [{m['method']}]")
+        for m in results['document_matches']:
+            print(f"    Document: {m['entity_name'][:20]} → {m['target_name'][:20]} [{m['method']}]")
         
-        print(f"  ✓ Generated {len(relations)} SAME_AS relations")
+        # Test relation generation (only structured matches)
+        relations = matcher.generate_same_as_relations(results)
+        structured_count = len([r for r in relations if 'structured' in r.get('properties', {}).get('method', '')])
+        
+        print(f"\n  ✓ Generated {len(relations)} SAME_AS relations ({structured_count} structured)")
         
         # Verify garbage was filtered
         unmatched_names = [e['name'] for e in results['unmatched']]
