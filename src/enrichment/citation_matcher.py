@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Citation Entity Identification and Matching.
+Citation and Metadata Entity Matching.
 
-Identifies citation entities from extracted entities using discusses relations,
-then matches them to Scopus references using provenance-constrained fuzzy matching.
+Identifies and matches metadata entities to structured nodes:
+- Citation entities → L2 Publications (via Scopus references)
+- Author entities → Scopus Author nodes
+- Journal entities → Scopus Journal nodes
+- Document entities → L1 Publications OR Jurisdictions
 
 Author: Pau Barba i Colomer
 Created: 2025-12-21
-Modified: 2025-12-21
+Modified: 2025-12-22
 
 References:
     - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
@@ -17,6 +20,8 @@ References:
 # Standard library
 import re
 from typing import Dict, List, Optional, Tuple
+from collections import defaultdict
+from difflib import SequenceMatcher
 
 # Third-party
 from rapidfuzz import fuzz
@@ -526,3 +531,359 @@ class CitationMatcher:
                 return match.group(1).lower()
         
         return None
+
+
+# =============================================================================
+# METADATA ENTITY MATCHER
+# =============================================================================
+
+class MetadataMatcher:
+    """
+    Matches metadata entities to Scopus nodes via fuzzy matching.
+    
+    Matching strategies:
+    - Author entities: Fuzzy surname match → Scopus Author nodes
+    - Journal entities: Fuzzy name match → Scopus Journal nodes
+    - Document entities: Fuzzy title match → Publication OR Jurisdiction
+    
+    This acts as a quality filter: only entities matching real structured
+    data are kept, garbage entities (misclassified by LLM) are filtered out.
+    
+    Example:
+        matcher = MetadataMatcher(authors, journals, publications, jurisdictions)
+        results = matcher.match_all(metadata_entities)
+    """
+    
+    def __init__(
+        self,
+        authors: List[Dict],
+        journals: List[Dict],
+        publications: List[Dict],
+        jurisdictions: List[Dict],
+        threshold: float = 0.85
+    ):
+        """
+        Initialize matcher with target pools.
+        
+        Args:
+            authors: Scopus author nodes [{author_id, name, scopus_author_id}]
+            journals: Scopus journal nodes [{journal_id, name, issn}]
+            publications: L1 publication nodes [{scopus_id, title, year, ...}]
+            jurisdictions: Jurisdiction data [{code, name, ...}]
+            threshold: Minimum similarity for match (default 0.85)
+        """
+        self.threshold = threshold
+        
+        # Build lookup indexes
+        self.author_lookup = self._build_author_lookup(authors)
+        self.journal_lookup = self._build_journal_lookup(journals)
+        self.publication_lookup = self._build_publication_lookup(publications)
+        self.jurisdiction_lookup = self._build_jurisdiction_lookup(jurisdictions)
+        
+        logger.info(f"MetadataMatcher initialized:")
+        logger.info(f"  Authors: {len(self.author_lookup)} surnames")
+        logger.info(f"  Journals: {len(self.journal_lookup)} names")
+        logger.info(f"  Publications: {len(self.publication_lookup)} titles")
+        logger.info(f"  Jurisdictions: {len(self.jurisdiction_lookup)} names")
+    
+    def _normalize(self, text: str) -> str:
+        """Normalize text for matching."""
+        if not text:
+            return ""
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    def _extract_surname(self, name: str) -> str:
+        """Extract surname from author name."""
+        if not name:
+            return ""
+        # Handle "Last, First" format
+        if ',' in name:
+            return self._normalize(name.split(',')[0])
+        # Handle "First Last" format
+        parts = name.strip().split()
+        if parts:
+            return self._normalize(parts[-1])
+        return ""
+    
+    def _similarity(self, a: str, b: str) -> float:
+        """Calculate similarity ratio between two strings."""
+        if not a or not b:
+            return 0.0
+        return SequenceMatcher(None, a, b).ratio()
+    
+    def _build_author_lookup(self, authors: List[Dict]) -> Dict[str, Dict]:
+        """Build surname → author mapping."""
+        lookup = {}
+        for author in authors:
+            name = author.get('name', '')
+            surname = self._extract_surname(name)
+            if surname and len(surname) > 1:
+                lookup[surname] = author
+        return lookup
+    
+    def _build_journal_lookup(self, journals: List[Dict]) -> Dict[str, Dict]:
+        """Build normalized name → journal mapping."""
+        lookup = {}
+        for journal in journals:
+            name = self._normalize(journal.get('name', ''))
+            if name:
+                lookup[name] = journal
+        return lookup
+    
+    def _build_publication_lookup(self, publications: List[Dict]) -> Dict[str, Dict]:
+        """Build normalized title → publication mapping."""
+        lookup = {}
+        for pub in publications:
+            title = self._normalize(pub.get('title', ''))
+            if title and len(title) > 10:
+                lookup[title] = pub
+        return lookup
+    
+    def _build_jurisdiction_lookup(self, jurisdictions: List[Dict]) -> Dict[str, Dict]:
+        """Build name variants → jurisdiction mapping."""
+        lookup = {}
+        for jur in jurisdictions:
+            # Add by code
+            code = jur.get('code', '').upper()
+            if code:
+                lookup[code.lower()] = jur
+            # Add by name
+            name = self._normalize(jur.get('name', ''))
+            if name:
+                lookup[name] = jur
+        return lookup
+    
+    def match_author(self, entity: Dict) -> Optional[Tuple[Dict, float, str]]:
+        """
+        Match Author entity to Scopus Author node.
+        
+        Returns:
+            Tuple of (matched_author, confidence, method) or None
+        """
+        name = entity.get('name', '')
+        surname = self._extract_surname(name)
+        
+        if not surname or len(surname) < 2:
+            return None
+        
+        # Exact surname match
+        if surname in self.author_lookup:
+            return (self.author_lookup[surname], 1.0, 'exact_surname')
+        
+        # Fuzzy surname match
+        best_match = None
+        best_score = 0.0
+        
+        for scopus_surname, author in self.author_lookup.items():
+            score = self._similarity(surname, scopus_surname)
+            if score > best_score and score >= self.threshold:
+                best_score = score
+                best_match = author
+        
+        if best_match:
+            return (best_match, best_score, 'fuzzy_surname')
+        
+        return None
+    
+    def match_journal(self, entity: Dict) -> Optional[Tuple[Dict, float, str]]:
+        """
+        Match Journal entity to Scopus Journal node.
+        
+        Returns:
+            Tuple of (matched_journal, confidence, method) or None
+        """
+        name = self._normalize(entity.get('name', ''))
+        
+        if not name or len(name) < 3:
+            return None
+        
+        # Exact match
+        if name in self.journal_lookup:
+            return (self.journal_lookup[name], 1.0, 'exact_name')
+        
+        # Fuzzy match
+        best_match = None
+        best_score = 0.0
+        
+        for scopus_name, journal in self.journal_lookup.items():
+            score = self._similarity(name, scopus_name)
+            if score > best_score and score >= self.threshold:
+                best_score = score
+                best_match = journal
+        
+        if best_match:
+            return (best_match, best_score, 'fuzzy_name')
+        
+        # Substring match (journal name contains entity or vice versa)
+        for scopus_name, journal in self.journal_lookup.items():
+            if name in scopus_name or scopus_name in name:
+                return (journal, 0.85, 'substring')
+        
+        return None
+    
+    def match_document(self, entity: Dict) -> Optional[Tuple[Dict, float, str, str]]:
+        """
+        Match Document entity to Publication OR Jurisdiction.
+        
+        Returns:
+            Tuple of (matched_node, confidence, method, target_type) or None
+        """
+        name = entity.get('name', '')
+        normalized = self._normalize(name)
+        
+        if not normalized or len(normalized) < 3:
+            return None
+        
+        # 1. Try jurisdiction match first (exact)
+        if normalized in self.jurisdiction_lookup:
+            return (self.jurisdiction_lookup[normalized], 1.0, 'exact_name', 'Jurisdiction')
+        
+        # Check if name contains jurisdiction keywords
+        for jur_key, jur in self.jurisdiction_lookup.items():
+            if jur_key in normalized or normalized in jur_key:
+                return (jur, 0.9, 'contains', 'Jurisdiction')
+        
+        # 2. Try publication title match
+        best_match = None
+        best_score = 0.0
+        
+        for pub_title, pub in self.publication_lookup.items():
+            score = self._similarity(normalized, pub_title)
+            if score > best_score and score >= 0.7:  # Lower threshold for titles
+                best_score = score
+                best_match = pub
+        
+        if best_match and best_score >= 0.7:
+            return (best_match, best_score, 'fuzzy_title', 'Publication')
+        
+        return None
+    
+    def match_all(self, entities: List[Dict]) -> Dict[str, List[Dict]]:
+        """
+        Match all metadata entities.
+        
+        Args:
+            entities: List of metadata entities with 'type' field
+            
+        Returns:
+            Dict with match lists and stats
+        """
+        results = {
+            'author_matches': [],
+            'journal_matches': [],
+            'document_matches': [],
+            'unmatched': [],
+            'stats': defaultdict(int)
+        }
+        
+        for entity in entities:
+            entity_type = entity.get('type', '')
+            entity_id = entity.get('entity_id', '')
+            
+            matched = False
+            
+            if entity_type == 'Author':
+                results['stats']['author_total'] += 1
+                match = self.match_author(entity)
+                if match:
+                    target, confidence, method = match
+                    results['author_matches'].append({
+                        'entity_id': entity_id,
+                        'entity_name': entity.get('name'),
+                        'target_id': target.get('author_id'),
+                        'target_name': target.get('name'),
+                        'confidence': confidence,
+                        'method': method
+                    })
+                    results['stats']['author_matched'] += 1
+                    matched = True
+            
+            elif entity_type == 'Journal':
+                results['stats']['journal_total'] += 1
+                match = self.match_journal(entity)
+                if match:
+                    target, confidence, method = match
+                    results['journal_matches'].append({
+                        'entity_id': entity_id,
+                        'entity_name': entity.get('name'),
+                        'target_id': target.get('journal_id'),
+                        'target_name': target.get('name'),
+                        'confidence': confidence,
+                        'method': method
+                    })
+                    results['stats']['journal_matched'] += 1
+                    matched = True
+            
+            elif entity_type == 'Document':
+                results['stats']['document_total'] += 1
+                match = self.match_document(entity)
+                if match:
+                    target, confidence, method, target_type = match
+                    if target_type == 'Jurisdiction':
+                        target_id = target.get('code')
+                    else:
+                        target_id = target.get('scopus_id') or target.get('publication_id')
+                    
+                    results['document_matches'].append({
+                        'entity_id': entity_id,
+                        'entity_name': entity.get('name'),
+                        'target_id': target_id,
+                        'target_type': target_type,
+                        'target_name': target.get('name') or target.get('title'),
+                        'confidence': confidence,
+                        'method': method
+                    })
+                    results['stats']['document_matched'] += 1
+                    matched = True
+            
+            if not matched:
+                results['unmatched'].append(entity)
+        
+        return results
+    
+    def generate_same_as_relations(self, results: Dict) -> List[Dict]:
+        """
+        Generate SAME_AS relations from matching results.
+        
+        Returns:
+            List of relation dicts for Neo4j import
+        """
+        relations = []
+        
+        # Author matches → SAME_AS Author node
+        for match in results['author_matches']:
+            relations.append({
+                'relation_type': 'SAME_AS',
+                'subject_id': match['entity_id'],
+                'object_id': match['target_id'],
+                'object_type': 'Author',
+                'confidence': match['confidence'],
+                'method': match['method']
+            })
+        
+        # Journal matches → SAME_AS Journal node
+        for match in results['journal_matches']:
+            relations.append({
+                'relation_type': 'SAME_AS',
+                'subject_id': match['entity_id'],
+                'object_id': match['target_id'],
+                'object_type': 'Journal',
+                'confidence': match['confidence'],
+                'method': match['method']
+            })
+        
+        # Document matches → SAME_AS Publication or Jurisdiction
+        for match in results['document_matches']:
+            relations.append({
+                'relation_type': 'SAME_AS',
+                'subject_id': match['entity_id'],
+                'object_id': match['target_id'],
+                'object_type': match['target_type'],
+                'confidence': match['confidence'],
+                'method': match['method']
+            })
+        
+        return relations

@@ -3,11 +3,13 @@
 """
 Phase 2A Enrichment Preflight Tests.
 
-Quick sanity checks for Scopus parsing, citation matching, and jurisdiction linking.
-Run before enrichment pipeline to catch configuration and import errors early.
+Quick sanity checks for Scopus parsing, citation matching, metadata matching,
+and jurisdiction linking. Run before enrichment pipeline to catch configuration
+and import errors early.
 
 Author: Pau Barba i Colomer
 Created: 2025-12-21
+Modified: 2025-12-22
 
 Usage:
     python tests/test_enrichment.py
@@ -34,6 +36,7 @@ def test_imports():
         ('src.enrichment.scopus_parser', 'ReferenceParser'),
         ('src.enrichment.citation_matcher', 'CitationEntityIdentifier'),
         ('src.enrichment.citation_matcher', 'CitationMatcher'),
+        ('src.enrichment.citation_matcher', 'MetadataMatcher'),
         ('src.enrichment.jurisdiction_matcher', 'JurisdictionMatcher'),
         ('src.enrichment.enrichment_processor', 'EnrichmentProcessor'),
     ]
@@ -191,6 +194,89 @@ def test_citation_matcher():
         return False
 
 
+def test_metadata_matcher():
+    """Test MetadataMatcher with mock data."""
+    print("\n=== TEST: MetadataMatcher ===")
+    
+    from src.enrichment.citation_matcher import MetadataMatcher
+    
+    # Mock Scopus target pools
+    authors = [
+        {'author_id': 'author_123', 'name': 'Floridi, Luciano', 'scopus_author_id': '123'},
+        {'author_id': 'author_456', 'name': 'Smith, John', 'scopus_author_id': '456'},
+    ]
+    
+    journals = [
+        {'journal_id': 'journal_abc', 'name': 'Nature Machine Intelligence', 'issn': '1234-5678'},
+        {'journal_id': 'journal_def', 'name': 'AI and Ethics', 'issn': '2345-6789'},
+    ]
+    
+    publications = [
+        {'scopus_id': 'scopus_001', 'title': 'The EU AI Act and Its Implications', 'year': 2024},
+        {'scopus_id': 'scopus_002', 'title': 'Machine Learning Governance', 'year': 2023},
+    ]
+    
+    jurisdictions = [
+        {'code': 'EU', 'name': 'European Union'},
+        {'code': 'US', 'name': 'United States'},
+    ]
+    
+    # Mock metadata entities (mix of real and garbage)
+    entities = [
+        # Should match
+        {'entity_id': 'ent_a1', 'name': 'Floridi, L.', 'type': 'Author'},
+        {'entity_id': 'ent_j1', 'name': 'Nature Machine Intelligence', 'type': 'Journal'},
+        {'entity_id': 'ent_d1', 'name': 'EU AI Act', 'type': 'Document'},
+        # Should NOT match (garbage from broken extraction)
+        {'entity_id': 'ent_a2', 'name': 'Developers', 'type': 'Author'},
+        {'entity_id': 'ent_j2', 'name': 'NIST Framework', 'type': 'Journal'},
+        {'entity_id': 'ent_d2', 'name': 'GPAI models', 'type': 'Document'},
+    ]
+    
+    try:
+        matcher = MetadataMatcher(
+            authors=authors,
+            journals=journals,
+            publications=publications,
+            jurisdictions=jurisdictions,
+            threshold=0.85
+        )
+        
+        results = matcher.match_all(entities)
+        stats = results['stats']
+        
+        # Check match counts
+        print(f"  Authors:   {stats['author_matched']}/{stats['author_total']}")
+        print(f"  Journals:  {stats['journal_matched']}/{stats['journal_total']}")
+        print(f"  Documents: {stats['document_matched']}/{stats['document_total']}")
+        
+        # Verify expected matches
+        assert stats['author_matched'] >= 1, "Expected at least 1 author match (Floridi)"
+        assert stats['journal_matched'] >= 1, "Expected at least 1 journal match"
+        
+        print(f"  ✓ Matched {stats['author_matched']} authors, {stats['journal_matched']} journals, {stats['document_matched']} documents")
+        
+        # Test relation generation
+        relations = matcher.generate_same_as_relations(results)
+        assert len(relations) > 0, "Expected SAME_AS relations"
+        
+        print(f"  ✓ Generated {len(relations)} SAME_AS relations")
+        
+        # Verify garbage was filtered
+        unmatched_names = [e['name'] for e in results['unmatched']]
+        assert 'Developers' in unmatched_names, "Expected 'Developers' to be unmatched"
+        
+        print(f"  ✓ Garbage entities correctly filtered ({len(results['unmatched'])} unmatched)")
+        
+        return True
+        
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_jurisdiction_matcher():
     """Test JurisdictionMatcher with mock data."""
     print("\n=== TEST: JurisdictionMatcher ===")
@@ -281,6 +367,7 @@ def run_all_tests():
     results['id_generation'] = test_id_generation()
     results['scopus_parser'] = test_scopus_parser()
     results['citation_matcher'] = test_citation_matcher()
+    results['metadata_matcher'] = test_metadata_matcher()
     results['jurisdiction_matcher'] = test_jurisdiction_matcher()
     
     # Summary
