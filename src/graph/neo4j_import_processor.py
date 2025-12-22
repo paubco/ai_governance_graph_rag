@@ -245,23 +245,17 @@ class Neo4jImportProcessor:
     
     def prepare_entities(self) -> List[Dict]:
         """Load entity nodes (strip embeddings for Neo4j)."""
-        entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
-        
-        # Handle dict structure if present
-        if isinstance(entities_data, dict):
-            entities_list = list(entities_data.values())
-        else:
-            entities_list = entities_data
+        entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
         
         entities = []
-        for entity in entities_list:
+        for entity in entities_data:
             # Strip embedding - not needed in Neo4j
             entities.append({
                 'entity_id': entity['entity_id'],
                 'name': entity.get('name', ''),
                 'type': entity.get('type', ''),
                 'description': entity.get('description', ''),
-                'frequency': entity.get('frequency', 0)
+                'frequency': entity.get('frequency', len(entity.get('chunk_ids', [])))
             })
         
         return entities
@@ -399,8 +393,8 @@ class Neo4jImportProcessor:
         return relations
     
     def prepare_extracted_from(self) -> List[Dict]:
-        """Prepare EXTRACTED_FROM relationships from normalized entities."""
-        entities_data = self.load_json('interim/entities/normalized_entities_with_ids.json')
+        """Prepare EXTRACTED_FROM relationships from entities."""
+        entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
         
         relations = []
         for entity in entities_data:
@@ -414,14 +408,14 @@ class Neo4jImportProcessor:
         return relations
     
     def prepare_relations(self) -> List[Dict]:
-        """Load normalized relations with IDs."""
-        relations_data = self.load_json('interim/relations/relations_normalized.json')
+        """Load semantic relations with IDs."""
+        relations_data = self.load_jsonl('processed/relations/relations_semantic.jsonl')
         
         relations = []
         for rel in relations_data:
             relations.append({
                 'subject_id': rel['subject_id'],
-                'predicate': rel['predicate'],
+                'predicate': rel.get('predicate', rel.get('relation_type', '')),
                 'object_id': rel['object_id'],
                 'chunk_ids': rel.get('chunk_ids', []),
                 'confidence': rel.get('confidence', 1.0)
