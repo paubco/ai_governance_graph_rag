@@ -462,7 +462,7 @@ class EnrichmentProcessor:
         logger.info("=" * 70)
         
         # Load paper_mapping.json (has scopus_metadata per paper)
-        paper_mapping_path = self.data_dir / 'raw' / 'academic' / 'scopus_2023' / 'paper_mapping.json'
+        paper_mapping_path = PROJECT_ROOT / 'data' / 'raw' / 'academic' / 'scopus_2023' / 'paper_mapping.json'
         if paper_mapping_path.exists():
             with open(paper_mapping_path, 'r', encoding='utf-8') as f:
                 paper_mapping = json.load(f)
@@ -472,7 +472,7 @@ class EnrichmentProcessor:
             paper_mapping = {}
         
         # Load paper references from interim/preprocessed
-        paper_references_path = self.data_dir / 'interim' / 'preprocessed' / 'paper_references.json'
+        paper_references_path = PROJECT_ROOT / 'data' / 'interim' / 'preprocessed' / 'paper_references.json'
         
         if paper_references_path.exists():
             with open(paper_references_path, 'r', encoding='utf-8') as f:
