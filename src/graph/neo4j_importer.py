@@ -1,23 +1,35 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neo4j Importer for GraphRAG Knowledge Graph.
+Neo4j Importer for GraphRAG Knowledge Graph
 
 Core Neo4j import functionality with batched UNWIND pattern.
-Handles connection management, constraint creation, and all node/relationship
-imports using efficient batch processing.
+Handles connection management, constraint creation, and all node/relationship imports
+using efficient batch processing with progress tracking.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-21
+Import Categories:
+1. Nodes:
+   - Jurisdictions (regulatory sources)
+   - Publications (L1 source papers, L2 cited papers)
+   - Authors and Journals
+   - Chunks (text segments)
+   - Entities (normalized with IDs)
+2. Relationships:
+   - Provenance: CONTAINS, EXTRACTED_FROM
+   - Metadata: AUTHORED_BY, PUBLISHED_IN
+   - Semantic: RELATION (entity-entity)
+   - Enrichment: MATCHED_TO, CITES, SAME_AS
 
-References:
-    - See ARCHITECTURE.md § 3.2.2 for Phase 2B context
-    - See PHASE_2B_DESIGN.md for Neo4j schema
+Usage:
+    from src.graph.neo4j_importer import Neo4jImporter
+    importer = Neo4jImporter(uri, user, password)
+    importer.import_jurisdictions(session, data)
 """
 
 # Standard library
+import json
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 import sys
 
 # Project root
@@ -29,15 +41,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from neo4j import GraphDatabase, Session
 from tqdm import tqdm
 
-# Project imports
-from src.utils.logger import get_logger
+# Local
+from src.utils.logger import setup_logging, get_logger
 
-# Config - import with fallback
-try:
-    from config.extraction_config import NEO4J_CONFIG
-except ImportError:
-    NEO4J_CONFIG = {'batch_size': 500}
-
+# Setup logging
+setup_logging()
 logger = get_logger(__name__)
 
 
@@ -46,14 +54,9 @@ class Neo4jImporter:
     Core Neo4j import functionality with batched UNWIND pattern.
     
     Handles connection, constraints, and all node/relationship imports.
-    
-    Example:
-        importer = Neo4jImporter(uri, user, password)
-        with importer.driver.session() as session:
-            importer.import_entities(session, entities)
     """
     
-    def __init__(self, uri: str, user: str, password: str, config: Dict = None):
+    def __init__(self, uri: str, user: str, password: str):
         """
         Initialize Neo4j connection.
         
@@ -61,14 +64,8 @@ class Neo4jImporter:
             uri: Neo4j connection URI (e.g., neo4j+s://xxx.databases.neo4j.io)
             user: Username (typically 'neo4j')
             password: Database password
-            config: Optional config override (defaults to NEO4J_CONFIG)
         """
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
-        
-        # Load config
-        cfg = config or NEO4J_CONFIG
-        self.batch_size = cfg.get('batch_size', 500)
-        
         logger.info(f"Connected to Neo4j at {uri}")
     
     def close(self):
@@ -96,7 +93,7 @@ class Neo4jImporter:
         """
         Create unique constraints and performance indexes.
         
-        Constraints auto-create indexes for constrained properties.
+        Constraints auto-create indexes for the constrained properties.
         """
         logger.info("Creating constraints and indexes...")
         
@@ -115,6 +112,7 @@ class Neo4jImporter:
             "CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)",
             "CREATE INDEX chunk_doc_type IF NOT EXISTS FOR (c:Chunk) ON (c.doc_type)",
             "CREATE INDEX relation_predicate IF NOT EXISTS FOR ()-[r:RELATION]-() ON (r.predicate)",
+            "CREATE INDEX publication_pubid IF NOT EXISTS FOR (p:Publication) ON (p.publication_id)",
         ]
         
         for constraint in constraints:
@@ -128,7 +126,7 @@ class Neo4jImporter:
         logger.info(f"Created {len(constraints)} constraints and {len(indexes)} indexes")
     
     def batch_import(self, session: Session, query: str, data: List[Dict], 
-                     batch_size: int = None, desc: str = "Importing") -> int:
+                     batch_size: int = 500, desc: str = "Importing") -> int:
         """
         Import data in batches using UNWIND pattern.
         
@@ -136,13 +134,12 @@ class Neo4jImporter:
             session: Neo4j session
             query: Cypher query with UNWIND $batch
             data: List of dicts to import
-            batch_size: Number of items per batch (default: from config)
+            batch_size: Number of items per batch
             desc: Description for progress bar
             
         Returns:
             Total number of items imported
         """
-        batch_size = batch_size or self.batch_size
         total = len(data)
         if total == 0:
             logger.warning(f"{desc}: No data to import")
@@ -157,9 +154,9 @@ class Neo4jImporter:
         logger.info(f"{desc}: Imported {total} items")
         return total
     
-    # =========================================================================
+    # ========================================================================
     # NODE IMPORT FUNCTIONS
-    # =========================================================================
+    # ========================================================================
     
     def import_jurisdictions(self, session: Session, jurisdictions: List[Dict]) -> int:
         """
@@ -167,7 +164,10 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            jurisdictions: List of dicts with code, name, url, scraped_date
+            jurisdictions: List of jurisdiction dicts with code, name, url, scraped_date
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS j
@@ -186,12 +186,16 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            publications: List of dicts with scopus_id, title, year, doi, cited_by
+            publications: List of publication dicts with scopus_id, publication_id, title, year, doi, cited_by
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS p
         CREATE (n:Publication {
             scopus_id: p.scopus_id,
+            publication_id: p.publication_id,
             title: p.title,
             year: p.year,
             doi: p.doi,
@@ -206,7 +210,10 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            authors: List of dicts with author_id, name, scopus_author_id
+            authors: List of author dicts with author_id, name, scopus_author_id
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS a
@@ -224,7 +231,10 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            journals: List of dicts with journal_id, name, issn
+            journals: List of journal dicts with journal_id, name, issn
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS j
@@ -242,8 +252,11 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            chunks: List of dicts with chunk_id, text, doc_type, jurisdiction,
+            chunks: List of chunk dicts with chunk_id, text, doc_type, jurisdiction, 
                    scopus_id, section_title
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS c
@@ -260,14 +273,15 @@ class Neo4jImporter:
     
     def import_entities(self, session: Session, entities: List[Dict]) -> int:
         """
-        Import Entity nodes (WITHOUT embeddings, WITH aliases).
-        
-        v1.1: Added aliases property as string array.
+        Import Entity nodes (WITHOUT embeddings).
         
         Args:
             session: Neo4j session
-            entities: List of dicts with entity_id, name, type, description,
-                     frequency, aliases (list of strings)
+            entities: List of entity dicts with entity_id, name, type, description, frequency
+                     (embeddings should be stripped before calling)
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS e
@@ -276,19 +290,22 @@ class Neo4jImporter:
             name: e.name,
             type: e.type,
             description: e.description,
-            frequency: e.frequency,
-            aliases: e.aliases
+            frequency: e.frequency
         })
         """
         return self.batch_import(session, query, entities, desc="Entities")
     
     def import_l2_publications(self, session: Session, l2_pubs: List[Dict]) -> int:
         """
-        Import L2Publication nodes (cited papers).
+        Import L2Publication nodes (citation entities).
         
         Args:
             session: Neo4j session
-            l2_pubs: List of dicts with publication_id, title, author, year, journal
+            l2_pubs: List of L2 publication dicts with publication_id, title, author, 
+                    year, journal
+            
+        Returns:
+            Number of nodes imported
         """
         query = """
         UNWIND $batch AS p
@@ -302,9 +319,9 @@ class Neo4jImporter:
         """
         return self.batch_import(session, query, l2_pubs, desc="L2 Publications")
     
-    # =========================================================================
+    # ========================================================================
     # RELATIONSHIP IMPORT FUNCTIONS
-    # =========================================================================
+    # ========================================================================
     
     def import_contains_jurisdiction(self, session: Session, relations: List[Dict]) -> int:
         """
@@ -313,6 +330,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with jurisdiction_code, chunk_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -329,6 +349,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with scopus_id, chunk_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -345,6 +368,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with scopus_id, author_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -361,6 +387,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with scopus_id, journal_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -377,6 +406,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with entity_id, chunk_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -392,8 +424,11 @@ class Neo4jImporter:
         
         Args:
             session: Neo4j session
-            relations: List of dicts with subject_id, predicate, object_id,
+            relations: List of dicts with subject_id, predicate, object_id, 
                       chunk_ids, confidence
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -407,112 +442,6 @@ class Neo4jImporter:
         """
         return self.batch_import(session, query, relations, desc="RELATION")
     
-    def import_part_of(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import PART_OF relationships: Entity -> Entity (alias clusters).
-        
-        v1.1 addition for entity disambiguation results.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with subject_id, object_id (from JSONL)
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (s:Entity {entity_id: rel.subject_id})
-        MATCH (t:Entity {entity_id: rel.object_id})
-        CREATE (s)-[:PART_OF]->(t)
-        """
-        return self.batch_import(session, query, relations, desc="PART_OF")
-    
-    def import_same_as_entity(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import SAME_AS relationships: Entity -> Entity (disambiguation).
-        
-        v1.1 addition for entity disambiguation results.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with subject_id, object_id (from JSONL)
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (s:Entity {entity_id: rel.subject_id})
-        MATCH (t:Entity {entity_id: rel.object_id})
-        CREATE (s)-[:SAME_AS]->(t)
-        """
-        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Entity)")
-    
-    def import_same_as_jurisdiction(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import SAME_AS relationships: Entity -> Jurisdiction.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with entity_id, jurisdiction_code
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (e:Entity {entity_id: rel.entity_id})
-        MATCH (j:Jurisdiction {code: rel.jurisdiction_code})
-        CREATE (e)-[:SAME_AS]->(j)
-        """
-        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Jurisdiction)")
-    
-    def import_same_as_author(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import SAME_AS relationships: Entity -> Author.
-        
-        From metadata matching: Author entities matched to Scopus Author nodes.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with subject_id (entity), object_id (author)
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (e:Entity {entity_id: rel.subject_id})
-        MATCH (a:Author {author_id: rel.object_id})
-        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(a)
-        """
-        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Author)")
-    
-    def import_same_as_journal(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import SAME_AS relationships: Entity -> Journal.
-        
-        From metadata matching: Journal entities matched to Scopus Journal nodes.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with subject_id (entity), object_id (journal)
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (e:Entity {entity_id: rel.subject_id})
-        MATCH (j:Journal {journal_id: rel.object_id})
-        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(j)
-        """
-        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Journal)")
-    
-    def import_same_as_publication(self, session: Session, relations: List[Dict]) -> int:
-        """
-        Import SAME_AS relationships: Entity -> Publication (L1).
-        
-        From metadata matching: Document entities matched to L1 Publications.
-        
-        Args:
-            session: Neo4j session
-            relations: List of dicts with subject_id (entity), object_id (publication)
-        """
-        query = """
-        UNWIND $batch AS rel
-        MATCH (e:Entity {entity_id: rel.subject_id})
-        MATCH (p:L1Publication {scopus_id: rel.object_id})
-        CREATE (e)-[:SAME_AS {confidence: rel.confidence, method: rel.method}]->(p)
-        """
-        return self.batch_import(session, query, relations, desc="SAME_AS (Entity→Publication)")
-    
     def import_matched_to(self, session: Session, relations: List[Dict]) -> int:
         """
         Import MATCHED_TO relationships: Entity -> L2Publication.
@@ -520,6 +449,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with entity_id, publication_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -532,18 +464,28 @@ class Neo4jImporter:
     def import_cites_l2(self, session: Session, relations: List[Dict]) -> int:
         """
         Import CITES relationships: Publication -> L2Publication.
+        DEPRECATED: Use import_cites instead.
+        """
+        return self.import_cites(session, relations)
+    
+    def import_cites(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import CITES relationships: Publication -> L2Publication.
         
         Args:
             session: Neo4j session
-            relations: List of dicts with scopus_id, publication_id
+            relations: List of dicts with source_id (scopus_id), target_id (pub_l2_xxx)
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
-        MATCH (p:Publication {scopus_id: rel.scopus_id})
-        MATCH (l2:L2Publication {publication_id: rel.publication_id})
+        MATCH (p:Publication {scopus_id: rel.source_id})
+        MATCH (l2:L2Publication {publication_id: rel.target_id})
         CREATE (p)-[:CITES]->(l2)
         """
-        return self.batch_import(session, query, relations, desc="CITES (L1→L2)")
+        return self.batch_import(session, query, relations, desc="CITES")
     
     def import_cites_l1(self, session: Session, relations: List[Dict]) -> int:
         """
@@ -552,6 +494,9 @@ class Neo4jImporter:
         Args:
             session: Neo4j session
             relations: List of dicts with source_scopus_id, target_scopus_id
+            
+        Returns:
+            Number of relationships imported
         """
         query = """
         UNWIND $batch AS rel
@@ -560,3 +505,123 @@ class Neo4jImporter:
         CREATE (p1)-[:CITES]->(p2)
         """
         return self.batch_import(session, query, relations, desc="CITES (L1→L1)")
+    
+    def import_same_as(self, session: Session, relations: List[Dict]) -> int:
+        """DEPRECATED: Use import_same_as_jurisdiction instead."""
+        return self.import_same_as_jurisdiction(session, relations)
+    
+    def import_same_as_jurisdiction(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Jurisdiction.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with entity_id, jurisdiction_code
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.entity_id})
+        MATCH (j:Jurisdiction {code: rel.jurisdiction_code})
+        CREATE (e)-[:SAME_AS]->(j)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Jurisdiction)")
+    
+    def import_same_as_author(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Author.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with entity_id, author_id
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.entity_id})
+        MATCH (a:Author {author_id: rel.author_id})
+        CREATE (e)-[:SAME_AS]->(a)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Author)")
+    
+    def import_same_as_journal(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import SAME_AS relationships: Entity -> Journal.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with entity_id, journal_id
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.entity_id})
+        MATCH (j:Journal {journal_id: rel.journal_id})
+        CREATE (e)-[:SAME_AS]->(j)
+        """
+        return self.batch_import(session, query, relations, desc="SAME_AS (Journal)")
+    
+    def import_authored(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import AUTHORED relationships: Entity -> L2Publication.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with entity_id, publication_id
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (e:Entity {entity_id: rel.entity_id})
+        MATCH (p:L2Publication {publication_id: rel.publication_id})
+        CREATE (e)-[:AUTHORED]->(p)
+        """
+        return self.batch_import(session, query, relations, desc="AUTHORED")
+    
+    def import_published_in_enrichment(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import PUBLISHED_IN relationships from enrichment: Publication -> Journal.
+        Uses publication_id (pub_l1_xxx) instead of scopus_id.
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with publication_id, journal_id
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (p:Publication) WHERE p.publication_id = rel.publication_id OR p.scopus_id = rel.publication_id
+        MATCH (j:Journal {journal_id: rel.journal_id})
+        MERGE (p)-[:PUBLISHED_IN]->(j)
+        """
+        return self.batch_import(session, query, relations, desc="PUBLISHED_IN (enrichment)")
+    
+    def import_contains_enrichment(self, session: Session, relations: List[Dict]) -> int:
+        """
+        Import CONTAINS relationships from enrichment: Publication -> Chunk.
+        Uses publication_id (pub_l1_xxx).
+        
+        Args:
+            session: Neo4j session
+            relations: List of dicts with publication_id, chunk_id
+            
+        Returns:
+            Number of relationships imported
+        """
+        query = """
+        UNWIND $batch AS rel
+        MATCH (p:Publication) WHERE p.publication_id = rel.publication_id OR p.scopus_id = rel.publication_id
+        MATCH (c:Chunk {chunk_id: rel.chunk_id})
+        MERGE (p)-[:CONTAINS]->(c)
+        """
+        return self.batch_import(session, query, relations, desc="CONTAINS (enrichment)")
