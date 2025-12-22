@@ -471,11 +471,8 @@ class EnrichmentProcessor:
             logger.warning(f"No paper_mapping.json found at {paper_mapping_path}")
             paper_mapping = {}
         
-        # Load paper references
-        paper_references_path = self.data_dir / 'processed' / 'papers' / 'paper_references.json'
-        if not paper_references_path.exists():
-            # Try alternate location
-            paper_references_path = self.data_dir / 'raw' / 'academic' / 'scopus_2023' / 'paper_references.json'
+        # Load paper references from interim/preprocessed
+        paper_references_path = self.data_dir / 'interim' / 'preprocessed' / 'paper_references.json'
         
         if paper_references_path.exists():
             with open(paper_references_path, 'r', encoding='utf-8') as f:
