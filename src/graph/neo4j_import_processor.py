@@ -468,14 +468,27 @@ class Neo4jImportProcessor:
     
     def prepare_relations(self) -> List[Dict]:
         """Load semantic relations with IDs."""
-        relations_data = self.load_jsonl('processed/relations/relations_semantic.jsonl')
+        # Use validated relations if available
+        try:
+            relations_data = self.load_jsonl('processed/relations/relations_semantic_validated.jsonl')
+            logger.info("Using validated semantic relations")
+        except FileNotFoundError:
+            relations_data = self.load_jsonl('processed/relations/relations_semantic.jsonl')
         
         relations = []
         for rel in relations_data:
+            # Standard format: subject_id, predicate, object_id
+            subject_id = rel.get('subject_id')
+            object_id = rel.get('object_id')
+            predicate = rel.get('predicate')
+            
+            if not subject_id or not object_id or not predicate:
+                continue  # Skip malformed relations
+                
             relations.append({
-                'subject_id': rel['subject_id'],
-                'predicate': rel.get('predicate', rel.get('relation_type', '')),
-                'object_id': rel['object_id'],
+                'subject_id': subject_id,
+                'predicate': predicate,
+                'object_id': object_id,
                 'chunk_ids': rel.get('chunk_ids', []),
                 'confidence': rel.get('confidence', 1.0)
             })
