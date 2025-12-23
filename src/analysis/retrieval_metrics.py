@@ -260,7 +260,7 @@ def compute_graph_utilization_metrics(
         jurisdictions_covered = list(jurisdictions)
     
     return GraphUtilizationMetrics(
-        entities_in_subgraph=len(subgraph.entities) if subgraph.entities else 0,
+        entities_in_subgraph=len(subgraph.entity_ids) if subgraph.entity_ids else 0,
         relations_in_subgraph=len(subgraph.relations) if subgraph.relations else 0,
         relation_types=relation_types,
         jurisdictions_covered=jurisdictions_covered
@@ -348,7 +348,7 @@ def compute_coverage_metrics(
         CoverageMetrics
     """
     # Entities in subgraph (what was available)
-    entities_in_subgraph = len(subgraph.entities) if subgraph.entities else 0
+    entities_in_subgraph = len(subgraph.entity_ids) if subgraph.entity_ids else 0
     relations_in_subgraph = len(subgraph.relations) if subgraph.relations else 0
     
     # Build entity name lookup from resolved_entities
@@ -359,8 +359,8 @@ def compute_coverage_metrics(
     
     # Extract entity names from subgraph for matching
     subgraph_entity_names = set()
-    if subgraph.entities:
-        for entity_id in subgraph.entities:
+    if subgraph.entity_ids:
+        for entity_id in subgraph.entity_ids:
             if entity_id in entity_names_map:
                 name = entity_names_map[entity_id]
                 subgraph_entity_names.add(name.lower())

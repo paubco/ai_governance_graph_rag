@@ -327,7 +327,7 @@ class TestGraphExpander:
                     subgraph = expander.expand(entities)
                     
                     assert isinstance(subgraph, Subgraph)
-                    assert isinstance(subgraph.entities, list)
+                    assert isinstance(subgraph.entity_ids, list)
                     assert isinstance(subgraph.relations, list)
                 finally:
                     Path(entity_map_path).unlink()
@@ -365,7 +365,7 @@ class TestChunkRetriever:
                         chunk_id_map_path=chunk_map_path
                     )
                     
-                    subgraph = Subgraph(entities=['ent_001'], relations=[])
+                    subgraph = Subgraph(entity_ids=['ent_001'], relations=[])
                     query_emb = np.random.rand(1024).astype('float32')
                     
                     graph_chunks, semantic_chunks = retriever.retrieve_dual(subgraph, query_emb)
@@ -409,7 +409,7 @@ class TestResultRanker:
             )
         ]
         
-        subgraph = Subgraph(entities=['ent_001'], relations=[])
+        subgraph = Subgraph(entity_ids=['ent_001'], relations=[])
         filters = QueryFilters()
         
         result = ranker.rank(graph_chunks, semantic_chunks, subgraph, filters, "test query")
@@ -558,7 +558,7 @@ class TestRealIntegration:
             result = processor.retrieve(query)
             
             print(f"   Chunks retrieved: {len(result.chunks)}")
-            print(f"   Entities in subgraph: {len(result.subgraph.entities) if result.subgraph else 0}")
+            print(f"   Entities in subgraph: {len(result.subgraph.entity_ids) if result.subgraph else 0}")
             print(f"   Relations in subgraph: {len(result.subgraph.relations) if result.subgraph else 0}")
             
             if result.chunks:

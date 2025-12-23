@@ -232,7 +232,7 @@ class TestRankingWeights:
         ]
         
         subgraph = Subgraph(
-            entities=['ent_1', 'ent_2'],
+            entity_ids=['ent_1', 'ent_2'],
             relations=[
                 Relation(
                     subject_id='ent_1',

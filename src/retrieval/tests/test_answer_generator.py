@@ -6,7 +6,7 @@ Tests prompt formatting with token budgeting, mock API calls, cost estimation,
 and error handling for the answer generator component.
 
 Example:
-    pytest tests/retrieval/test_answer_generator.py -v
+    pytest src/retrieval/tests/test_answer_generator.py -v
 """
 
 # Standard library
@@ -48,7 +48,7 @@ def sample_retrieval_result():
     
     # Subgraph with relations
     subgraph = Subgraph(
-        entities=['ent_001', 'ent_002', 'ent_003'],
+        entity_ids=['ent_001', 'ent_002', 'ent_003'],
         relations=[
             Relation(
                 subject_id='ent_001',
@@ -267,7 +267,7 @@ def test_empty_subgraph(mock_api_key):
     """Test handling of empty subgraph."""
     generator = AnswerGenerator(api_key=mock_api_key)
     
-    empty_subgraph = Subgraph(entities=[], relations=[])
+    empty_subgraph = Subgraph(entity_ids=[], relations=[])
     
     graph_str = generator._format_graph_structure(empty_subgraph, max_tokens=500)
     assert "No relations" in graph_str
