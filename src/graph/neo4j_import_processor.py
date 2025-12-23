@@ -229,15 +229,34 @@ class Neo4jImportProcessor:
         for chunk in chunks_data:
             # Handle both chunk_id and chunk_ids formats
             chunk_id = chunk.get('chunk_id') or (chunk.get('chunk_ids', [''])[0])
-            doc_id = chunk.get('document_id') or (chunk.get('document_ids', [''])[0])
+            
+            # Handle both document_id and document_ids formats
+            # document_ids can have multiple jurisdictions (EU harmonized content)
+            doc_ids = chunk.get('document_ids', [])
+            if not doc_ids:
+                doc_id = chunk.get('document_id', '')
+                doc_ids = [doc_id] if doc_id else []
             
             metadata = chunk.get('metadata', {})
+            
+            # Extract jurisdiction codes from document_ids (e.g., "reg_AT" -> "AT")
+            jurisdiction_codes = []
+            for doc_id in doc_ids:
+                if doc_id.startswith('reg_'):
+                    code = doc_id.replace('reg_', '')
+                    jurisdiction_codes.append(code)
+            
+            # Also check metadata for country_code (fallback)
+            if not jurisdiction_codes and metadata.get('country_code'):
+                jurisdiction_codes = [metadata['country_code']]
+            
             chunks.append({
                 'chunk_id': chunk_id,
                 'text': chunk.get('text', ''),
                 'doc_type': metadata.get('source_type', ''),
-                'jurisdiction': metadata.get('country_code', ''),
-                'scopus_id': doc_id,
+                'jurisdiction_codes': jurisdiction_codes,  # All jurisdictions (for CONTAINS)
+                'jurisdiction': jurisdiction_codes[0] if jurisdiction_codes else '',  # Primary (backward compat)
+                'scopus_id': doc_ids[0] if doc_ids else '',
                 'section_title': chunk.get('section_header', metadata.get('section_header', ''))
             })
         
@@ -282,16 +301,30 @@ class Neo4jImportProcessor:
         return l2_pubs
     
     def prepare_contains_jurisdiction(self, chunks: List[Dict]) -> List[Dict]:
-        """Prepare CONTAINS relationships: Jurisdiction -> Chunk."""
+        """Prepare CONTAINS relationships: Jurisdiction -> Chunk.
+        
+        Creates multiple CONTAINS relations for chunks that belong to multiple
+        jurisdictions (e.g., EU harmonized content shared across member states).
+        """
         relations = []
         
         for chunk in chunks:
-            if chunk['doc_type'] == 'regulation' and chunk['jurisdiction']:
-                relations.append({
-                    'jurisdiction_code': chunk['jurisdiction'],
-                    'chunk_id': chunk['chunk_id']
-                })
+            if chunk['doc_type'] == 'regulation':
+                # Get all jurisdiction codes (handles multi-jurisdiction chunks)
+                jurisdiction_codes = chunk.get('jurisdiction_codes', [])
+                
+                # Fallback to single jurisdiction field
+                if not jurisdiction_codes and chunk.get('jurisdiction'):
+                    jurisdiction_codes = [chunk['jurisdiction']]
+                
+                for jur_code in jurisdiction_codes:
+                    if jur_code:
+                        relations.append({
+                            'jurisdiction_code': jur_code,
+                            'chunk_id': chunk['chunk_id']
+                        })
         
+        logger.info(f"Prepared {len(relations)} CONTAINS (Jurisdiction→Chunk) relations")
         return relations
     
     def load_paper_scopus_mapping(self) -> Dict[str, str]:
