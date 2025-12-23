@@ -445,7 +445,7 @@ def real_data_available():
 def real_embedder():
     """Load real BGE-M3 embedder."""
     try:
-        from src.utils.embeddings import EmbeddingModel
+        from src.utils.embedder import BGEEmbedder as EmbeddingModel
         embedder = EmbeddingModel()
         
         test_emb = embedder.embed_single("test")
