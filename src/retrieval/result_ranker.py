@@ -77,7 +77,7 @@ class ResultRanker:
         self.debug_info = [] if debug else None
         
         relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
-        total_entities = len(subgraph.entities) if subgraph.entities else 0
+        total_entities = len(subgraph.entity_ids) if subgraph.entity_ids else 0
         
         scored_chunks = {}
         
