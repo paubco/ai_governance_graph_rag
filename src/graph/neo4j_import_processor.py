@@ -263,11 +263,19 @@ class Neo4jImportProcessor:
         return chunks
     
     def prepare_entities(self) -> List[Dict]:
-        """Load entity nodes (strip embeddings for Neo4j)."""
-        entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+        """Load entity nodes from both semantic and metadata tracks."""
+        # Load semantic entities (concepts, regulations, etc.)
+        entities_semantic = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+        
+        # Load metadata entities (citations, authors, journals extracted from text)
+        try:
+            entities_metadata = self.load_jsonl('processed/entities/entities_metadata.jsonl')
+        except FileNotFoundError:
+            entities_metadata = []
+            logger.warning("Metadata entities file not found - loading semantic only")
         
         entities = []
-        for entity in entities_data:
+        for entity in list(entities_semantic) + list(entities_metadata):
             # Strip embedding - not needed in Neo4j
             entities.append({
                 'entity_id': entity['entity_id'],
@@ -277,6 +285,7 @@ class Neo4jImportProcessor:
                 'frequency': entity.get('frequency', len(entity.get('chunk_ids', [])))
             })
         
+        logger.info(f"Loaded {len(entities)} entities (semantic + metadata)")
         return entities
     
     def prepare_l2_publications(self) -> List[Dict]:
@@ -426,11 +435,16 @@ class Neo4jImportProcessor:
         return relations
     
     def prepare_extracted_from(self) -> List[Dict]:
-        """Prepare EXTRACTED_FROM relationships from entities."""
-        entities_data = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+        """Prepare EXTRACTED_FROM relationships from both semantic and metadata entities."""
+        entities_semantic = self.load_jsonl('processed/entities/entities_semantic.jsonl')
+        
+        try:
+            entities_metadata = self.load_jsonl('processed/entities/entities_metadata.jsonl')
+        except FileNotFoundError:
+            entities_metadata = []
         
         relations = []
-        for entity in entities_data:
+        for entity in list(entities_semantic) + list(entities_metadata):
             # Each entity has chunk_ids list
             for chunk_id in entity.get('chunk_ids', []):
                 relations.append({
