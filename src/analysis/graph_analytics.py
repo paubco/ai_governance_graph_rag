@@ -444,36 +444,17 @@ class GraphAnalyzer:
         Returns raw counts for clarity.
         """
         query = """
-        // Count cross-layer relations directly
-        MATCH ()-[r:EXTRACTED_FROM]->() 
-        WITH count(r) as extracted_from
-        
-        MATCH ()-[r:SAME_AS]->(:Jurisdiction)
-        WITH extracted_from, count(r) as same_as_jurisdiction
-        
-        MATCH ()-[r:SAME_AS]->(:Author)
-        WITH extracted_from, same_as_jurisdiction, count(r) as same_as_author
-        
-        MATCH ()-[r:SAME_AS]->(:Journal)
-        WITH extracted_from, same_as_jurisdiction, same_as_author, count(r) as same_as_journal
-        
-        MATCH ()-[r:MATCHED_TO]->()
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, count(r) as matched_to
-        
-        MATCH ()-[r:CITES]->()
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, count(r) as cites
-        
-        MATCH ()-[r:AUTHORED_BY]->()
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, count(r) as authored_by
-        
-        MATCH ()-[r:PUBLISHED_IN]->()
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, count(r) as published_in
-        
-        MATCH (j:Jurisdiction)-[r:CONTAINS]->(:Chunk)
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, count(r) as jur_contains
-        
-        MATCH (p:Publication)-[r:CONTAINS]->(:Chunk)
-        WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, jur_contains, count(r) as pub_contains
+        // Count each cross-layer relation type independently
+        CALL { MATCH ()-[r:EXTRACTED_FROM]->() RETURN count(r) as c } WITH c as extracted_from
+        CALL { MATCH ()-[r:SAME_AS]->(:Jurisdiction) RETURN count(r) as c } WITH extracted_from, c as same_as_jurisdiction
+        CALL { MATCH ()-[r:SAME_AS]->(:Author) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, c as same_as_author
+        CALL { MATCH ()-[r:SAME_AS]->(:Journal) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, c as same_as_journal
+        CALL { MATCH ()-[r:MATCHED_TO]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, c as matched_to
+        CALL { MATCH ()-[r:CITES]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, c as cites
+        CALL { MATCH ()-[r:AUTHORED_BY]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, c as authored_by
+        CALL { MATCH ()-[r:PUBLISHED_IN]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, c as published_in
+        CALL { MATCH (:Jurisdiction)-[r:CONTAINS]->(:Chunk) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, c as jur_contains
+        CALL { MATCH (:Publication)-[r:CONTAINS]->(:Chunk) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, jur_contains, c as pub_contains
         
         RETURN 
             extracted_from,
@@ -1207,7 +1188,6 @@ class GraphAnalyzer:
         print(f"\n{'━'*80}")
         print("  4. CROSS-LAYER INTEGRATION  (Semantic ↔ Metadata connections)")
         print(f"{'━'*80}")
-        print("     Measures how well semantic entities connect to structured metadata.")
         
         integration = results.get('layer_integration', {})
         print(f"\n  4.1 Cross-Layer Relations (counts)")
