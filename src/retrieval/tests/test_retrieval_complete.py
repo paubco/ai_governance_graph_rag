@@ -6,8 +6,8 @@ Tests Phase 3.3.1 (Query Understanding) and Phase 3.3.2 (Context Retrieval)
 with both mock tests and real integration tests.
 
 Example:
-    pytest tests/retrieval/test_retrieval_complete.py -v -m "not integration"
-    pytest tests/retrieval/test_retrieval_complete.py -v -m integration
+    pytest src/retrieval/tests/test_retrieval_complete.py -v -m "not integration"
+    pytest src/retrieval/tests/test_retrieval_complete.py -v -m integration
 """
 
 # Standard library
@@ -18,8 +18,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
-# Project root
-project_root = Path(__file__).resolve().parent.parent.parent
+# Project root (src/retrieval/tests/test_*.py -> project root)
+project_root = Path(__file__).resolve().parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 

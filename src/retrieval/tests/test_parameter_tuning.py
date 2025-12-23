@@ -6,7 +6,7 @@ Tests different parameter combinations to evaluate sensitivity for entity resolu
 ranking bonuses, and FAISS top-k settings with comparative analysis output.
 
 Example:
-    pytest test_parameter_tuning.py -v -s
+    pytest src/retrieval/tests/test_parameter_tuning.py -v -s
 """
 
 # Standard library
