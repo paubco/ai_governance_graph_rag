@@ -134,8 +134,6 @@ Answer YES or NO:"""
 # ============================================================================
 # PHASE 1D: RELATION EXTRACTION (v1.2 - ID-constrained)
 # ============================================================================
-
-# Track 1: Semantic entities - OpenIE with multi-chunk context
 RELATION_EXTRACTION_PROMPT = """Extract relationships for the target entity.
 
 TARGET: {entity_id}: {entity_name} ({entity_type})
@@ -150,9 +148,9 @@ CHUNKS:
 RULES:
 - Subject MUST be target: {entity_id}
 - Object MUST be an ID from detected entities
-- Predicates: lowercase_underscore (regulates, applies_to, requires, enables)
+- Predicates: lowercase_underscore, specific to context (e.g., prohibits, permits, defines, requires, mitigates, poses, implements, supersedes, applies_to, enforces, references, exempts)
+- Derive from text - don't overuse any single predicate
 - No duplicates, only explicit relations
-- Each unique relation appears ONCE
 
 JSON only:
 {{"relations": [{{"subject_id": "{entity_id}", "predicate": "...", "object_id": "ent_...", "chunk_ids": ["..."]}}]}}"""
