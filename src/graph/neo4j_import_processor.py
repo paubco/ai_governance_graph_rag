@@ -274,18 +274,24 @@ class Neo4jImportProcessor:
             entities_metadata = []
             logger.warning("Metadata entities file not found - loading semantic only")
         
+        seen_ids = set()
         entities = []
         for entity in list(entities_semantic) + list(entities_metadata):
+            eid = entity['entity_id']
+            if eid in seen_ids:
+                continue  # Skip duplicates
+            seen_ids.add(eid)
+            
             # Strip embedding - not needed in Neo4j
             entities.append({
-                'entity_id': entity['entity_id'],
+                'entity_id': eid,
                 'name': entity.get('name', ''),
                 'type': entity.get('type', ''),
                 'description': entity.get('description', ''),
                 'frequency': entity.get('frequency', len(entity.get('chunk_ids', [])))
             })
         
-        logger.info(f"Loaded {len(entities)} entities (semantic + metadata)")
+        logger.info(f"Loaded {len(entities)} unique entities (semantic + metadata)")
         return entities
     
     def prepare_l2_publications(self) -> List[Dict]:
@@ -443,12 +449,18 @@ class Neo4jImportProcessor:
         except FileNotFoundError:
             entities_metadata = []
         
+        seen_ids = set()
         relations = []
         for entity in list(entities_semantic) + list(entities_metadata):
+            eid = entity['entity_id']
+            if eid in seen_ids:
+                continue  # Skip duplicates
+            seen_ids.add(eid)
+            
             # Each entity has chunk_ids list
             for chunk_id in entity.get('chunk_ids', []):
                 relations.append({
-                    'entity_id': entity['entity_id'],
+                    'entity_id': eid,
                     'chunk_id': chunk_id
                 })
         
