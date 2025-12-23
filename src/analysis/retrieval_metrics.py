@@ -9,7 +9,18 @@ RAGAS metrics for comprehensive retrieval system evaluation.
 Example:
     metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
 """
+import os
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import List, Dict
 
+# Project root (src/analysis/ablation_study.py -> project root)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+    
 # Standard library
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
