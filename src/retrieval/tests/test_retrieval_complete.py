@@ -426,11 +426,11 @@ class TestResultRanker:
 def real_data_available():
     """Check if real data files exist."""
     required_files = [
-        'data/faiss/entities.index',
-        'data/faiss/entity_ids.json',
-        'data/processed/entities.json',
-        'data/faiss/chunks.index',
-        'data/faiss/chunk_ids.json',
+        'data/processed/faiss/entity_embeddings.index',
+        'data/processed/faiss/entity_id_map.json',
+        'data/processed/entities/entities_semantic_embedded.jsonl',
+        'data/processed/faiss/chunk_embeddings.index',
+        'data/processed/faiss/chunk_id_map.json',
     ]
     
     missing = [f for f in required_files if not Path(f).exists()]
@@ -506,9 +506,9 @@ class TestRealIntegration:
         from src.retrieval.entity_resolver import EntityResolver
         
         resolver = EntityResolver(
-            faiss_index_path=Path('data/faiss/entities.index'),
-            entity_ids_path=Path('data/faiss/entity_ids.json'),
-            normalized_entities_path=Path('data/processed/entities.json'),
+            faiss_index_path=Path('data/processed/faiss/entity_embeddings.index'),
+            entity_ids_path=Path('data/processed/faiss/entity_id_map.json'),
+            normalized_entities_path=Path('data/processed/entities/entities_semantic_embedded.jsonl'),
             aliases_path=Path('data/processed/entities/aliases.json'),
             embedding_model=real_embedder,
             threshold=0.75,
@@ -538,12 +538,12 @@ class TestRealIntegration:
         
         processor = RetrievalProcessor(
             embedding_model=real_embedder,
-            faiss_entity_index_path=Path('data/faiss/entities.index'),
-            entity_ids_path=Path('data/faiss/entity_ids.json'),
-            normalized_entities_path=Path('data/processed/entities.json'),
+            faiss_entity_index_path=Path('data/processed/faiss/entity_embeddings.index'),
+            entity_ids_path=Path('data/processed/faiss/entity_id_map.json'),
+            normalized_entities_path=Path('data/processed/entities/entities_semantic_embedded.jsonl'),
             aliases_path=Path('data/processed/entities/aliases.json'),
-            faiss_chunk_index_path=Path('data/faiss/chunks.index'),
-            chunk_ids_path=Path('data/faiss/chunk_ids.json'),
+            faiss_chunk_index_path=Path('data/processed/faiss/chunk_embeddings.index'),
+            chunk_ids_path=Path('data/processed/faiss/chunk_id_map.json'),
             neo4j_uri=uri,
             neo4j_user=user,
             neo4j_password=password
