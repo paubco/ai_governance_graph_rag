@@ -37,8 +37,15 @@ from src.utils.io import load_jsonl, save_jsonl
 DEFAULT_ENRICHMENT_CONFIG = {
     # Input paths (relative to PROJECT_ROOT/data)
     'scopus_csv_path': 'data/raw/academic/scopus_2023/scopus_export_2023_raw.csv',
-    'entities_path': 'data/processed/entities/entities_semantic.jsonl',
-    'relations_path': 'data/processed/relations/relations_semantic.jsonl',
+    
+    # Entities: semantic (concepts, regulations) + metadata (citations, authors)
+    'entities_semantic_path': 'data/processed/entities/entities_semantic.jsonl',
+    'entities_metadata_path': 'data/processed/entities/entities_metadata.jsonl',
+    
+    # Relations: semantic (regulates, requires) + discusses (citation→topic links)
+    'relations_semantic_path': 'data/processed/relations/relations_semantic.jsonl',
+    'relations_discusses_path': 'data/processed/relations/relations_discusses.jsonl',
+    
     'chunks_path': 'data/processed/chunks/chunks_embedded.jsonl',
     'scraping_summary_path': 'data/raw/dlapiper/scraping_summary.json',
     
@@ -103,8 +110,15 @@ class EnrichmentProcessor:
         
         # Set paths from config
         self.scopus_csv = resolve_path(self.config['scopus_csv_path'])
-        self.entities_file = resolve_path(self.config['entities_path'])
-        self.relations_file = resolve_path(self.config['relations_path'])
+        
+        # Entity files (semantic + metadata)
+        self.entities_semantic_file = resolve_path(self.config['entities_semantic_path'])
+        self.entities_metadata_file = resolve_path(self.config['entities_metadata_path'])
+        
+        # Relation files (semantic + discusses)
+        self.relations_semantic_file = resolve_path(self.config['relations_semantic_path'])
+        self.relations_discusses_file = resolve_path(self.config['relations_discusses_path'])
+        
         self.chunks_file = resolve_path(self.config['chunks_path'])
         self.scraping_summary = resolve_path(self.config['scraping_summary_path'])
         
@@ -271,26 +285,42 @@ class EnrichmentProcessor:
         print("Pipeline complete!")
     
     def _load_input_data(self) -> tuple:
-        """Load entities, relations, and chunks."""
+        """Load entities, relations, and chunks from both semantic and metadata tracks."""
         logger.info("=" * 70)
         logger.info("LOADING INPUT DATA")
         logger.info("=" * 70)
         
-        # Load entities (JSONL format for v1.1)
-        if self.entities_file.suffix == '.jsonl':
-            entities = list(load_jsonl(self.entities_file))
-        else:
-            with open(self.entities_file, 'r', encoding='utf-8') as f:
-                entities = json.load(f)
-        logger.info(f"✓ Loaded {len(entities)} entities")
+        # Load semantic entities (concepts, regulations, etc.)
+        entities_semantic = list(load_jsonl(self.entities_semantic_file))
+        logger.info(f"✓ Loaded {len(entities_semantic)} semantic entities")
         
-        # Load relations (JSONL format for v1.1)
-        if self.relations_file.suffix == '.jsonl':
-            relations = list(load_jsonl(self.relations_file))
+        # Load metadata entities (citations, authors, journals)
+        if self.entities_metadata_file.exists():
+            entities_metadata = list(load_jsonl(self.entities_metadata_file))
+            logger.info(f"✓ Loaded {len(entities_metadata)} metadata entities")
         else:
-            with open(self.relations_file, 'r', encoding='utf-8') as f:
-                relations = json.load(f)
-        logger.info(f"✓ Loaded {len(relations)} relations")
+            entities_metadata = []
+            logger.warning(f"⚠ Metadata entities file not found: {self.entities_metadata_file}")
+        
+        # Merge entities (metadata entities may reference semantic entities via discusses)
+        entities = entities_semantic + entities_metadata
+        logger.info(f"✓ Total entities: {len(entities)}")
+        
+        # Load semantic relations (regulates, requires, applies_to, etc.)
+        relations_semantic = list(load_jsonl(self.relations_semantic_file))
+        logger.info(f"✓ Loaded {len(relations_semantic)} semantic relations")
+        
+        # Load discusses relations (citation → topic links)
+        if self.relations_discusses_file.exists():
+            relations_discusses = list(load_jsonl(self.relations_discusses_file))
+            logger.info(f"✓ Loaded {len(relations_discusses)} discusses relations")
+        else:
+            relations_discusses = []
+            logger.warning(f"⚠ Discusses relations file not found: {self.relations_discusses_file}")
+        
+        # Merge relations
+        relations = relations_semantic + relations_discusses
+        logger.info(f"✓ Total relations: {len(relations)}")
         
         # Load chunks (JSONL format for v1.1)
         if self.chunks_file.suffix == '.jsonl':
