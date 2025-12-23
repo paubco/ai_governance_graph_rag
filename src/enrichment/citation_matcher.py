@@ -655,6 +655,8 @@ class ProvenanceConstrainedMatcher:
         """
         Build paper_id → {authors, journal, title, references} index.
         """
+        from src.utils.id_generator import generate_author_id
+        
         metadata = {}
         
         for paper_id, data in paper_mapping.items():
@@ -663,23 +665,36 @@ class ProvenanceConstrainedMatcher:
                 continue
             
             # Parse authors string "Surname1, I1; Surname2, I2; ..."
+            # and author IDs "12345678;23456789;..."
             authors = []
             authors_str = scopus.get('authors', '')
+            author_ids_str = scopus.get('author_ids', '')
+            
             if authors_str:
-                for author_part in authors_str.split(';'):
-                    author_part = author_part.strip()
-                    if author_part:
-                        surname = self._extract_surname(author_part)
-                        initial = self._extract_initial(author_part)
-                        if surname:
-                            authors.append({
-                                'name': author_part,
-                                'surname': surname,
-                                'initial': initial
-                            })
+                author_parts = [a.strip() for a in authors_str.split(';') if a.strip()]
+                author_ids = [a.strip() for a in author_ids_str.split(';') if a.strip()] if author_ids_str else []
+                
+                for i, author_part in enumerate(author_parts):
+                    surname = self._extract_surname(author_part)
+                    initial = self._extract_initial(author_part)
+                    if surname:
+                        # Get Scopus author ID if available (aligned with author index)
+                        scopus_author_id = author_ids[i] if i < len(author_ids) else None
+                        author_entry = {
+                            'name': author_part,
+                            'surname': surname,
+                            'initial': initial,
+                        }
+                        if scopus_author_id:
+                            author_entry['scopus_id'] = scopus_author_id
+                            author_entry['author_id'] = generate_author_id(scopus_author_id)
+                        authors.append(author_entry)
             
             # Normalize journal name
             journal = self._normalize_text(scopus.get('journal', ''))
+            
+            # Also store journal ID for matching
+            journal_name_raw = scopus.get('journal', '')
             
             # Normalize title
             title = self._normalize_text(scopus.get('title', ''))
@@ -691,6 +706,7 @@ class ProvenanceConstrainedMatcher:
                 'eid': scopus.get('eid', ''),
                 'authors': authors,
                 'journal': journal,
+                'journal_raw': journal_name_raw,
                 'title': title,
                 'year': scopus.get('year'),
                 'references': paper_refs,
@@ -822,13 +838,17 @@ class ProvenanceConstrainedMatcher:
         
         # Tier 1 & 2: Match against paper's own authors
         for author in paper['authors']:
+            # Skip if no Scopus ID available - can't create valid SAME_AS
+            if 'author_id' not in author:
+                continue
+                
             # Exact surname + initial match
             if initial and author['initial']:
                 if surname == author['surname'] and initial == author['initial']:
                     return {
                         'entity_id': entity['entity_id'],
                         'entity_name': name,
-                        'target_id': f"author_{paper_id}_{author['surname']}_{author['initial']}",
+                        'target_id': author['author_id'],  # Use Scopus-based ID
                         'target_name': author['name'],
                         'target_type': 'Author',
                         'confidence': 1.0,
@@ -844,7 +864,7 @@ class ProvenanceConstrainedMatcher:
                     return {
                         'entity_id': entity['entity_id'],
                         'entity_name': name,
-                        'target_id': f"author_{paper_id}_{author['surname']}_{author['initial']}",
+                        'target_id': author['author_id'],  # Use Scopus-based ID
                         'target_name': author['name'],
                         'target_type': 'Author',
                         'confidence': score,
@@ -900,6 +920,8 @@ class ProvenanceConstrainedMatcher:
         Tier 1: Exact/fuzzy match against paper's own journal
         Tier 2: Journal name found in paper's reference strings
         """
+        from src.utils.id_generator import generate_journal_id
+        
         name = self._normalize_text(entity.get('name', ''))
         
         if not name or len(name) < 3:
@@ -907,13 +929,17 @@ class ProvenanceConstrainedMatcher:
         
         # Tier 1: Match against paper's own journal
         if paper['journal']:
+            # Use raw journal name for ID generation (normalized used for comparison)
+            journal_raw = paper.get('journal_raw', paper['journal'])
+            journal_id = generate_journal_id(journal_raw)
+            
             # Exact match
             if name == paper['journal']:
                 return {
                     'entity_id': entity['entity_id'],
                     'entity_name': entity.get('name', ''),
-                    'target_id': f"journal_{paper_id}",
-                    'target_name': paper['journal'],
+                    'target_id': journal_id,
+                    'target_name': journal_raw,
                     'target_type': 'Journal',
                     'confidence': 1.0,
                     'confidence_tier': 'high',
@@ -927,8 +953,8 @@ class ProvenanceConstrainedMatcher:
                 return {
                     'entity_id': entity['entity_id'],
                     'entity_name': entity.get('name', ''),
-                    'target_id': f"journal_{paper_id}",
-                    'target_name': paper['journal'],
+                    'target_id': journal_id,
+                    'target_name': journal_raw,
                     'target_type': 'Journal',
                     'confidence': score,
                     'confidence_tier': self._get_confidence_tier(score, 'journal'),
@@ -937,6 +963,7 @@ class ProvenanceConstrainedMatcher:
                 }
         
         # Tier 2: Fallback - check references for journal name
+        # NOTE: Reference-based matches use ReferenceJournal type which won't match Neo4j Journal nodes
         if paper['references_normalized'] and len(name) >= 5:
             for i, ref_norm in enumerate(paper['references_normalized']):
                 if name in ref_norm:
