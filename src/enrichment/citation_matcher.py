@@ -1182,8 +1182,8 @@ class ProvenanceConstrainedMatcher:
         """
         Create L2 publications from reference matches.
         
-        Deduplicates by content (author surname, year, title prefix) to avoid
-        creating multiple L2s when different papers cite the same work.
+        Deduplicates using fuzzy matching on author surname + year + title.
+        Uses same thresholds as citation matching for consistency.
         
         Returns:
             Tuple of (l2_publications list, ref_key_to_l2_id mapping)
@@ -1193,10 +1193,65 @@ class ProvenanceConstrainedMatcher:
         l2_publications = []
         ref_key_to_l2_id = {}  # (paper_id, ref_idx) -> l2_id
         
-        # Content-based deduplication: (author_surname, year, title_prefix) -> l2_id
-        content_to_l2_id = {}
-        content_to_l2_data = {}
+        # Store L2 candidates for fuzzy dedup: list of (l2_id, parsed_data)
+        l2_candidates = []
         
+        # Thresholds for fuzzy dedup
+        AUTHOR_FUZZY_THRESHOLD = 0.80  # Partial ratio for surname
+        TITLE_FUZZY_THRESHOLD = 0.75   # Ratio for title
+        
+        def find_matching_l2(parsed: Dict) -> Optional[str]:
+            """Find existing L2 that fuzzy-matches this reference."""
+            year = parsed.get('year')
+            first_author = ''
+            if parsed.get('authors'):
+                first_author = parsed['authors'][0].get('surname', '').lower().strip()
+            title = self._normalize_text(parsed.get('title') or '')
+            
+            # Skip matching if we have no useful data
+            if not year and not first_author and not title:
+                return None
+            
+            for l2_id, l2_parsed in l2_candidates:
+                l2_year = l2_parsed.get('year')
+                l2_author = ''
+                if l2_parsed.get('authors'):
+                    l2_author = l2_parsed['authors'][0].get('surname', '').lower().strip()
+                l2_title = self._normalize_text(l2_parsed.get('title') or '')
+                
+                # Year must match exactly (if both have years)
+                if year and l2_year and year != l2_year:
+                    continue
+                
+                # At least one of year must exist
+                if not year and not l2_year:
+                    # Need stronger title match without year
+                    pass
+                
+                # Check author similarity (if both have authors)
+                author_match = True
+                if first_author and l2_author:
+                    author_sim = fuzz.partial_ratio(first_author, l2_author) / 100.0
+                    if author_sim < AUTHOR_FUZZY_THRESHOLD:
+                        author_match = False
+                
+                if not author_match:
+                    continue
+                
+                # Check title similarity (primary matching signal)
+                if title and l2_title:
+                    title_sim = fuzz.ratio(title[:100], l2_title[:100]) / 100.0
+                    if title_sim >= TITLE_FUZZY_THRESHOLD:
+                        return l2_id
+                
+                # Fallback: author + year exact match (no title needed)
+                if first_author and l2_author and year and l2_year:
+                    if first_author == l2_author and year == l2_year:
+                        return l2_id
+            
+            return None
+        
+        dedup_count = 0
         for match in results['reference_matches']:
             paper_id = match.get('paper_id', '')
             ref_idx = match.get('reference_index', -1)
@@ -1220,31 +1275,23 @@ class ProvenanceConstrainedMatcher:
             raw_ref = references[ref_idx]
             parsed = self._parse_reference_string(raw_ref)
             
-            # Create content-based dedup key
-            first_author = ''
-            if parsed.get('authors'):
-                first_author = parsed['authors'][0].get('surname', '').lower().strip()
-            year = parsed.get('year')
-            title = parsed.get('title') or ''
-            # Use first 50 chars of title, normalized
-            title_prefix = re.sub(r'[^\w\s]', '', title.lower())[:50].strip()
+            # Try to find fuzzy match with existing L2
+            existing_l2_id = find_matching_l2(parsed)
             
-            content_key = (first_author, year, title_prefix)
-            
-            # Check if we've seen this content before
-            if content_key in content_to_l2_id and content_key != ('', None, ''):
+            if existing_l2_id:
                 # Reuse existing L2
-                l2_id = content_to_l2_id[content_key]
-                ref_key_to_l2_id[ref_key] = l2_id
+                ref_key_to_l2_id[ref_key] = existing_l2_id
+                dedup_count += 1
                 continue
             
             # Generate new L2 ID
             l2_id = generate_l2_publication_id(raw_ref)
             
-            # Register in both mappings
+            # Register mapping
             ref_key_to_l2_id[ref_key] = l2_id
-            if content_key != ('', None, ''):
-                content_to_l2_id[content_key] = l2_id
+            
+            # Add to candidates for future dedup matching
+            l2_candidates.append((l2_id, parsed))
             
             # Create L2 publication
             l2_pub = {
@@ -1262,10 +1309,20 @@ class ProvenanceConstrainedMatcher:
             l2_publications.append(l2_pub)
         
         logger.info(f"Created {len(l2_publications)} unique L2 publications from {len(ref_key_to_l2_id)} references")
-        if len(ref_key_to_l2_id) > len(l2_publications):
-            logger.info(f"  Deduplicated {len(ref_key_to_l2_id) - len(l2_publications)} duplicate citations")
+        if dedup_count > 0:
+            logger.info(f"  Deduplicated {dedup_count} duplicate citations via fuzzy matching")
         
         return l2_publications, ref_key_to_l2_id
+    
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """Normalize text for fuzzy matching."""
+        if not text:
+            return ''
+        text = text.lower().strip()
+        text = re.sub(r'[^\w\s]', ' ', text)  # Replace punctuation with space
+        text = re.sub(r'\s+', ' ', text)       # Collapse whitespace
+        return text.strip()
     
     def generate_all_relations(self, results: Dict, ref_key_to_l2_id: Dict[str, str]) -> Dict[str, List[Dict]]:
         """
