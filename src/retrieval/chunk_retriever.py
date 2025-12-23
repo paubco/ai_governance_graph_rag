@@ -90,7 +90,7 @@ class ChunkRetriever:
         
         Uses EXTRACTED_FROM edges (35,650 total) as primary retrieval path.
         """
-        if not subgraph.entities:
+        if not subgraph.entity_ids:
             return []
         
         # Get relation chunk IDs for provenance tracking
@@ -123,7 +123,7 @@ class ChunkRetriever:
                     END AS doc_type,
                     doc.code AS jurisdiction,
                     entities
-            """, entity_ids=list(subgraph.entities))
+            """, entity_ids=list(subgraph.entity_ids))
             
             chunks = []
             for record in result:
