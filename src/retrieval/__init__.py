@@ -1,69 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-AI Governance GraphRAG Pipeline - Retrieval package.
+Retrieval module for AI governance GraphRAG pipeline.
 
-Phase 3 retrieval pipeline for query understanding, graph expansion, and context
-retrieval with dual-channel architecture.
+Phase 3 components:
+- QueryParser: Parse queries with LLM entity extraction
+- EntityResolver: Resolve mentions to canonical entities (with alias support)
+- GraphExpander: PCST-based subgraph extraction
+- ChunkRetriever: Dual-channel (graph + semantic) retrieval
+- ResultRanker: Multiplicative scoring and ranking
+- AnswerGenerator: Claude-based answer generation
+- RetrievalProcessor: Full pipeline orchestrator
 """
 
-from .config import (
-    # Enums
-    RetrievalMode,
-    # Data classes
-    ExtractedEntity,
-    ResolvedEntity,
-    QueryFilters,
-    ParsedQuery,
-    Relation,
-    Subgraph,  # FIXED: was GraphSubgraph
-    Chunk,
-    RankedChunk,
-    RetrievalResult,
-    # Configuration constants
-    ENTITY_TYPES,
-    PCST_CONFIG,
-    RETRIEVAL_CONFIG,
-    RANKING_CONFIG,
-    ENTITY_RESOLUTION_CONFIG,
-    # Utility functions
-    parse_jurisdictions,
-    parse_doc_types,
-)
-
-from .query_parser import QueryParser
-from .entity_resolver import EntityResolver
-from .graph_expander import GraphExpander
-from .chunk_retriever import ChunkRetriever
-from .result_ranker import ResultRanker
-from .retrieval_processor import RetrievalProcessor, QueryUnderstanding
+from src.retrieval.query_parser import QueryParser
+from src.retrieval.entity_resolver import EntityResolver
+from src.retrieval.graph_expander import GraphExpander
+from src.retrieval.chunk_retriever import ChunkRetriever
+from src.retrieval.result_ranker import ResultRanker
+from src.retrieval.answer_generator import AnswerGenerator, GeneratedAnswer
+from src.retrieval.retrieval_processor import RetrievalProcessor, QueryUnderstanding
 
 __all__ = [
-    # Enums
-    'RetrievalMode',
-    # Data classes
-    'ExtractedEntity',
-    'ResolvedEntity',
-    'QueryFilters',
-    'ParsedQuery',
-    'Relation',
-    'Subgraph',  # FIXED: was GraphSubgraph
-    'Chunk',
-    'RankedChunk',
-    'RetrievalResult',
-    'QueryUnderstanding',
-    # Components
     'QueryParser',
     'EntityResolver',
     'GraphExpander',
     'ChunkRetriever',
     'ResultRanker',
+    'AnswerGenerator',
+    'GeneratedAnswer',
     'RetrievalProcessor',
-    # Config
-    'ENTITY_TYPES',
-    'PCST_CONFIG',
-    'RETRIEVAL_CONFIG',
-    'RANKING_CONFIG',
-    'ENTITY_RESOLUTION_CONFIG',
-    'parse_jurisdictions',
-    'parse_doc_types',
+    'QueryUnderstanding',
 ]

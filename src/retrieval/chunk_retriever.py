@@ -3,24 +3,6 @@
 Dual-channel chunk retrieval for AI governance GraphRAG pipeline.
 
 Implements combined graph-based and semantic retrieval for context gathering.
-Graph retrieval performs corpus retrospective on PCST-expanded entities with
-relation provenance tracking. Semantic retrieval uses FAISS for direct vector
-similarity search as baseline comparison.
-
-Retrieval channels:
-    - Graph: Entity expansion → corpus retrospective (EXTRACTED_FROM edges)
-            + relation provenance chunks (contains PCST relations)
-    - Semantic: FAISS similarity search on chunk embeddings
-
-Example:
-    retriever = ChunkRetriever(
-        neo4j_uri="bolt://localhost:7687",
-        neo4j_user="neo4j",
-        neo4j_password="password",
-        chunk_index_path="data/faiss/chunks.index",
-        chunk_id_map_path="data/faiss/chunk_id_map.json"
-    )
-    graph_chunks, semantic_chunks = retriever.retrieve_dual(subgraph, query_emb)
 """
 
 # Standard library
@@ -32,17 +14,12 @@ import numpy as np
 from neo4j import GraphDatabase
 import faiss
 
-# Local
-from .config import (
-    Subgraph,
-    Chunk,
-    RETRIEVAL_CONFIG,
-)
+# Config imports (direct)
+from config.retrieval_config import RETRIEVAL_CONFIG
 
+# Dataclass imports (direct)
+from src.utils.dataclasses import Subgraph, Chunk
 
-# ============================================================================
-# CHUNK RETRIEVER
-# ============================================================================
 
 class ChunkRetriever:
     """
@@ -71,27 +48,20 @@ class ChunkRetriever:
             chunk_index_path: Path to FAISS chunk embeddings index.
             chunk_id_map_path: Path to chunk ID mapping JSON.
         """
-        # Neo4j connection
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         
-        # Load FAISS chunk index
         self.faiss_index = faiss.read_index(chunk_index_path)
         
-        # Load chunk ID mapping
         with open(chunk_id_map_path, 'r') as f:
             chunk_id_data = json.load(f)
         
-        # Handle both list and dict formats
         if isinstance(chunk_id_data, list):
-            # List format: ["chunk_001", "chunk_002", ...] where index = FAISS position
             self.chunk_id_map = {cid: idx for idx, cid in enumerate(chunk_id_data)}
             self.index_to_chunk = {idx: cid for idx, cid in enumerate(chunk_id_data)}
         else:
-            # Dict format: {"chunk_001": 0, "chunk_002": 1, ...}
             self.chunk_id_map = chunk_id_data
             self.index_to_chunk = {v: k for k, v in chunk_id_data.items()}
         
-        # Config
         self.config = RETRIEVAL_CONFIG
     
     def retrieve_dual(
@@ -109,10 +79,7 @@ class ChunkRetriever:
         Returns:
             (graph_chunks, semantic_chunks)
         """
-        # Graph Retrieval: Entity-centric corpus retrospective
         graph_chunks = self._retrieve_graph(subgraph)
-        
-        # Semantic Retrieval: Vector similarity search
         semantic_chunks = self._retrieve_semantic(query_embedding)
         
         return graph_chunks, semantic_chunks
@@ -121,35 +88,25 @@ class ChunkRetriever:
         """
         Graph Retrieval: Corpus retrospective + relation provenance.
         
-        Strategy:
-        1. Get all chunks mentioning PCST entities (EXTRACTED_FROM edges)
-        2. Prioritize chunks containing PCST relations (provenance)
-        
-        Args:
-            subgraph: PCST subgraph with entities and relations.
-        
-        Returns:
-            List of Chunk objects with metadata.
+        Uses EXTRACTED_FROM edges (35,650 total) as primary retrieval path.
         """
         if not subgraph.entities:
             return []
         
-        # Get relation chunk IDs (for provenance tracking)
+        # Get relation chunk IDs for provenance tracking
         relation_chunk_ids = set()
         for rel in subgraph.relations:
             relation_chunk_ids.update(rel.chunk_ids)
         
         with self.driver.session() as session:
-            # Corpus retrospective: Get all chunks mentioning expanded entities
             result = session.run("""
                 MATCH (e:Entity)-[:EXTRACTED_FROM]->(c:Chunk)
                 WHERE e.entity_id IN $entity_ids
                 
-                // Get document info
                 OPTIONAL MATCH (doc)-[:CONTAINS]->(c)
                 WHERE doc:Jurisdiction OR doc:Publication
                 
-                WITH DISTINCT c, doc, e
+                WITH DISTINCT c, doc, collect(e.entity_id) AS entities
                 
                 RETURN 
                     c.chunk_id AS chunk_id,
@@ -165,26 +122,27 @@ class ChunkRetriever:
                         ELSE 'unknown'
                     END AS doc_type,
                     doc.code AS jurisdiction,
-                    collect(e.entity_id) AS entities
-            """, entity_ids=subgraph.entities)
+                    entities
+            """, entity_ids=list(subgraph.entities))
             
             chunks = []
             for record in result:
-                # Score based on number of entities matched
-                # Lower base (0.40-0.60) so coverage bonus is more meaningful
                 num_entities = len(record['entities'])
                 base_score = min(0.40 + (num_entities * 0.05), 0.60)
                 
                 chunk = Chunk(
-                    chunk_id=record['chunk_id'],
+                    chunk_ids=[record['chunk_id']],
+                    document_ids=[record['doc_id']] if record['doc_id'] else [],
                     text=record['text'],
-                    doc_id=record['doc_id'],
-                    doc_type=record['doc_type'],
-                    jurisdiction=record['jurisdiction'],
-                    score=base_score,
+                    position=0,
+                    sentence_count=0,
+                    token_count=0,
                     metadata={
                         'entities': record['entities'],
-                        'is_relation_provenance': record['chunk_id'] in relation_chunk_ids
+                        'is_relation_provenance': record['chunk_id'] in relation_chunk_ids,
+                        'score': base_score,
+                        'doc_type': record['doc_type'],
+                        'jurisdiction': record['jurisdiction'],
                     }
                 )
                 chunks.append(chunk)
@@ -194,28 +152,17 @@ class ChunkRetriever:
     def _retrieve_semantic(self, query_embedding: np.ndarray) -> List[Chunk]:
         """
         Semantic Retrieval: Direct vector similarity search via FAISS.
-        
-        Args:
-            query_embedding: Query embedding (BGE-M3, 1024-dim).
-        
-        Returns:
-            Top-K most similar chunks.
         """
         k = self.config['semantic_top_k']
         
-        # FAISS search
-        query_vec = query_embedding.reshape(1, -1)
+        query_vec = query_embedding.reshape(1, -1).astype('float32')
         distances, indices = self.faiss_index.search(query_vec, k)
         
         # Convert distances to similarity scores
-        # For inner product: distance IS similarity
-        # For L2: similarity = 1 / (1 + distance)
-        # Normalize to 0-1 range
         similarities = distances[0]
         if similarities.max() > 1.0:  # Likely L2 distance
             similarities = 1.0 / (1.0 + similarities)
         
-        # Convert to chunk IDs with scores
         chunk_ids = []
         chunk_scores = {}
         for idx, similarity in zip(indices[0], similarities):
@@ -224,13 +171,11 @@ class ChunkRetriever:
                 chunk_ids.append(chunk_id)
                 chunk_scores[chunk_id] = float(similarity)
         
-        # Fetch chunk details from Neo4j
         with self.driver.session() as session:
             result = session.run("""
                 MATCH (c:Chunk)
                 WHERE c.chunk_id IN $chunk_ids
                 
-                // Get document info
                 OPTIONAL MATCH (doc)-[:CONTAINS]->(c)
                 WHERE doc:Jurisdiction OR doc:Publication
                 
@@ -250,18 +195,22 @@ class ChunkRetriever:
                     doc.code AS jurisdiction
             """, chunk_ids=chunk_ids)
             
-            # Preserve FAISS order (important for scoring)
             chunk_dict = {}
             for record in result:
                 chunk_id = record['chunk_id']
                 chunk_dict[chunk_id] = Chunk(
-                    chunk_id=chunk_id,
+                    chunk_ids=[chunk_id],
+                    document_ids=[record['doc_id']] if record['doc_id'] else [],
                     text=record['text'],
-                    doc_id=record['doc_id'],
-                    doc_type=record['doc_type'],
-                    jurisdiction=record['jurisdiction'],
-                    score=chunk_scores.get(chunk_id, 0.5),  # FAISS similarity
-                    metadata={'faiss_rank': chunk_ids.index(chunk_id)}
+                    position=0,
+                    sentence_count=0,
+                    token_count=0,
+                    metadata={
+                        'score': chunk_scores.get(chunk_id, 0.5),
+                        'faiss_rank': chunk_ids.index(chunk_id),
+                        'doc_type': record['doc_type'],
+                        'jurisdiction': record['jurisdiction'],
+                    }
                 )
             
             # Return in FAISS order

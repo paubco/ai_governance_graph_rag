@@ -9,7 +9,7 @@ Created: 2025-12-18
 Modified: 2025-12-18 (consolidated from src/retrieval/config.py)
 
 References:
-    - ARCHITECTURE.md § 5 (Phase 3)
+    - ARCHITECTURE.md Â§ 5 (Phase 3)
     - PHASE_3_DESIGN.md
 """
 
@@ -37,17 +37,12 @@ class RetrievalMode(Enum):
 
 
 # ============================================================================
-# ENTITY TYPES (must match extraction config)
+# ENTITY TYPES (v2.0 - imported from extraction_config.py for DRY)
 # ============================================================================
-# NOTE: This should be imported from extraction.py once type matrix is finalized
-# For now, using v1.0 types for backward compatibility
 
-ENTITY_TYPES = [
-    "Concept", "Technology", "Organization", "Person", "Location",
-    "Regulation", "Document", "Process", "Metric", "Group",
-    # Academic types (from separate pass)
-    "Citation", "Author", "Journal", "Publication",
-]
+from config.extraction_config import SEMANTIC_TYPE_NAMES, METADATA_TYPE_NAMES
+
+ENTITY_TYPES = SEMANTIC_TYPE_NAMES + METADATA_TYPE_NAMES
 
 
 # ============================================================================
@@ -237,3 +232,47 @@ EVALUATION_CONFIG = {
     'test_queries_path': 'data/evaluation/test_queries.json',
     'results_path': 'data/evaluation/results/',
 }
+
+
+# ============================================================================
+# HELPER FUNCTIONS (for query parsing)
+# ============================================================================
+
+import re
+from typing import List
+
+
+def parse_jurisdictions(query: str) -> List[str]:
+    """
+    Extract jurisdiction hints from query using regex patterns.
+    
+    Args:
+        query: User query string.
+        
+    Returns:
+        List of jurisdiction codes (e.g., ['EU', 'US']).
+    """
+    jurisdictions = []
+    for pattern, code in JURISDICTION_PATTERNS.items():
+        if re.search(pattern, query, re.IGNORECASE):
+            if code not in jurisdictions:
+                jurisdictions.append(code)
+    return jurisdictions
+
+
+def parse_doc_types(query: str) -> List[str]:
+    """
+    Extract document type hints from query using regex patterns.
+    
+    Args:
+        query: User query string.
+        
+    Returns:
+        List of doc types (e.g., ['regulation', 'paper']).
+    """
+    doc_types = []
+    for pattern, doc_type in DOC_TYPE_PATTERNS.items():
+        if re.search(pattern, query, re.IGNORECASE):
+            if doc_type not in doc_types:
+                doc_types.append(doc_type)
+    return doc_types

@@ -3,22 +3,14 @@
 Entity resolver for AI governance GraphRAG pipeline.
 
 Resolves entity mentions from queries to canonical entity IDs in the knowledge
-graph. Uses two-stage matching: exact string match for O(1) lookup, followed by
-FAISS semantic similarity for fuzzy matching with configurable threshold.
+graph. Uses three-stage matching:
+    1. Exact match on entity name
+    2. Alias match using aliases.json lookup
+    3. FAISS semantic similarity for fuzzy matching
 
-Strategy:
-    1. Exact match: Direct lookup in entity name dictionary
-    2. Fuzzy match: FAISS similarity search with threshold filtering
-    3. Type checking: Ensure resolved entities match expected types
-
-Example:
-    resolver = EntityResolver(
-        faiss_index_path=Path("data/faiss/entities.index"),
-        entity_ids_path=Path("data/faiss/entity_ids.json"),
-        normalized_entities_path=Path("data/processed/entities.json"),
-        embedding_model=embedder
-    )
-    resolved = resolver.resolve_entities(extracted_entities)
+v1.1 Changes:
+    - Added alias support (1,310 clusters, 2,594 aliases)
+    - Alias lookup: alias → canonical_name → entity_id
 """
 
 # Standard library
@@ -30,12 +22,14 @@ from typing import List, Dict, Optional
 import faiss
 import numpy as np
 
-# Local
-from .config import (
+# Config imports (direct)
+from config.retrieval_config import ENTITY_RESOLUTION_CONFIG
+
+# Dataclass imports (direct)
+from src.utils.dataclasses import (
     ResolvedEntity,
-    ExtractedEntity,
+    ExtractedQueryEntity as ExtractedEntity,
     QueryFilters,
-    ENTITY_RESOLUTION_CONFIG,
 )
 
 
@@ -45,7 +39,8 @@ class EntityResolver:
     
     Strategy:
     1. Exact match: O(1) lookup via entity name dictionary
-    2. Fuzzy match: FAISS similarity search with threshold
+    2. Alias match: O(1) lookup via alias → canonical_name → entity_id
+    3. Fuzzy match: FAISS similarity search with threshold
     """
     
     def __init__(
@@ -54,8 +49,9 @@ class EntityResolver:
         entity_ids_path: Path,
         normalized_entities_path: Path,
         embedding_model,
-        threshold: float = 0.75,  # From ENTITY_RESOLUTION_CONFIG
-        top_k: int = 3,           # Limit fuzzy matches to avoid explosion
+        aliases_path: Path = None,
+        threshold: float = None,
+        top_k: int = 3,
     ):
         """
         Initialize entity resolver.
@@ -65,54 +61,45 @@ class EntityResolver:
             entity_ids_path: Path to entity IDs JSON mapping.
             normalized_entities_path: Path to normalized entities JSON.
             embedding_model: BGE-M3 embedding model with embed_single() method.
+            aliases_path: Path to aliases.json (optional, enables alias matching).
             threshold: Fuzzy match threshold (default from config).
-            top_k: Number of candidates to retrieve (default from config).
+            top_k: Number of candidates to retrieve for fuzzy matching.
         """
         self.embedding_model = embedding_model
-        self.threshold = threshold
+        self.threshold = threshold or ENTITY_RESOLUTION_CONFIG['fuzzy_threshold']
         self.top_k = top_k
         
         # Load FAISS index
         self.faiss_index = faiss.read_index(str(faiss_index_path))
         
-        # Load entity IDs mapping
-        # Format: list where index = FAISS position, value = entity_id
+        # Load entity IDs mapping (FAISS index → entity_id)
         with open(entity_ids_path, 'r', encoding='utf-8') as f:
             entity_id_list = json.load(f)
         
-        # Create reverse mapping: FAISS index → entity_id
         if isinstance(entity_id_list, list):
-            # List format: ["ent_001", "ent_002", ...]
             self.entity_ids = {idx: eid for idx, eid in enumerate(entity_id_list)}
         else:
-            # Dict format: {"ent_001": 0, "ent_002": 1, ...}
             self.entity_ids = {v: k for k, v in entity_id_list.items()}
         
         # Load normalized entities for metadata
-        entities_list = []
+        self.entities_by_id = {}
+        self.name_to_id = {}
+        
         try:
             with open(normalized_entities_path, 'r', encoding='utf-8') as f:
                 entities_list = json.load(f)
-            # Build lookup: entity_id → entity metadata
+            
             self.entities_by_id = {e['entity_id']: e for e in entities_list}
-        except MemoryError:
-            print("⚠️  Entity file too large for memory, using minimal mode")
-            # Fallback: build minimal entities from IDs only
-            self.entities_by_id = {}
-            for entity_id in (self.entity_ids.values() if isinstance(self.entity_ids, dict) 
-                             else [self.entity_ids[i] for i in range(len(self.entity_ids))]):
-                self.entities_by_id[entity_id] = {
-                    'entity_id': entity_id,
-                    'name': entity_id,  # Use ID as name
-                    'type': 'Unknown'   # Type unknown in minimal mode
-                }
-                entities_list.append(self.entities_by_id[entity_id])
+            self.name_to_id = self._build_name_lookup(entities_list)
+            
         except Exception as e:
-            print(f"⚠️  Error loading entities: {e}")
-            self.entities_by_id = {}
+            print(f"Warning: Error loading entities: {e}")
         
-        # Build exact match lookup: lowercase name → entity_id
-        self.name_to_id = self._build_name_lookup(entities_list)
+        # Load aliases (v1.1)
+        self.alias_to_canonical = {}
+        if aliases_path and Path(aliases_path).exists():
+            self.alias_to_canonical = self._build_alias_lookup(aliases_path)
+            print(f"Loaded {len(self.alias_to_canonical)} alias mappings")
     
     def resolve(
         self, 
@@ -123,34 +110,41 @@ class EntityResolver:
         """
         Resolve extracted entities to canonical entity IDs.
         
-        Tries exact match first, then falls back to fuzzy matching.
-        Returns top_k matches per entity to limit subgraph explosion.
+        Tries exact match first, then alias match, then fuzzy matching.
         
         Args:
             entities: List of ExtractedEntity objects from query parsing.
-            filters: Optional QueryFilters for future use (not currently applied).
-            top_k: Override default top_k for this query (default: use constructor value).
+            filters: Optional QueryFilters (reserved for future use).
+            top_k: Override default top_k for this query.
             
         Returns:
             List of ResolvedEntity objects (may be empty).
         """
-        # Use override or default
         k = top_k if top_k is not None else self.top_k
-        
         resolved = []
         
         for entity in entities:
-            # Try exact match first
+            # 1. Try exact name match
             exact_match = self._exact_match(entity.name)
             if exact_match:
+                exact_match.query_mention = entity.name
                 resolved.append(exact_match)
                 continue
             
-            # Fall back to fuzzy match (limited to top_k)
+            # 2. Try alias match (v1.1)
+            alias_match = self._alias_match(entity.name)
+            if alias_match:
+                alias_match.query_mention = entity.name
+                resolved.append(alias_match)
+                continue
+            
+            # 3. Fall back to fuzzy match
             fuzzy_matches = self._fuzzy_match(entity.name, entity.type, top_k=k)
+            for match in fuzzy_matches:
+                match.query_mention = entity.name
             resolved.extend(fuzzy_matches)
         
-        print(f"  Resolved {len(entities)} mentions → {len(resolved)} entities (top_k={k})")
+        print(f"  Resolved {len(entities)} mentions → {len(resolved)} entities")
         return resolved
     
     def _exact_match(self, mention: str) -> Optional[ResolvedEntity]:
@@ -167,37 +161,74 @@ class EntityResolver:
         
         if mention_lower in self.name_to_id:
             entity_id = self.name_to_id[mention_lower]
-            entity = self.entities_by_id[entity_id]
+            entity = self.entities_by_id.get(entity_id)
             
-            return ResolvedEntity(
-                entity_id=entity_id,
-                name=entity['name'],
-                type=entity['type'],
-                confidence=1.0,
-                match_type='exact',
-            )
+            if entity:
+                return ResolvedEntity(
+                    entity_id=entity_id,
+                    name=entity['name'],
+                    type=entity['type'],
+                    confidence=1.0,
+                    match_type='exact',
+                )
         
         return None
     
-    def _fuzzy_match(self, mention: str, entity_type: str = None, top_k: int = None) -> List[ResolvedEntity]:
+    def _alias_match(self, mention: str) -> Optional[ResolvedEntity]:
+        """
+        Attempt alias match via alias → canonical_name → entity_id.
+        
+        Args:
+            mention: Entity mention string.
+            
+        Returns:
+            ResolvedEntity if alias match found, else None.
+        """
+        mention_lower = mention.lower().strip()
+        
+        # Check if mention is an alias
+        if mention_lower in self.alias_to_canonical:
+            canonical_name = self.alias_to_canonical[mention_lower]
+            canonical_lower = canonical_name.lower().strip()
+            
+            # Now find entity_id for canonical name
+            if canonical_lower in self.name_to_id:
+                entity_id = self.name_to_id[canonical_lower]
+                entity = self.entities_by_id.get(entity_id)
+                
+                if entity:
+                    return ResolvedEntity(
+                        entity_id=entity_id,
+                        name=entity['name'],
+                        type=entity['type'],
+                        confidence=0.95,  # Slightly lower than exact match
+                        match_type='alias',
+                    )
+        
+        return None
+    
+    def _fuzzy_match(
+        self, 
+        mention: str, 
+        entity_type: str = None, 
+        top_k: int = None
+    ) -> List[ResolvedEntity]:
         """
         Attempt fuzzy match via FAISS similarity search.
         
         Args:
             mention: Entity mention string.
             entity_type: Optional entity type for filtering (future use).
-            top_k: Number of candidates to retrieve (uses self.top_k if None).
+            top_k: Number of candidates to retrieve.
             
         Returns:
             List of ResolvedEntity objects above threshold.
         """
-        # Use provided top_k or default
         k = top_k if top_k is not None else self.top_k
         
         # Embed the mention
-        mention_embedding = self.embedding_model.embed_single(mention)  # FIXED: embed_single not embed
+        mention_embedding = self.embedding_model.embed_single(mention)
         
-        # Ensure correct shape for FAISS (1, 1024)
         if mention_embedding.ndim == 1:
             mention_embedding = mention_embedding.reshape(1, -1)
         
@@ -208,19 +239,16 @@ class EntityResolver:
         )
         
         # Convert distances to cosine similarities
-        # FAISS inner product returns negative of cosine distance
         # For normalized vectors: similarity = 1 - distance/2
         similarities = 1 - (distances[0] / 2)
         
         resolved = []
         
         for idx, similarity in zip(indices[0], similarities):
-            # Skip if below threshold
             if similarity < self.threshold:
                 continue
             
-            # Skip invalid indices
-            if idx < 0 or idx >= len(self.entity_ids):
+            if idx < 0 or idx not in self.entity_ids:
                 continue
             
             entity_id = self.entity_ids[idx]
@@ -238,23 +266,45 @@ class EntityResolver:
         return resolved
     
     def _build_name_lookup(self, entities: List[Dict]) -> Dict[str, str]:
-        """
-        Build lowercase name → entity_id lookup for exact matching.
-        
-        Args:
-            entities: List of entity dictionaries.
-            
-        Returns:
-            Dictionary mapping lowercase names to entity IDs.
-        """
+        """Build lowercase name → entity_id lookup for exact matching."""
         name_to_id = {}
         
         for entity in entities:
             name_lower = entity['name'].lower().strip()
             entity_id = entity['entity_id']
             
-            # Use first occurrence (most frequent/canonical)
             if name_lower not in name_to_id:
                 name_to_id[name_lower] = entity_id
         
         return name_to_id
+    
+    def _build_alias_lookup(self, aliases_path: Path) -> Dict[str, str]:
+        """
+        Build alias → canonical_name lookup from aliases.json.
+        
+        aliases.json format: {canonical_name: [alias1, alias2, ...]}
+        
+        Returns:
+            Dict mapping lowercase alias → canonical_name
+        """
+        alias_to_canonical = {}
+        
+        try:
+            with open(aliases_path, 'r', encoding='utf-8') as f:
+                aliases_data = json.load(f)
+            
+            for canonical_name, aliases in aliases_data.items():
+                # Also map canonical name to itself (for case-insensitive matching)
+                canonical_lower = canonical_name.lower().strip()
+                alias_to_canonical[canonical_lower] = canonical_name
+                
+                # Map each alias to the canonical name
+                for alias in aliases:
+                    alias_lower = alias.lower().strip()
+                    if alias_lower not in alias_to_canonical:
+                        alias_to_canonical[alias_lower] = canonical_name
+            
+        except Exception as e:
+            print(f"Warning: Error loading aliases: {e}")
+        
+        return alias_to_canonical

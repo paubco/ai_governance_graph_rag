@@ -2,52 +2,32 @@
 """
 Result ranker for AI governance GraphRAG pipeline.
 
-Merges, deduplicates, and ranks chunks from dual retrieval channels (graph and
-semantic). Implements multiplicative scoring with entity coverage, provenance
-tracking, and metadata-based penalties. Returns top-K ranked chunks for answer
-generation.
-
-Scoring strategy:
-    - Graph chunks: Base score (entity coverage) × graph bonus × filter penalties
-    - Semantic chunks: FAISS similarity × filter penalties
-    - Deduplication: Keep highest score per chunk
-    - Final ranking: Sort by score, return top-K
-
-Example:
-    ranker = ResultRanker()
-    result = ranker.rank(
-        graph_chunks=graph_chunks,
-        semantic_chunks=semantic_chunks,
-        subgraph=subgraph,
-        filters=filters,
-        query="What are transparency requirements?"
-    )
+Merges, deduplicates, and ranks chunks from dual retrieval channels.
+Implements multiplicative scoring with entity coverage and provenance tracking.
 """
 
 # Standard library
 from typing import List, Set, Dict, Optional
 from dataclasses import dataclass
 
-# Local
-from .config import (
+# Config imports (direct)
+from config.retrieval_config import RANKING_CONFIG
+
+# Dataclass imports (direct)
+from src.utils.dataclasses import (
     Chunk,
     RankedChunk,
     Subgraph,
     QueryFilters,
     RetrievalResult,
-    RANKING_CONFIG,
 )
 
-
-# ============================================================================
-# SCORING DEBUG INFO (for ablation studies)
-# ============================================================================
 
 @dataclass
 class ScoringDebugInfo:
     """Debug information for scoring transparency."""
     chunk_id: str
-    method: str  # 'graph' or 'semantic'
+    method: str
     base_score: float
     entity_coverage: Optional[float]
     coverage_bonus: float
@@ -55,10 +35,6 @@ class ScoringDebugInfo:
     final_score: float
     rank: int
 
-
-# ============================================================================
-# RESULT RANKER
-# ============================================================================
 
 class ResultRanker:
     """
@@ -90,8 +66,8 @@ class ResultRanker:
         Args:
             graph_chunks: Chunks from graph retrieval channel.
             semantic_chunks: Chunks from semantic search.
-            subgraph: PCST subgraph (for relation provenance and entity count).
-            filters: Query filters (reserved for future use).
+            subgraph: PCST subgraph.
+            filters: Query filters.
             query: Original query string.
             debug: If True, collect detailed scoring information.
         
@@ -100,79 +76,35 @@ class ResultRanker:
         """
         self.debug_info = [] if debug else None
         
-        # Get relation provenance chunk IDs
         relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
+        total_entities = len(subgraph.entities) if subgraph.entities else 0
         
-        # Total resolved entities (for coverage calculation)
-        total_entities = len(subgraph.entities)
+        scored_chunks = {}
         
         # Score Graph chunks
-        scored_chunks = {}
         for chunk in graph_chunks:
-            score, retrieval_method, source_path, debug_data = self._score_graph_chunk(
-                chunk, 
-                relation_chunk_ids,
-                total_entities,
-                filters
+            score, source_path, debug_data = self._score_graph_chunk(
+                chunk, relation_chunk_ids, total_entities, filters
             )
             
-            if debug:
-                self.debug_info.append(ScoringDebugInfo(
-                    chunk_id=chunk.chunk_id,
-                    method='graph',
-                    base_score=debug_data['base_score'],
-                    entity_coverage=debug_data['entity_coverage'],
-                    coverage_bonus=debug_data['graph_multiplier'],  # Store multiplier as bonus
-                    provenance_bonus=debug_data['standard_multiplier'],  # Store standard multiplier
-                    final_score=score,
-                    rank=0  # Will be updated after sorting
-                ))
-            
-            # If chunk already seen, keep higher score
-            if chunk.chunk_id in scored_chunks:
-                if score > scored_chunks[chunk.chunk_id]['score']:
-                    scored_chunks[chunk.chunk_id] = {
-                        'chunk': chunk,
-                        'score': score,
-                        'retrieval_method': retrieval_method,
-                        'source_path': source_path  # BUG FIX: Store source_path
-                    }
-            else:
-                scored_chunks[chunk.chunk_id] = {
+            chunk_id = chunk.chunk_id
+            if chunk_id not in scored_chunks or score > scored_chunks[chunk_id]['score']:
+                scored_chunks[chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'retrieval_method': retrieval_method,
-                    'source_path': source_path  # BUG FIX: Store source_path
+                    'source_path': source_path,
                 }
         
         # Score Semantic chunks
         for chunk in semantic_chunks:
-            score, retrieval_method, source_path, debug_data = self._score_semantic_chunk(chunk, filters)
+            score, source_path, debug_data = self._score_semantic_chunk(chunk, filters)
             
-            if debug:
-                self.debug_info.append(ScoringDebugInfo(
-                    chunk_id=chunk.chunk_id,
-                    method='semantic',
-                    base_score=debug_data['base_score'],
-                    entity_coverage=None,  # Semantic doesn't use entity coverage
-                    coverage_bonus=debug_data['standard_multiplier'],  # Store standard multiplier
-                    provenance_bonus=0.0,
-                    final_score=score,
-                    rank=0
-                ))
-            
-            # If chunk already seen from Graph, only update if Semantic score is higher
-            if chunk.chunk_id in scored_chunks:
-                if score > scored_chunks[chunk.chunk_id]['score']:
-                    scored_chunks[chunk.chunk_id]['score'] = score
-                    scored_chunks[chunk.chunk_id]['retrieval_method'] = retrieval_method
-                    scored_chunks[chunk.chunk_id]['source_path'] = source_path  # BUG FIX
-            else:
-                scored_chunks[chunk.chunk_id] = {
+            chunk_id = chunk.chunk_id
+            if chunk_id not in scored_chunks or score > scored_chunks[chunk_id]['score']:
+                scored_chunks[chunk_id] = {
                     'chunk': chunk,
                     'score': score,
-                    'retrieval_method': retrieval_method,
-                    'source_path': source_path  # BUG FIX: Store source_path
+                    'source_path': source_path,
                 }
         
         # Convert to RankedChunk objects
@@ -183,13 +115,11 @@ class ResultRanker:
                 chunk_id=chunk.chunk_id,
                 text=chunk.text,
                 score=chunk_data['score'],
-                source_path=chunk_data['source_path'],  # BUG FIX: Actually set source_path!
-                retrieval_method=chunk_data['retrieval_method'],
-                doc_id=chunk.doc_id,
-                doc_type=chunk.doc_type,
-                jurisdiction=chunk.jurisdiction,
-                entities=chunk.metadata.get('entities', []),
-                metadata=chunk.metadata
+                source_path=chunk_data['source_path'],
+                doc_id=chunk.document_id,
+                doc_type=chunk.metadata.get('doc_type', 'unknown'),
+                jurisdiction=chunk.metadata.get('jurisdiction'),
+                matching_entities=chunk.metadata.get('entities', []),
             )
             ranked_chunks.append(ranked_chunk)
         
@@ -197,20 +127,10 @@ class ResultRanker:
         ranked_chunks.sort(key=lambda c: c.score, reverse=True)
         top_k = ranked_chunks[:self.config['final_top_k']]
         
-        # Update ranks in debug info
-        if debug:
-            chunk_ranks = {c.chunk_id: i+1 for i, c in enumerate(ranked_chunks)}
-            for info in self.debug_info:
-                info.rank = chunk_ranks.get(info.chunk_id, 999)
-        
-        # Extract resolved entity names for result
-        resolved_entity_names = list(subgraph.entities) if subgraph.entities else []
-        
         return RetrievalResult(
             query=query,
-            resolved_entities=resolved_entity_names,
+            chunks=top_k,
             subgraph=subgraph,
-            chunks=top_k
         )
     
     def _get_relation_chunk_ids(self, subgraph: Subgraph) -> Set[str]:
@@ -226,98 +146,76 @@ class ResultRanker:
         relation_chunk_ids: Set[str],
         total_entities: int,
         filters: QueryFilters
-    ) -> tuple[float, str, str, Dict]:
+    ) -> tuple[float, str, Dict]:
         """
         Score chunk from graph retrieval using MULTIPLICATIVE system.
         
         Formula: Final = BS × GB × SB
-        - BS (Base Score): entity_coverage = entities_in_chunk / total_entities
-        - GB (Graph Bonus): 1.0 if provenance, 0.85 if entity expansion
-        - SB (Standard Bonus): penalty multipliers for missing filters
-        
-        Returns:
-            (final_score, retrieval_method, source_path, debug_data)
         """
-        # BASE SCORE: Entity coverage (0-1)
+        # BASE SCORE: Entity coverage
         num_entities = len(chunk.metadata.get('entities', []))
         entity_coverage = num_entities / total_entities if total_entities > 0 else 0.0
-        base_score = entity_coverage
+        base_score = max(entity_coverage, chunk.metadata.get('score', 0.5))
         
-        # GRAPH BONUS: Provenance vs entity expansion
+        # GRAPH BONUS
         is_provenance = chunk.metadata.get('is_relation_provenance', False)
         if is_provenance:
-            graph_multiplier = self.config['graph_provenance_multiplier']  # 1.0
-            source_path = "graph_relation"
-            retrieval_method = "graph_provenance"
+            graph_multiplier = self.config['graph_provenance_multiplier']
+            source_path = "graph_provenance"
         else:
-            graph_multiplier = self.config['graph_entity_multiplier']  # 0.85
+            graph_multiplier = self.config['graph_entity_multiplier']
             source_path = "graph_entity"
-            retrieval_method = "graph_entity"
         
-        # STANDARD BONUS: Penalty multipliers for missing filters
+        # STANDARD BONUS (penalties)
         standard_multiplier = 1.0
+        jurisdiction = chunk.metadata.get('jurisdiction')
+        doc_type = chunk.metadata.get('doc_type')
         
-        # Jurisdiction penalty (only if filter provided AND chunk doesn't match)
-        if filters.jurisdiction_hints and chunk.jurisdiction not in filters.jurisdiction_hints:
-            standard_multiplier *= self.config['jurisdiction_penalty']  # 0.9
+        if filters.jurisdiction_hints and jurisdiction not in filters.jurisdiction_hints:
+            standard_multiplier *= self.config['jurisdiction_penalty']
         
-        # Doc type penalty (only if filter provided AND chunk doesn't match)
-        if filters.doc_type_hints and chunk.doc_type not in filters.doc_type_hints:
-            standard_multiplier *= self.config['doc_type_penalty']  # 0.85
+        if filters.doc_type_hints and doc_type not in filters.doc_type_hints:
+            standard_multiplier *= self.config['doc_type_penalty']
         
-        # FINAL SCORE: BS × GB × SB (bounded to [0, 1])
         final_score = base_score * graph_multiplier * standard_multiplier
         
         debug_data = {
             'base_score': base_score,
             'entity_coverage': entity_coverage,
-            'num_entities': num_entities,
-            'total_entities': total_entities,
             'graph_multiplier': graph_multiplier,
             'standard_multiplier': standard_multiplier,
-            'is_provenance': is_provenance,
         }
         
-        return final_score, retrieval_method, source_path, debug_data
+        return final_score, source_path, debug_data
     
     def _score_semantic_chunk(
         self,
         chunk: Chunk,
         filters: QueryFilters
-    ) -> tuple[float, str, str, Dict]:
+    ) -> tuple[float, str, Dict]:
         """
         Score chunk from semantic retrieval using MULTIPLICATIVE system.
         
         Formula: Final = BS × SB
-        - BS (Base Score): FAISS cosine similarity (0-1)
-        - SB (Standard Bonus): penalty multipliers for missing filters
-        
-        Returns:
-            (final_score, retrieval_method, source_path, debug_data)
         """
-        # BASE SCORE: FAISS similarity (already 0-1)
-        base_score = chunk.score
+        base_score = chunk.metadata.get('score', 0.5)
         
-        # STANDARD BONUS: Penalty multipliers for missing filters
         standard_multiplier = 1.0
+        jurisdiction = chunk.metadata.get('jurisdiction')
+        doc_type = chunk.metadata.get('doc_type')
         
-        # Jurisdiction penalty (only if filter provided AND chunk doesn't match)
-        if filters.jurisdiction_hints and chunk.jurisdiction not in filters.jurisdiction_hints:
-            standard_multiplier *= self.config['jurisdiction_penalty']  # 0.9
+        if filters.jurisdiction_hints and jurisdiction not in filters.jurisdiction_hints:
+            standard_multiplier *= self.config['jurisdiction_penalty']
         
-        # Doc type penalty (only if filter provided AND chunk doesn't match)
-        if filters.doc_type_hints and chunk.doc_type not in filters.doc_type_hints:
-            standard_multiplier *= self.config['doc_type_penalty']  # 0.85
+        if filters.doc_type_hints and doc_type not in filters.doc_type_hints:
+            standard_multiplier *= self.config['doc_type_penalty']
         
-        # FINAL SCORE: BS × SB (bounded to [0, 1])
         final_score = base_score * standard_multiplier
-        
         source_path = "semantic"
-        retrieval_method = "semantic"
         
         debug_data = {
             'base_score': base_score,
             'standard_multiplier': standard_multiplier,
         }
         
-        return final_score, retrieval_method, source_path, debug_data
+        return final_score, source_path, debug_data
