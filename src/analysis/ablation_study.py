@@ -226,7 +226,7 @@ class AblationTestSuite:
         data_dir = PROJECT_ROOT / 'data'
         
         # Embedding model
-        embedding_model = BGEembedder()
+        embedding_model = BGEEmbedder()
         
         # Retrieval processor
         self.processor = RetrievalProcessor(
