@@ -577,6 +577,7 @@ class ProvenanceConstrainedMatcher:
         paper_mapping: Dict[str, Dict],
         paper_references: Dict[str, List[str]],
         chunks: List[Dict],
+        authors_data: List[Dict] = None,
         threshold: float = 0.70  # Aligned with TITLE_THRESHOLD_MEDIUM
     ):
         """
@@ -589,10 +590,15 @@ class ProvenanceConstrainedMatcher:
                 {paper_id: [ref_string, ...]}
             chunks: Chunks with document_id for provenance
                 [{chunk_id, document_id, ...}]
+            authors_data: authors.json with Scopus author IDs
+                [{author_id, name, scopus_author_id, ...}]
             threshold: Minimum similarity for fuzzy match (default 0.85)
         """
         self.threshold = threshold
         self.paper_mapping = paper_mapping
+        
+        # Build surname → author_id index from authors.json
+        self.author_index = self._build_author_index(authors_data or [])
         
         # Build chunk_id → paper_id mapping
         self.chunk_to_paper = self._build_chunk_to_paper(chunks, paper_mapping)
@@ -603,6 +609,39 @@ class ProvenanceConstrainedMatcher:
         logger.info(f"ProvenanceConstrainedMatcher initialized:")
         logger.info(f"  Chunks mapped: {len(self.chunk_to_paper)}")
         logger.info(f"  Papers indexed: {len(self.paper_metadata)}")
+        logger.info(f"  Authors indexed: {len(self.author_index)} surnames")
+    
+    def _build_author_index(self, authors_data: List[Dict]) -> Dict[str, List[Dict]]:
+        """
+        Build surname → [author_info] index from authors.json.
+        
+        This allows looking up Scopus author_id by surname+initial.
+        """
+        index = {}
+        
+        for author in authors_data:
+            name = author.get('name', '')
+            author_id = author.get('author_id')
+            
+            if not name or not author_id:
+                continue
+            
+            surname = self._extract_surname(name)
+            initial = self._extract_initial(name)
+            
+            if surname:
+                key = surname.lower()
+                if key not in index:
+                    index[key] = []
+                index[key].append({
+                    'author_id': author_id,
+                    'name': name,
+                    'surname': surname,
+                    'initial': initial,
+                    'scopus_id': author.get('scopus_author_id')
+                })
+        
+        return index
     
     def _build_chunk_to_paper(self, chunks: List[Dict], paper_mapping: Dict) -> Dict[str, str]:
         """
@@ -655,8 +694,6 @@ class ProvenanceConstrainedMatcher:
         """
         Build paper_id → {authors, journal, title, references} index.
         """
-        from src.utils.id_generator import generate_author_id
-        
         metadata = {}
         
         for paper_id, data in paper_mapping.items():
@@ -665,29 +702,41 @@ class ProvenanceConstrainedMatcher:
                 continue
             
             # Parse authors string "Surname1, I1; Surname2, I2; ..."
-            # and author IDs "12345678;23456789;..."
+            # Look up author_id from self.author_index by surname+initial
             authors = []
             authors_str = scopus.get('authors', '')
-            author_ids_str = scopus.get('author_ids', '')
             
             if authors_str:
                 author_parts = [a.strip() for a in authors_str.split(';') if a.strip()]
-                author_ids = [a.strip() for a in author_ids_str.split(';') if a.strip()] if author_ids_str else []
                 
-                for i, author_part in enumerate(author_parts):
+                for author_part in author_parts:
                     surname = self._extract_surname(author_part)
                     initial = self._extract_initial(author_part)
                     if surname:
-                        # Get Scopus author ID if available (aligned with author index)
-                        scopus_author_id = author_ids[i] if i < len(author_ids) else None
                         author_entry = {
                             'name': author_part,
                             'surname': surname,
                             'initial': initial,
                         }
-                        if scopus_author_id:
-                            author_entry['scopus_id'] = scopus_author_id
-                            author_entry['author_id'] = generate_author_id(scopus_author_id)
+                        
+                        # Look up author_id from authors.json index
+                        key = surname.lower()
+                        if key in self.author_index:
+                            # Find best match: exact initial match, or first if no initial
+                            candidates = self.author_index[key]
+                            matched = None
+                            for c in candidates:
+                                if initial and c['initial'] and c['initial'].lower() == initial.lower():
+                                    matched = c
+                                    break
+                            # Fallback: if no initial match, use first candidate with same surname
+                            if not matched and candidates:
+                                matched = candidates[0]
+                            
+                            if matched:
+                                author_entry['author_id'] = matched['author_id']
+                                author_entry['scopus_id'] = matched.get('scopus_id')
+                        
                         authors.append(author_entry)
             
             # Normalize journal name

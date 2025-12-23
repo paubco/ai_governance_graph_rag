@@ -535,11 +535,22 @@ class EnrichmentProcessor:
             logger.warning(f"No paper_references.json found")
             paper_references = {}
         
+        # Load authors.json for author_id lookup
+        authors_path = self.output_dir / 'authors.json'
+        authors_data = []
+        if authors_path.exists():
+            with open(authors_path, 'r', encoding='utf-8') as f:
+                authors_data = json.load(f)
+            logger.info(f"Loaded {len(authors_data)} authors for ID lookup")
+        else:
+            logger.warning(f"No authors.json found - Author SAME_AS will be limited")
+        
         # Initialize provenance-constrained matcher
         matcher = ProvenanceConstrainedMatcher(
             paper_mapping=paper_mapping,
             paper_references=paper_references,
             chunks=chunks,
+            authors_data=authors_data,
             threshold=0.70  # Aligned with MinerUMatcher
         )
         
