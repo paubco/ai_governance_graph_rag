@@ -162,7 +162,7 @@ class RetrievalProcessor:
         
         if not understanding.resolved_entities:
             print("Warning: No entities resolved")
-            subgraph = Subgraph(entities=[], relations=[])
+            subgraph = Subgraph(entity_ids=[], relations=[])
             graph_chunks = []
             
             if mode in [RetrievalMode.SEMANTIC, RetrievalMode.DUAL]:

@@ -538,8 +538,8 @@ ENRICHMENT_CONFIG = {
     'scopus_csv_path': 'data/raw/academic/scopus_2023/scopus_export_2023_raw.csv',
     'entities_semantic_path': 'data/processed/entities/entities_semantic.jsonl',
     'entities_metadata_path': 'data/processed/entities/entities_metadata.jsonl',
-    'relations_semantic_path': 'data/processed/relations/relations_semantic.jsonl',
-    'relations_discusses_path': 'data/processed/relations/relations_discusses.jsonl',
+    'relations_semantic_path': 'data/processed/relations/relations_semantic_validated.jsonl',
+    'relations_discusses_path': 'data/processed/relations/relations_discusses_validated.jsonl',
     'chunks_path': 'data/processed/chunks/chunks_embedded.jsonl',
     'scraping_summary_path': 'data/raw/dlapiper/scraping_summary.json',
     

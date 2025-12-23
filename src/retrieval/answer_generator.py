@@ -125,7 +125,7 @@ class AnswerGenerator:
             model=self.config['model'],
             cost_usd=cost,
             retrieval_chunks_used=len(formatted['chunks_included']),
-            graph_entities_used=len(retrieval_result.subgraph.entities) if retrieval_result.subgraph else 0,
+            graph_entities_used=len(retrieval_result.subgraph.entity_ids) if retrieval_result.subgraph else 0,
             graph_relations_used=len(retrieval_result.subgraph.relations) if retrieval_result.subgraph else 0,
         )
     
@@ -185,13 +185,13 @@ class AnswerGenerator:
     
     def _format_entity_context(self, subgraph, max_tokens: int) -> str:
         """Format key entities for prompt."""
-        if not subgraph or not subgraph.entities:
+        if not subgraph or not subgraph.entity_ids:
             return "No entities found."
         
         lines = []
         tokens_used = 0
         
-        for eid in list(subgraph.entities)[:20]:
+        for eid in list(subgraph.entity_ids)[:20]:
             line = f"- {eid}"
             line_tokens = count_tokens(line)
             

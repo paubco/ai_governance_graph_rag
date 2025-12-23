@@ -103,13 +103,13 @@ class GraphExpander:
             Subgraph with entities and relations from PCST
         """
         if not resolved_entities:
-            return Subgraph(entities=[], relations=[])
+            return Subgraph(entity_ids=[], relations=[])
         
         candidate_ids = self._get_faiss_candidates(resolved_entities)
         
         if not candidate_ids:
             print("Warning: No valid entities found in index")
-            return Subgraph(entities=[], relations=[])
+            return Subgraph(entity_ids=[], relations=[])
         
         if len(resolved_entities) == 1:
             subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
@@ -121,7 +121,7 @@ class GraphExpander:
             )
         
         return Subgraph(
-            entities=subgraph_entity_ids,
+            entity_ids=subgraph_entity_ids,
             relations=relations
         )
     
