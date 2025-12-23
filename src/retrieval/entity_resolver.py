@@ -86,8 +86,16 @@ class EntityResolver:
         self.name_to_id = {}
         
         try:
-            with open(normalized_entities_path, 'r', encoding='utf-8') as f:
-                entities_list = json.load(f)
+            with open(normalized_entities_path, "r", encoding="utf-8") as f:
+                if str(normalized_entities_path).endswith(".jsonl"):
+                    entities_list = [json.loads(line) for line in f]
+                else:
+                    entities_list = json.load(f)
+            with open(normalized_entities_path, "r", encoding="utf-8") as f:
+                if str(normalized_entities_path).endswith(".jsonl"):
+                    entities_list = [json.loads(line) for line in f]
+                else:
+                    entities_list = json.load(f)
             
             self.entity_ids_by_id = {e['entity_id']: e for e in entities_list}
             self.name_to_id = self._build_name_lookup(entities_list)
