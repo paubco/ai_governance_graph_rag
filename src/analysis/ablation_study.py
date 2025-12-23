@@ -1,14 +1,19 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Comprehensive evaluation metrics for retrieval ablation study.
+Unified ablation study with comprehensive evaluation metrics.
 
-Provides metrics aligned with thesis objectives for factual accuracy, query relevance,
-and effective use of sources. Includes entity resolution, graph utilization, and
-RAGAS metrics for comprehensive retrieval system evaluation.
+Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Example:
-    metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
+    python src/analysis/ablation_study.py
+    python src/analysis/ablation_study.py --quick
+    python src/analysis/ablation_study.py --no-ragas
 """
+
+# Standard library
+import argparse
+import json
 import os
 import sys
 import time
@@ -20,396 +25,524 @@ from typing import List, Dict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-# Standard library
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
 
 # Third-party
-import numpy as np
+import anthropic
 
-# Dataclass imports (direct) - for type hints
-from src.utils.dataclasses import ResolvedEntity, Subgraph, RankedChunk
+# Config imports (direct)
+from config.retrieval_config import RetrievalMode
+
+# Local
+from src.retrieval.retrieval_processor import RetrievalProcessor
+from src.retrieval.answer_generator import AnswerGenerator
+from src.utils.embeddings import EmbeddingModel
+from src.utils.logger import get_logger
+
+# Analysis metrics
+from src.analysis.retrieval_metrics import (
+    TestResult,
+    EntityResolutionMetrics,
+    GraphUtilizationMetrics,
+    RetrievalMetrics,
+    RAGASMetrics,
+    PerformanceMetrics,
+    CoverageMetrics,
+    compute_entity_resolution_metrics,
+    compute_graph_utilization_metrics,
+    compute_retrieval_metrics,
+    compute_coverage_metrics
+)
+
+logger = get_logger(__name__)
 
 
 # ============================================================================
-# ENTITY RESOLUTION METRICS (Objective 1: Factual Accuracy)
+# RAGAS METRICS (INTEGRATED)
 # ============================================================================
 
-@dataclass
-class EntityResolutionMetrics:
-    """
-    Measures entity pipeline quality.
+class RAGASEvaluator:
+    """RAGAS metrics evaluator using Claude as LLM judge."""
     
-    Key questions:
-    - Did LLM extract correct entities from query?
-    - How many resolved to actual graph entities?
-    - What was the confidence?
-    """
-    extracted_count: int              # How many entities LLM extracted
-    resolved_count: int               # How many matched to graph
-    resolution_rate: float            # resolved / extracted
-    avg_confidence: float             # Average FAISS match score
-    entity_names: List[str]           # Resolved entity names (for inspection)
-    match_types: Dict[str, int]       # {"exact": 2, "alias": 1, "fuzzy": 3}
-
-
-# ============================================================================
-# GRAPH UTILIZATION METRICS (Objective 3: Effective Use of Sources)
-# ============================================================================
-
-@dataclass
-class GraphUtilizationMetrics:
-    """
-    Measures how well graph structure was used.
+    def __init__(self):
+        self.client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        self.model = "claude-sonnet-4-20250514"
     
-    Key questions:
-    - How much of the graph was activated?
-    - Were cross-jurisdictional connections found?
-    - How deep did traversal go?
-    """
-    entities_in_subgraph: int
-    relations_in_subgraph: int
-    relation_types: Dict[str, int]        # {"discusses": 5, "regulates": 2}
-    jurisdictions_covered: List[str]      # For cross-jurisdictional queries
+    def faithfulness(self, answer: str, context: str) -> Dict:
+        """Measure if all claims in answer are supported by context."""
+        prompt = f"""Evaluate faithfulness: are all claims in ANSWER supported by CONTEXT?
 
+CONTEXT:
+{context}
 
-# ============================================================================
-# COVERAGE METRICS (Objective 3: Information Utilization)
-# ============================================================================
+ANSWER:
+{answer}
 
-@dataclass
-class CoverageMetrics:
-    """
-    Measures how well answer utilized retrieved information.
+Extract claims from ANSWER. For each, check if supported by CONTEXT.
+Output JSON only (no markdown):
+{{
+    "claims": [
+        {{"claim": "...", "supported": true, "evidence": "..."}},
+        ...
+    ],
+    "score": 0.XX,
+    "explanation": "summary"
+}}
+
+Be strict: only mark supported if clearly inferable."""
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            result_text = response.content[0].text.strip()
+            
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(result_text)
+            
+            return {
+                'score': float(result['score']),
+                'supported': sum(1 for c in result['claims'] if c['supported']),
+                'total': len(result['claims']),
+                'explanation': result['explanation']
+            }
+        except Exception as e:
+            logger.error(f"Faithfulness evaluation failed: {e}")
+            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}'}
     
-    Key questions:
-    - Did answer use entities from the subgraph?
-    - Were graph relations reflected in answer?
-    - How much of retrieved context was utilized?
-    """
-    entities_in_subgraph: int
-    entities_in_answer: int
-    entity_coverage_rate: float       # in_answer / in_subgraph
+    def answer_relevancy(self, query: str, answer: str) -> Dict:
+        """Measure how well answer addresses query."""
+        prompt = f"""Rate how well ANSWER addresses QUERY.
+
+QUERY: {query}
+ANSWER: {answer}
+
+Scoring:
+- 1.0: Fully addresses all aspects
+- 0.8-0.9: Addresses main question
+- 0.6-0.7: Partial, significant gaps
+- 0.4-0.5: Tangentially related
+- 0.0-0.3: Irrelevant
+
+Output JSON only:
+{{
+    "score": 0.XX,
+    "explanation": "what's covered/missing?"
+}}"""
+
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            result_text = response.content[0].text.strip()
+            
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(result_text)
+            
+            return {
+                'score': float(result['score']),
+                'explanation': result['explanation']
+            }
+        except Exception as e:
+            logger.error(f"Relevancy evaluation failed: {e}")
+            return {'score': 0.0, 'explanation': f'Error: {e}'}
+
+
+# ============================================================================
+# TEST QUERIES
+# ============================================================================
+
+TEST_QUERIES = [
+    {
+        'id': 'q1',
+        'query': 'What is the EU AI Act?',
+        'category': 'simple_factual',
+        'description': 'Major regulation entity'
+    },
+    {
+        'id': 'q2',
+        'query': 'What are high-risk AI systems?',
+        'category': 'simple_factual',
+        'description': 'Core concept in AI governance'
+    },
+    {
+        'id': 'q3',
+        'query': 'Which jurisdictions regulate facial recognition?',
+        'category': 'cross_jurisdictional',
+        'description': 'Multi-jurisdiction entity traversal'
+    },
+    {
+        'id': 'q4',
+        'query': 'Compare China and US AI governance',
+        'category': 'cross_jurisdictional_comparison',
+        'description': 'Cross-jurisdiction comparison'
+    },
+    {
+        'id': 'q5',
+        'query': 'What academic research discusses algorithmic bias?',
+        'category': 'multi_hop_research',
+        'description': 'Research papers to concept'
+    },
+    {
+        'id': 'q6',
+        'query': "What is Snoopy's arch enemy?",
+        'category': 'out_of_domain',
+        'description': 'Should fail gracefully'
+    }
+]
+
+
+# ============================================================================
+# INTEGRATED TEST SUITE
+# ============================================================================
+
+class AblationTestSuite:
+    """Unified test suite for retrieval mode ablation."""
     
-    relations_in_subgraph: int
-    relations_mentioned: int
-    relation_coverage_rate: float     # mentioned / in_subgraph
+    def __init__(self, enable_ragas: bool = True):
+        self.enable_ragas = enable_ragas
+        self.processor = None
+        self.generator = None
+        self.ragas = None
+        self.results = []
     
-    # Example entities that appeared in answer
-    covered_entities: List[str] = field(default_factory=list)
-    uncovered_entities: List[str] = field(default_factory=list)
-
-
-# ============================================================================
-# RETRIEVAL METRICS (Objective 2 & 3: Relevance + Source Use)
-# ============================================================================
-
-@dataclass
-class RetrievalMetrics:
-    """
-    Measures retrieval effectiveness.
-    
-    Key questions:
-    - How many chunks retrieved per path?
-    - What's the source diversity?
-    - Which path contributed more?
-    - How relevant are chunks to the query (pure semantic similarity)?
-    """
-    total_chunks: int
-    chunks_by_source: Dict[str, int]      # {"graph_provenance": 5, "graph_entity": 3, "semantic": 7}
-    avg_chunk_score: float                # Mean ranking score
-    avg_query_similarity: float           # Mean cosine sim(chunk_emb, query_emb) - pure relevance
-    source_diversity: Dict[str, int]      # {"regulation": 8, "paper": 7}
-    jurisdiction_diversity: List[str]     # Jurisdictions represented in chunks
-
-
-# ============================================================================
-# RAGAS METRICS (Objective 1 & 2: Accuracy + Relevance)
-# ============================================================================
-
-@dataclass
-class RAGASMetrics:
-    """
-    Answer quality from RAGAS framework.
-    
-    Key questions:
-    - Are claims supported by context? (faithfulness)
-    - Does answer address the query? (relevancy)
-    """
-    faithfulness_score: float
-    faithfulness_details: Dict            # {supported_claims, total_claims, explanation}
-    relevancy_score: float
-    relevancy_explanation: str
-
-
-# ============================================================================
-# PERFORMANCE METRICS (Efficiency)
-# ============================================================================
-
-@dataclass
-class PerformanceMetrics:
-    """
-    Cost and efficiency tracking.
-    
-    Key questions:
-    - How expensive was this query?
-    - Where's the time spent?
-    """
-    retrieval_time: float
-    answer_time: float
-    total_time: float
-    answer_tokens: int
-    cost_usd: float
-
-
-# ============================================================================
-# COMPLETE TEST RESULT
-# ============================================================================
-
-@dataclass
-class TestResult:
-    """
-    Complete test result for one query x one mode.
-    
-    Captures all data needed for:
-    - Per-query analysis
-    - Mode comparison
-    - Category-based evaluation
-    - Results section tables/figures
-    """
-    # Metadata
-    test_id: str                      # "q1_semantic", "q1_graph", "q1_dual"
-    query: str
-    mode: str                         # "semantic" | "graph" | "dual"
-    category: str                     # Query type/complexity
-    timestamp: str
-    
-    # Metrics (aligned with thesis objectives)
-    entity_resolution: EntityResolutionMetrics
-    graph_utilization: GraphUtilizationMetrics
-    coverage: CoverageMetrics
-    retrieval: RetrievalMetrics
-    ragas: RAGASMetrics
-    performance: PerformanceMetrics
-    
-    # Raw data for inspection
-    answer_text: str
-    success: bool
-    error: Optional[str] = None
-
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-def compute_entity_resolution_metrics(
-    extracted_entities: List,  # List[ExtractedQueryEntity]
-    resolved_entities: List[ResolvedEntity]
-) -> EntityResolutionMetrics:
-    """
-    Compute entity resolution metrics from retrieval result.
-    
-    Args:
-        extracted_entities: Raw LLM extraction
-        resolved_entities: After FAISS disambiguation
+    def load_pipeline(self):
+        """Load all pipeline components."""
+        print("Loading pipeline components...")
         
-    Returns:
-        EntityResolutionMetrics
-    """
-    extracted_count = len(extracted_entities)
-    resolved_count = len(resolved_entities)
-    
-    resolution_rate = resolved_count / extracted_count if extracted_count > 0 else 0.0
-    
-    avg_confidence = (
-        sum(e.confidence for e in resolved_entities) / resolved_count
-        if resolved_count > 0 else 0.0
-    )
-    
-    entity_names = [e.name for e in resolved_entities]
-    
-    match_types = {}
-    for e in resolved_entities:
-        match_types[e.match_type] = match_types.get(e.match_type, 0) + 1
-    
-    return EntityResolutionMetrics(
-        extracted_count=extracted_count,
-        resolved_count=resolved_count,
-        resolution_rate=resolution_rate,
-        avg_confidence=avg_confidence,
-        entity_names=entity_names,
-        match_types=match_types
-    )
-
-
-def compute_graph_utilization_metrics(
-    subgraph: Subgraph,
-    chunks: List[RankedChunk] = None
-) -> GraphUtilizationMetrics:
-    """
-    Compute graph utilization metrics from subgraph.
-    
-    Args:
-        subgraph: Subgraph object with entities and relations
-        chunks: Optional list of chunks (for jurisdiction extraction)
+        data_dir = PROJECT_ROOT / 'data'
         
-    Returns:
-        GraphUtilizationMetrics
-    """
-    relation_types = {}
-    for rel in subgraph.relations:
-        relation_types[rel.predicate] = relation_types.get(rel.predicate, 0) + 1
-    
-    # Extract jurisdictions from chunks if provided
-    jurisdictions_covered = []
-    if chunks:
-        jurisdictions = set()
-        for chunk in chunks:
-            if chunk.jurisdiction:
-                jurisdictions.add(chunk.jurisdiction)
-        jurisdictions_covered = list(jurisdictions)
-    
-    return GraphUtilizationMetrics(
-        entities_in_subgraph=len(subgraph.entity_ids) if subgraph.entity_ids else 0,
-        relations_in_subgraph=len(subgraph.relations) if subgraph.relations else 0,
-        relation_types=relation_types,
-        jurisdictions_covered=jurisdictions_covered
-    )
-
-
-def compute_retrieval_metrics(
-    chunks: List[RankedChunk],
-    query_embedding: np.ndarray = None,
-    chunk_retriever=None
-) -> RetrievalMetrics:
-    """
-    Compute retrieval metrics from ranked chunks.
-    
-    Args:
-        chunks: List[RankedChunk]
-        query_embedding: Query embedding for similarity computation (optional)
-        chunk_retriever: ChunkRetriever instance for FAISS access (optional)
+        # Embedding model
+        embedding_model = EmbeddingModel()
         
-    Returns:
-        RetrievalMetrics
-    """
-    total_chunks = len(chunks)
+        # Retrieval processor
+        self.processor = RetrievalProcessor(
+            embedding_model=embedding_model,
+            faiss_entity_index_path=data_dir / 'faiss' / 'entities.index',
+            entity_ids_path=data_dir / 'faiss' / 'entity_ids.json',
+            normalized_entities_path=data_dir / 'processed' / 'entities.json',
+            aliases_path=data_dir / 'processed' / 'entities' / 'aliases.json',
+            faiss_chunk_index_path=data_dir / 'faiss' / 'chunks.index',
+            chunk_ids_path=data_dir / 'faiss' / 'chunk_ids.json',
+            neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
+            neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
+            neo4j_password=os.getenv('NEO4J_PASSWORD')
+        )
+        
+        # Answer generator
+        self.generator = AnswerGenerator()
+        
+        # RAGAS evaluator
+        if self.enable_ragas:
+            print("Initializing RAGAS evaluator...")
+            self.ragas = RAGASEvaluator()
+        
+        print("Pipeline loaded\n")
     
-    # Count by source path
-    chunks_by_source = {}
-    for chunk in chunks:
-        source = chunk.source_path
-        chunks_by_source[source] = chunks_by_source.get(source, 0) + 1
-    
-    # Average score
-    avg_chunk_score = sum(c.score for c in chunks) / total_chunks if total_chunks > 0 else 0.0
-    
-    # Compute average query similarity if embeddings available
-    avg_query_similarity = 0.0
-    if query_embedding is not None and chunk_retriever is not None and total_chunks > 0:
-        similarities = []
-        for chunk in chunks:
-            if chunk.chunk_id in chunk_retriever.chunk_id_map:
-                faiss_idx = chunk_retriever.chunk_id_map[chunk.chunk_id]
-                chunk_emb = chunk_retriever.faiss_index.reconstruct(int(faiss_idx))
-                similarity = np.dot(query_embedding, chunk_emb) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)
+    def run_single_test(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int) -> TestResult:
+        """Run a single test with comprehensive metrics collection."""
+        
+        print(f"\n{'='*80}")
+        print(f"TEST {test_num}/{total_tests}: {mode.value.upper()}")
+        print(f"{'='*80}")
+        print(f"Query: {query_def['query']}")
+        print(f"Category: {query_def['category']}")
+        print()
+        
+        try:
+            start_time = time.time()
+            
+            # 1. RETRIEVAL
+            print("1. RETRIEVAL")
+            retrieval_start = time.time()
+            
+            retrieval_result = self.processor.retrieve(query_def['query'], mode=mode)
+            
+            retrieval_time = time.time() - retrieval_start
+            
+            # Compute entity resolution metrics
+            extracted = retrieval_result.parsed_query.extracted_entities if retrieval_result.parsed_query else []
+            resolved = retrieval_result.parsed_query.resolved_entities if retrieval_result.parsed_query else []
+            
+            entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
+            
+            print(f"   Extracted: {entity_metrics.extracted_count} entities")
+            print(f"   Resolved: {entity_metrics.resolved_count} ({entity_metrics.resolution_rate:.1%})")
+            
+            # Compute graph utilization metrics
+            graph_metrics = compute_graph_utilization_metrics(retrieval_result.subgraph, retrieval_result.chunks)
+            
+            print(f"   Subgraph: {graph_metrics.entities_in_subgraph} entities, "
+                  f"{graph_metrics.relations_in_subgraph} relations")
+            
+            # Compute retrieval metrics
+            query_emb = retrieval_result.parsed_query.embedding if retrieval_result.parsed_query else None
+            retrieval_metrics = compute_retrieval_metrics(
+                retrieval_result.chunks,
+                query_emb,
+                self.processor.chunk_retriever
+            )
+            
+            print(f"   Retrieved: {retrieval_metrics.total_chunks} chunks")
+            print(f"   Sources: {retrieval_metrics.chunks_by_source}")
+            
+            # 2. ANSWER GENERATION
+            print("\n2. ANSWER GENERATION")
+            answer_start = time.time()
+            
+            answer_result = self.generator.generate(retrieval_result)
+            
+            answer_time = time.time() - answer_start
+            
+            print(f"   Tokens: {answer_result.output_tokens}")
+            print(f"   Cost: ${answer_result.cost_usd:.4f}")
+            print(f"   Answer preview: {answer_result.answer[:150]}...")
+            
+            # Compute coverage metrics
+            coverage_metrics = compute_coverage_metrics(
+                retrieval_result.subgraph,
+                answer_result.answer,
+                resolved
+            )
+            
+            print(f"   Coverage: {coverage_metrics.entity_coverage_rate:.1%} entities")
+            
+            # 3. RAGAS EVALUATION
+            if self.ragas:
+                print("\n3. RAGAS EVALUATION")
+                
+                context_text = "\n\n".join([chunk.text for chunk in retrieval_result.chunks[:10]])
+                
+                print("   Evaluating faithfulness...")
+                faith = self.ragas.faithfulness(answer_result.answer, context_text)
+                
+                time.sleep(2)  # Rate limit protection
+                
+                print("   Evaluating relevancy...")
+                rel = self.ragas.answer_relevancy(query_def['query'], answer_result.answer)
+                
+                print(f"   Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
+                print(f"   Relevancy: {rel['score']:.3f}")
+                
+                ragas_metrics = RAGASMetrics(
+                    faithfulness_score=faith['score'],
+                    faithfulness_details={
+                        'supported_claims': faith['supported'],
+                        'total_claims': faith['total'],
+                        'explanation': faith['explanation']
+                    },
+                    relevancy_score=rel['score'],
+                    relevancy_explanation=rel['explanation']
                 )
-                similarities.append(float(similarity))
-        
-        avg_query_similarity = sum(similarities) / len(similarities) if similarities else 0.0
-    
-    # Source diversity (doc_type)
-    source_diversity = {}
-    for chunk in chunks:
-        doc_type = chunk.doc_type
-        source_diversity[doc_type] = source_diversity.get(doc_type, 0) + 1
-    
-    # Jurisdiction diversity
-    jurisdictions = set()
-    for chunk in chunks:
-        if chunk.jurisdiction:
-            jurisdictions.add(chunk.jurisdiction)
-    
-    return RetrievalMetrics(
-        total_chunks=total_chunks,
-        chunks_by_source=chunks_by_source,
-        avg_chunk_score=avg_chunk_score,
-        avg_query_similarity=avg_query_similarity,
-        source_diversity=source_diversity,
-        jurisdiction_diversity=list(jurisdictions)
-    )
-
-
-def compute_coverage_metrics(
-    subgraph: Subgraph,
-    answer_text: str,
-    resolved_entities: List[ResolvedEntity] = None
-) -> CoverageMetrics:
-    """
-    Compute coverage metrics: how well did answer utilize retrieved information?
-    
-    Args:
-        subgraph: Subgraph object with entities and relations
-        answer_text: Generated answer text
-        resolved_entities: List of ResolvedEntity objects with actual names
-        
-    Returns:
-        CoverageMetrics
-    """
-    # Entities in subgraph (what was available)
-    entities_in_subgraph = len(subgraph.entity_ids) if subgraph.entity_ids else 0
-    relations_in_subgraph = len(subgraph.relations) if subgraph.relations else 0
-    
-    # Build entity name lookup from resolved_entities
-    entity_names_map = {}
-    if resolved_entities:
-        for entity in resolved_entities:
-            entity_names_map[entity.entity_id] = entity.name
-    
-    # Extract entity names from subgraph for matching
-    subgraph_entity_names = set()
-    if subgraph.entity_ids:
-        for entity_id in subgraph.entity_ids:
-            if entity_id in entity_names_map:
-                name = entity_names_map[entity_id]
-                subgraph_entity_names.add(name.lower())
             else:
-                subgraph_entity_names.add(entity_id.lower())
+                ragas_metrics = RAGASMetrics(
+                    faithfulness_score=0.0,
+                    faithfulness_details={},
+                    relevancy_score=0.0,
+                    relevancy_explanation="RAGAS disabled"
+                )
+            
+            # 4. PACKAGE RESULT
+            total_time = time.time() - start_time
+            
+            performance_metrics = PerformanceMetrics(
+                retrieval_time=retrieval_time,
+                answer_time=answer_time,
+                total_time=total_time,
+                answer_tokens=answer_result.output_tokens,
+                cost_usd=answer_result.cost_usd
+            )
+            
+            test_result = TestResult(
+                test_id=f"{query_def['id']}_{mode.value}",
+                query=query_def['query'],
+                mode=mode.value,
+                category=query_def['category'],
+                timestamp=datetime.now().isoformat(),
+                entity_resolution=entity_metrics,
+                graph_utilization=graph_metrics,
+                coverage=coverage_metrics,
+                retrieval=retrieval_metrics,
+                ragas=ragas_metrics,
+                performance=performance_metrics,
+                answer_text=answer_result.answer,
+                success=True,
+                error=None
+            )
+            
+            print(f"\nTest completed in {total_time:.1f}s")
+            
+            return test_result
+            
+        except Exception as e:
+            logger.error(f"Test failed: {e}", exc_info=True)
+            print(f"\nTEST FAILED: {e}")
+            
+            return TestResult(
+                test_id=f"{query_def['id']}_{mode.value}",
+                query=query_def['query'],
+                mode=mode.value,
+                category=query_def['category'],
+                timestamp=datetime.now().isoformat(),
+                entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
+                graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
+                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
+                retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
+                ragas=RAGASMetrics(0.0, {}, 0.0, ""),
+                performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
+                answer_text="",
+                success=False,
+                error=str(e)
+            )
     
-    # Check if entity names appear in answer
-    answer_lower = answer_text.lower()
+    def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
+        """Run complete ablation study."""
+        
+        print(f"\n{'='*80}")
+        print("GRAPHRAG RETRIEVAL ABLATION STUDY v1.1")
+        print(f"{'='*80}\n")
+        
+        print(f"Configuration:")
+        print(f"  Queries: {len(queries)}")
+        print(f"  Modes: {[m.value for m in modes]}")
+        print(f"  Total tests: {len(queries) * len(modes)}")
+        print(f"  RAGAS evaluation: {'ENABLED' if self.enable_ragas else 'DISABLED'}")
+        print()
+        
+        test_num = 0
+        total_tests = len(queries) * len(modes)
+        
+        for query_def in queries:
+            for mode in modes:
+                test_num += 1
+                result = self.run_single_test(query_def, mode, test_num, total_tests)
+                self.results.append(result)
+        
+        return self.results
     
-    covered_entities = []
-    uncovered_entities = []
+    def analyze_results(self):
+        """Generate analysis summary."""
+        
+        print(f"\n\n{'='*80}")
+        print("ANALYSIS SUMMARY")
+        print(f"{'='*80}\n")
+        
+        successful_tests = [r for r in self.results if r.success]
+        
+        print(f"Tests completed: {len(successful_tests)}/{len(self.results)}\n")
+        
+        for mode in ['semantic', 'graph', 'dual']:
+            mode_results = [r for r in successful_tests if r.mode == mode]
+            if mode_results:
+                avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
+                avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
+                
+                print(f"{mode.upper():10} -> {avg_chunks:.1f} chunks, {avg_entities:.1f} entities")
+                
+                if self.enable_ragas:
+                    avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
+                    avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
+                    print(f"           Faithfulness: {avg_faith:.3f}, Relevancy: {avg_rel:.3f}")
     
-    for entity_name in subgraph_entity_names:
-        if entity_name in answer_lower:
-            covered_entities.append(entity_name)
+    def save_results(self, output_dir: Path):
+        """Save results to JSON and markdown."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Convert to JSON-serializable format
+        results_dicts = []
+        for r in self.results:
+            result_dict = {
+                'test_id': r.test_id,
+                'query': r.query,
+                'mode': r.mode,
+                'category': r.category,
+                'success': r.success,
+                'error': r.error,
+                'entity_resolution': {
+                    'extracted_count': r.entity_resolution.extracted_count,
+                    'resolved_count': r.entity_resolution.resolved_count,
+                    'resolution_rate': r.entity_resolution.resolution_rate,
+                    'match_types': r.entity_resolution.match_types
+                },
+                'graph_utilization': {
+                    'entities_in_subgraph': r.graph_utilization.entities_in_subgraph,
+                    'relations_in_subgraph': r.graph_utilization.relations_in_subgraph
+                },
+                'retrieval': {
+                    'total_chunks': r.retrieval.total_chunks,
+                    'chunks_by_source': r.retrieval.chunks_by_source
+                },
+                'ragas': {
+                    'faithfulness_score': r.ragas.faithfulness_score,
+                    'relevancy_score': r.ragas.relevancy_score
+                },
+                'performance': {
+                    'total_time': r.performance.total_time,
+                    'cost_usd': r.performance.cost_usd
+                }
+            }
+            results_dicts.append(result_dict)
+        
+        json_file = output_dir / f'ablation_results_{timestamp}.json'
+        with open(json_file, 'w') as f:
+            json.dump(results_dicts, f, indent=2, default=str)
+        
+        print(f"\nResults saved to: {json_file}")
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description='Retrieval ablation study')
+    parser.add_argument('--quick', action='store_true', help='Quick test with 2 queries')
+    parser.add_argument('--queries', type=int, help='Number of queries')
+    parser.add_argument('--no-ragas', action='store_true', help='Skip RAGAS')
+    parser.add_argument('-o', '--output', type=str, default='data/analysis/results', help='Output dir')
+    
+    args = parser.parse_args()
+    
+    try:
+        if args.quick:
+            queries = TEST_QUERIES[:2]
+        elif args.queries:
+            queries = TEST_QUERIES[:args.queries]
         else:
-            uncovered_entities.append(entity_name)
-    
-    entities_in_answer = len(covered_entities)
-    entity_coverage_rate = entities_in_answer / entities_in_subgraph if entities_in_subgraph > 0 else 0.0
-    
-    # Relation coverage: check if relation predicates appear in answer
-    relations_mentioned = 0
-    if subgraph.relations:
-        for rel in subgraph.relations:
-            # Check if predicate-like text appears
-            predicate_lower = rel.predicate.lower().replace('_', ' ')
-            if predicate_lower in answer_lower:
-                relations_mentioned += 1
-    
-    relation_coverage_rate = relations_mentioned / relations_in_subgraph if relations_in_subgraph > 0 else 0.0
-    
-    return CoverageMetrics(
-        entities_in_subgraph=entities_in_subgraph,
-        entities_in_answer=entities_in_answer,
-        entity_coverage_rate=entity_coverage_rate,
-        relations_in_subgraph=relations_in_subgraph,
-        relations_mentioned=relations_mentioned,
-        relation_coverage_rate=relation_coverage_rate,
-        covered_entities=covered_entities[:10],
-        uncovered_entities=uncovered_entities[:10]
-    )
+            queries = TEST_QUERIES
+        
+        modes = [RetrievalMode.SEMANTIC, RetrievalMode.GRAPH, RetrievalMode.DUAL]
+        
+        suite = AblationTestSuite(enable_ragas=not args.no_ragas)
+        suite.load_pipeline()
+        suite.run_full_suite(queries, modes)
+        suite.analyze_results()
+        suite.save_results(Path(args.output))
+        
+        print("\nAblation study complete!\n")
+        
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error("Ablation study failed: %s", str(e), exc_info=True)
+        print(f"\nError: {e}")
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
