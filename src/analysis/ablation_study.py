@@ -35,7 +35,7 @@ from config.retrieval_config import RetrievalMode
 # Local
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from src.utils.embedder import BGEEmbedder
+from src.utils.embeddings import EmbeddingModel
 from src.utils.logger import get_logger
 
 # Analysis metrics
@@ -226,17 +226,17 @@ class AblationTestSuite:
         data_dir = PROJECT_ROOT / 'data'
         
         # Embedding model
-        embedding_model = BGEEmbedder()
+        embedding_model = EmbeddingModel()
         
         # Retrieval processor
         self.processor = RetrievalProcessor(
             embedding_model=embedding_model,
-            faiss_entity_index_path=data_dir / 'processed' / 'faiss' / 'entity_embeddings.index',
-            entity_ids_path=data_dir / 'processed' / 'faiss' / 'entity_id_map.json',
-            normalized_entities_path=data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl',
+            faiss_entity_index_path=data_dir / 'faiss' / 'entities.index',
+            entity_ids_path=data_dir / 'faiss' / 'entity_ids.json',
+            normalized_entities_path=data_dir / 'processed' / 'entities.json',
             aliases_path=data_dir / 'processed' / 'entities' / 'aliases.json',
-            faiss_chunk_index_path=data_dir / 'processed' / 'faiss' / 'chunk_embeddings.index',
-            chunk_ids_path=data_dir / 'processed' / 'faiss' / 'chunk_id_map.json',
+            faiss_chunk_index_path=data_dir / 'faiss' / 'chunks.index',
+            chunk_ids_path=data_dir / 'faiss' / 'chunk_ids.json',
             neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
             neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
             neo4j_password=os.getenv('NEO4J_PASSWORD')
@@ -480,11 +480,25 @@ class AblationTestSuite:
                 },
                 'graph_utilization': {
                     'entities_in_subgraph': r.graph_utilization.entities_in_subgraph,
-                    'relations_in_subgraph': r.graph_utilization.relations_in_subgraph
+                    'relations_in_subgraph': r.graph_utilization.relations_in_subgraph,
+                    'relation_types': r.graph_utilization.relation_types,
+                    'jurisdictions_covered': r.graph_utilization.jurisdictions_covered
                 },
                 'retrieval': {
                     'total_chunks': r.retrieval.total_chunks,
-                    'chunks_by_source': r.retrieval.chunks_by_source
+                    'chunks_by_source': r.retrieval.chunks_by_source,
+                    'avg_chunk_score': r.retrieval.avg_chunk_score,
+                    'avg_query_similarity': r.retrieval.avg_query_similarity,
+                    'source_diversity': r.retrieval.source_diversity,
+                    'jurisdiction_diversity': r.retrieval.jurisdiction_diversity
+                },
+                'coverage': {
+                    'entities_in_subgraph': r.coverage.entities_in_subgraph,
+                    'entities_in_answer': r.coverage.entities_in_answer,
+                    'entity_coverage_rate': r.coverage.entity_coverage_rate,
+                    'relations_in_subgraph': r.coverage.relations_in_subgraph,
+                    'relations_mentioned': r.coverage.relations_mentioned,
+                    'relation_coverage_rate': r.coverage.relation_coverage_rate
                 },
                 'ragas': {
                     'faithfulness_score': r.ragas.faithfulness_score,
