@@ -75,3 +75,12 @@ htmlcov/
 .gitignore
 .gitignore.local
 .gitignore.*.local
+
+# Generated Analysis Outputs (DO NOT COMMIT)
+data/analysis/results/ablation_*.json
+data/analysis/results/ablation_*.md
+data/analysis/results/latex/
+ablation_vars_*.tex
+ablation_table_*.tex
+ablation_appendix_*.tex
+ablation_data_*.tex

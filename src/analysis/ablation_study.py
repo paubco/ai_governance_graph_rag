@@ -5,10 +5,15 @@ Unified ablation study with comprehensive evaluation metrics.
 
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
+Modes:
+    --detailed    6 queries, full answers printed, verbose per-query analysis
+    --full        30 queries, compact output, aggregate stats for charts
+    (default)     6 queries, compact output
+
 Example:
-    python src/analysis/ablation_study.py
-    python src/analysis/ablation_study.py --quick
-    python src/analysis/ablation_study.py --no-ragas
+    python src/analysis/ablation_study.py --detailed        # Full analysis
+    python src/analysis/ablation_study.py --full            # Stats for charts
+    python src/analysis/ablation_study.py --quick --no-ragas  # Quick debug
 """
 
 # Standard library
@@ -16,6 +21,7 @@ import argparse
 import json
 import os
 import sys
+import textwrap
 import time
 from datetime import datetime
 from pathlib import Path
@@ -35,7 +41,7 @@ from config.retrieval_config import RetrievalMode
 # Local
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from src.utils.embedder import BGEEmbedder
+from src.utils.embeddings import EmbeddingModel
 from src.utils.logger import get_logger
 
 # Analysis metrics
@@ -165,44 +171,10 @@ Output JSON only:
 # TEST QUERIES
 # ============================================================================
 
-TEST_QUERIES = [
-    {
-        'id': 'q1',
-        'query': 'What is the EU AI Act?',
-        'category': 'simple_factual',
-        'description': 'Major regulation entity'
-    },
-    {
-        'id': 'q2',
-        'query': 'What are high-risk AI systems?',
-        'category': 'simple_factual',
-        'description': 'Core concept in AI governance'
-    },
-    {
-        'id': 'q3',
-        'query': 'Which jurisdictions regulate facial recognition?',
-        'category': 'cross_jurisdictional',
-        'description': 'Multi-jurisdiction entity traversal'
-    },
-    {
-        'id': 'q4',
-        'query': 'Compare China and US AI governance',
-        'category': 'cross_jurisdictional_comparison',
-        'description': 'Cross-jurisdiction comparison'
-    },
-    {
-        'id': 'q5',
-        'query': 'What academic research discusses algorithmic bias?',
-        'category': 'multi_hop_research',
-        'description': 'Research papers to concept'
-    },
-    {
-        'id': 'q6',
-        'query': "What is Snoopy's arch enemy?",
-        'category': 'out_of_domain',
-        'description': 'Should fail gracefully'
-    }
-]
+from src.analysis.test_queries import QUICK_QUERIES, FULL_QUERIES, get_queries
+
+# Default to quick queries for backward compatibility
+TEST_QUERIES = QUICK_QUERIES
 
 
 # ============================================================================
@@ -212,8 +184,9 @@ TEST_QUERIES = [
 class AblationTestSuite:
     """Unified test suite for retrieval mode ablation."""
     
-    def __init__(self, enable_ragas: bool = True):
+    def __init__(self, enable_ragas: bool = True, detailed: bool = False):
         self.enable_ragas = enable_ragas
+        self.detailed = detailed  # Detailed mode: full answers, verbose metrics
         self.processor = None
         self.generator = None
         self.ragas = None
@@ -226,17 +199,17 @@ class AblationTestSuite:
         data_dir = PROJECT_ROOT / 'data'
         
         # Embedding model
-        embedding_model = BGEEmbedder()
+        embedding_model = EmbeddingModel()
         
         # Retrieval processor
         self.processor = RetrievalProcessor(
             embedding_model=embedding_model,
-            faiss_entity_index_path=data_dir / 'processed' / 'faiss' / 'entity_embeddings.index',
-            entity_ids_path=data_dir / 'processed' / 'faiss' / 'entity_id_map.json',
-            normalized_entities_path=data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl',
+            faiss_entity_index_path=data_dir / 'faiss' / 'entities.index',
+            entity_ids_path=data_dir / 'faiss' / 'entity_ids.json',
+            normalized_entities_path=data_dir / 'processed' / 'entities.json',
             aliases_path=data_dir / 'processed' / 'entities' / 'aliases.json',
-            faiss_chunk_index_path=data_dir / 'processed' / 'faiss' / 'chunk_embeddings.index',
-            chunk_ids_path=data_dir / 'processed' / 'faiss' / 'chunk_id_map.json',
+            faiss_chunk_index_path=data_dir / 'faiss' / 'chunks.index',
+            chunk_ids_path=data_dir / 'faiss' / 'chunk_ids.json',
             neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
             neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
             neo4j_password=os.getenv('NEO4J_PASSWORD')
@@ -255,18 +228,26 @@ class AblationTestSuite:
     def run_single_test(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int) -> TestResult:
         """Run a single test with comprehensive metrics collection."""
         
-        print(f"\n{'='*80}")
-        print(f"TEST {test_num}/{total_tests}: {mode.value.upper()}")
-        print(f"{'='*80}")
-        print(f"Query: {query_def['query']}")
-        print(f"Category: {query_def['category']}")
-        print()
+        if self.detailed:
+            print(f"\n{'━'*80}")
+            print(f"  TEST {test_num}/{total_tests}: {mode.value.upper()}")
+            print(f"{'━'*80}")
+            print(f"  Query: {query_def['query']}")
+            print(f"  Category: {query_def['category']}")
+            if query_def.get('expected_mode'):
+                print(f"  Expected winner: {query_def['expected_mode']}")
+            print()
+        else:
+            # Compact output for stats mode
+            q_short = query_def['query'][:40] + '...' if len(query_def['query']) > 40 else query_def['query']
+            print(f"  [{test_num}/{total_tests}] {mode.value:8} | {q_short}")
         
         try:
             start_time = time.time()
             
             # 1. RETRIEVAL
-            print("1. RETRIEVAL")
+            if self.detailed:
+                print("  1. RETRIEVAL")
             retrieval_start = time.time()
             
             retrieval_result = self.processor.retrieve(query_def['query'], mode=mode)
@@ -279,14 +260,21 @@ class AblationTestSuite:
             
             entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
             
-            print(f"   Extracted: {entity_metrics.extracted_count} entities")
-            print(f"   Resolved: {entity_metrics.resolved_count} ({entity_metrics.resolution_rate:.1%})")
+            if self.detailed:
+                print(f"     Extracted: {entity_metrics.extracted_count} entities")
+                print(f"     Resolved: {entity_metrics.resolved_count} ({entity_metrics.resolution_rate:.1%})")
+                if entity_metrics.entity_names:
+                    print(f"     Entities: {', '.join(entity_metrics.entity_names[:5])}")
+                print(f"     Match types: {entity_metrics.match_types}")
             
             # Compute graph utilization metrics
             graph_metrics = compute_graph_utilization_metrics(retrieval_result.subgraph, retrieval_result.chunks)
             
-            print(f"   Subgraph: {graph_metrics.entities_in_subgraph} entities, "
-                  f"{graph_metrics.relations_in_subgraph} relations")
+            if self.detailed:
+                print(f"     Subgraph: {graph_metrics.entities_in_subgraph} entities, "
+                      f"{graph_metrics.relations_in_subgraph} relations")
+                if graph_metrics.relation_types:
+                    print(f"     Relation types: {graph_metrics.relation_types}")
             
             # Compute retrieval metrics
             query_emb = retrieval_result.parsed_query.embedding if retrieval_result.parsed_query else None
@@ -296,20 +284,25 @@ class AblationTestSuite:
                 self.processor.chunk_retriever
             )
             
-            print(f"   Retrieved: {retrieval_metrics.total_chunks} chunks")
-            print(f"   Sources: {retrieval_metrics.chunks_by_source}")
+            if self.detailed:
+                print(f"     Retrieved: {retrieval_metrics.total_chunks} chunks")
+                print(f"     Sources: {retrieval_metrics.chunks_by_source}")
+                print(f"     Avg similarity: {retrieval_metrics.avg_query_similarity:.3f}")
+                print(f"     Source diversity: {retrieval_metrics.source_diversity}")
+                print(f"     Jurisdictions: {retrieval_metrics.jurisdiction_diversity}")
             
             # 2. ANSWER GENERATION
-            print("\n2. ANSWER GENERATION")
+            if self.detailed:
+                print("\n  2. ANSWER GENERATION")
             answer_start = time.time()
             
             answer_result = self.generator.generate(retrieval_result)
             
             answer_time = time.time() - answer_start
             
-            print(f"   Tokens: {answer_result.output_tokens}")
-            print(f"   Cost: ${answer_result.cost_usd:.4f}")
-            print(f"   Answer preview: {answer_result.answer[:150]}...")
+            if self.detailed:
+                print(f"     Tokens: {answer_result.output_tokens}")
+                print(f"     Cost: ${answer_result.cost_usd:.4f}")
             
             # Compute coverage metrics
             coverage_metrics = compute_coverage_metrics(
@@ -318,24 +311,46 @@ class AblationTestSuite:
                 resolved
             )
             
-            print(f"   Coverage: {coverage_metrics.entity_coverage_rate:.1%} entities")
+            if self.detailed:
+                print(f"     Entity coverage: {coverage_metrics.entity_coverage_rate:.1%}")
+                print(f"     Relation coverage: {coverage_metrics.relation_coverage_rate:.1%}")
+                if coverage_metrics.covered_entities:
+                    print(f"     Covered: {', '.join(coverage_metrics.covered_entities[:5])}")
+                if coverage_metrics.uncovered_entities:
+                    print(f"     Missed: {', '.join(coverage_metrics.uncovered_entities[:5])}")
+                
+                # Print FULL answer in detailed mode
+                print(f"\n  ┌{'─'*76}┐")
+                print(f"  │ FULL ANSWER{' '*64}│")
+                print(f"  ├{'─'*76}┤")
+                # Wrap answer text
+                wrapped = textwrap.wrap(answer_result.answer, width=74)
+                for line in wrapped:
+                    print(f"  │ {line:<74} │")
+                print(f"  └{'─'*76}┘")
             
             # 3. RAGAS EVALUATION
             if self.ragas:
-                print("\n3. RAGAS EVALUATION")
+                if self.detailed:
+                    print("\n  3. RAGAS EVALUATION")
+                    print("     Evaluating faithfulness...")
                 
                 context_text = "\n\n".join([chunk.text for chunk in retrieval_result.chunks[:10]])
                 
-                print("   Evaluating faithfulness...")
                 faith = self.ragas.faithfulness(answer_result.answer, context_text)
                 
                 time.sleep(2)  # Rate limit protection
                 
-                print("   Evaluating relevancy...")
+                if self.detailed:
+                    print("     Evaluating relevancy...")
+                
                 rel = self.ragas.answer_relevancy(query_def['query'], answer_result.answer)
                 
-                print(f"   Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
-                print(f"   Relevancy: {rel['score']:.3f}")
+                if self.detailed:
+                    print(f"     Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
+                    print(f"     Relevancy: {rel['score']:.3f}")
+                    if faith.get('explanation'):
+                        print(f"     Explanation: {faith['explanation'][:100]}...")
                 
                 ragas_metrics = RAGASMetrics(
                     faithfulness_score=faith['score'],
@@ -383,7 +398,9 @@ class AblationTestSuite:
                 error=None
             )
             
-            print(f"\nTest completed in {total_time:.1f}s")
+            if self.detailed:
+                print(f"\n  Test completed in {total_time:.1f}s")
+                print(f"  {'─'*76}")
             
             return test_result
             
@@ -434,33 +451,224 @@ class AblationTestSuite:
         return self.results
     
     def analyze_results(self):
-        """Generate analysis summary."""
+        """Generate analysis summary with expectation validation."""
         
-        print(f"\n\n{'='*80}")
-        print("ANALYSIS SUMMARY")
-        print(f"{'='*80}\n")
+        print(f"\n\n{'━'*80}")
+        print("  ANALYSIS SUMMARY")
+        print(f"{'━'*80}\n")
         
         successful_tests = [r for r in self.results if r.success]
         
-        print(f"Tests completed: {len(successful_tests)}/{len(self.results)}\n")
+        print(f"  Tests completed: {len(successful_tests)}/{len(self.results)}\n")
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 1. MODE PERFORMANCE
+        # ─────────────────────────────────────────────────────────────────────
+        print(f"  {'─'*76}")
+        print(f"  1. MODE PERFORMANCE")
+        print(f"  {'─'*76}")
+        print(f"\n  {'Mode':<12} {'Chunks':>8} {'Entities':>10} {'Relations':>10} {'Faith':>8} {'Relev':>8}")
+        print(f"  {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*8} {'-'*8}")
         
         for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
                 avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
                 avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
-                
-                print(f"{mode.upper():10} -> {avg_chunks:.1f} chunks, {avg_entities:.1f} entities")
+                avg_relations = sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results)
                 
                 if self.enable_ragas:
                     avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
                     avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
-                    print(f"           Faithfulness: {avg_faith:.3f}, Relevancy: {avg_rel:.3f}")
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {avg_faith:>8.3f} {avg_rel:>8.3f}")
+                else:
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {'N/A':>8} {'N/A':>8}")
+        
+        # Group results by query (used in sections 2 and 5)
+        queries = {}
+        for r in successful_tests:
+            if r.query not in queries:
+                queries[r.query] = {}
+            queries[r.query][r.mode] = r.ragas.faithfulness_score if self.enable_ragas else 0
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 2. PER-QUERY WINNERS (if RAGAS enabled)
+        # ─────────────────────────────────────────────────────────────────────
+        if self.enable_ragas:
+            print(f"\n  {'─'*76}")
+            print(f"  2. PER-QUERY WINNERS (by faithfulness)")
+            print(f"  {'─'*76}")
+            
+            print(f"\n  {'Query':<45} {'Sem':>6} {'Graph':>6} {'Dual':>6} {'Winner':>8}")
+            print(f"  {'-'*45} {'-'*6} {'-'*6} {'-'*6} {'-'*8}")
+            
+            winners = {'semantic': 0, 'graph': 0, 'dual': 0, 'tie': 0}
+            
+            for query, scores in queries.items():
+                q_short = query[:42] + '...' if len(query) > 42 else query
+                sem = scores.get('semantic', 0)
+                graph = scores.get('graph', 0)
+                dual = scores.get('dual', 0)
+                
+                # Determine winner
+                max_score = max(sem, graph, dual)
+                if max_score == 0:
+                    winner = 'N/A'
+                elif sem == graph == dual:
+                    winner = 'tie'
+                    winners['tie'] += 1
+                elif sem == max_score:
+                    winner = 'semantic'
+                    winners['semantic'] += 1
+                elif graph == max_score:
+                    winner = 'graph'
+                    winners['graph'] += 1
+                else:
+                    winner = 'dual'
+                    winners['dual'] += 1
+                
+                print(f"  {q_short:<45} {sem:>6.2f} {graph:>6.2f} {dual:>6.2f} {winner:>8}")
+            
+            print(f"\n  Winner counts: semantic={winners['semantic']}, graph={winners['graph']}, dual={winners['dual']}, tie={winners['tie']}")
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 3. CATEGORY ANALYSIS
+        # ─────────────────────────────────────────────────────────────────────
+        print(f"\n  {'─'*76}")
+        print(f"  3. CATEGORY ANALYSIS")
+        print(f"  {'─'*76}")
+        
+        categories = {}
+        for r in successful_tests:
+            if r.category not in categories:
+                categories[r.category] = {'semantic': [], 'graph': [], 'dual': []}
+            categories[r.category][r.mode].append(r)
+        
+        print(f"\n  {'Category':<30} {'Best Mode':<12} {'Faith (S/G/D)':<20} {'n':>4}")
+        print(f"  {'-'*30} {'-'*12} {'-'*20} {'-'*4}")
+        
+        for cat, mode_results in sorted(categories.items()):
+            scores = {}
+            for mode in ['semantic', 'graph', 'dual']:
+                if mode_results[mode]:
+                    if self.enable_ragas:
+                        scores[mode] = sum(r.ragas.faithfulness_score for r in mode_results[mode]) / len(mode_results[mode])
+                    else:
+                        scores[mode] = 0
+            
+            if scores:
+                best = max(scores, key=scores.get)
+                score_str = f"{scores.get('semantic', 0):.2f}/{scores.get('graph', 0):.2f}/{scores.get('dual', 0):.2f}"
+                n = len(mode_results['semantic']) + len(mode_results['graph']) + len(mode_results['dual'])
+                print(f"  {cat:<30} {best.upper():<12} {score_str:<20} {n//3:>4}")
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 4. RELATION UTILIZATION ANALYSIS
+        # ─────────────────────────────────────────────────────────────────────
+        print(f"\n  {'─'*76}")
+        print(f"  4. RELATION UTILIZATION ANALYSIS")
+        print(f"  {'─'*76}")
+        
+        # Compute relation chunk ratio and correlation with faithfulness
+        relation_data = []
+        for r in successful_tests:
+            chunks = r.retrieval.chunks_by_source
+            s = chunks.get('semantic', 0)
+            rel_chunks = chunks.get('graph_provenance', 0)
+            e = chunks.get('graph_entity', 0)
+            total = s + rel_chunks + e
+            
+            if total > 0:
+                rel_ratio = rel_chunks / total
+            else:
+                rel_ratio = 0
+            
+            relation_data.append({
+                'mode': r.mode,
+                'rel_ratio': rel_ratio,
+                'rel_chunks': rel_chunks,
+                'faithfulness': r.ragas.faithfulness_score if self.enable_ragas else 0
+            })
+        
+        # Aggregate by mode
+        print(f"\n  {'Mode':<12} {'Rel Chunks':>12} {'Rel Ratio':>12} {'Avg Faith':>12}")
+        print(f"  {'-'*12} {'-'*12} {'-'*12} {'-'*12}")
+        
+        for mode in ['semantic', 'graph', 'dual']:
+            mode_data = [d for d in relation_data if d['mode'] == mode]
+            if mode_data:
+                avg_rel = sum(d['rel_chunks'] for d in mode_data) / len(mode_data)
+                avg_ratio = sum(d['rel_ratio'] for d in mode_data) / len(mode_data)
+                avg_faith = sum(d['faithfulness'] for d in mode_data) / len(mode_data)
+                print(f"  {mode.upper():<12} {avg_rel:>12.1f} {avg_ratio:>12.1%} {avg_faith:>12.2f}")
+        
+        # Correlation analysis (simple: high rel_ratio queries vs low)
+        if self.enable_ragas:
+            graph_data = [d for d in relation_data if d['mode'] == 'graph']
+            if graph_data:
+                high_rel = [d for d in graph_data if d['rel_ratio'] > 0.3]
+                low_rel = [d for d in graph_data if d['rel_ratio'] <= 0.3]
+                
+                if high_rel and low_rel:
+                    high_faith = sum(d['faithfulness'] for d in high_rel) / len(high_rel)
+                    low_faith = sum(d['faithfulness'] for d in low_rel) / len(low_rel)
+                    print(f"\n  Graph mode correlation (rel_ratio > 0.3 vs <= 0.3):")
+                    print(f"    High relation context: {high_faith:.2f} avg faithfulness (n={len(high_rel)})")
+                    print(f"    Low relation context:  {low_faith:.2f} avg faithfulness (n={len(low_rel)})")
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # 5. EXPECTATION VALIDATION
+        # ─────────────────────────────────────────────────────────────────────
+        print(f"\n  {'─'*76}")
+        print(f"  5. EXPECTATION VALIDATION")
+        print(f"  {'─'*76}")
+        
+        # Check if expected_mode predictions held
+        if self.enable_ragas:
+            correct = 0
+            total_expected = 0
+            
+            for query, scores in queries.items():
+                # Find the query definition to get expected_mode
+                # We need to match query text to QUICK_QUERIES or FULL_QUERIES
+                expected = None
+                for qdef in QUICK_QUERIES + FULL_QUERIES:
+                    if qdef['query'] == query:
+                        expected = qdef.get('expected_mode')
+                        break
+                
+                if not expected:
+                    continue
+                
+                total_expected += 1
+                
+                # Determine actual winner
+                max_score = max(scores.values())
+                if max_score == 0:
+                    continue
+                    
+                actual_winners = [m for m, s in scores.items() if s == max_score]
+                
+                if expected in actual_winners:
+                    correct += 1
+                    status = "✓"
+                else:
+                    status = "✗"
+                
+                q_short = query[:40] + '...' if len(query) > 40 else query
+                actual_str = '/'.join(actual_winners)
+                print(f"  {status} {q_short:<42} expected={expected:<8} actual={actual_str}")
+            
+            if total_expected > 0:
+                print(f"\n  Prediction accuracy: {correct}/{total_expected} ({correct/total_expected:.0%})")
+        
+        print(f"\n{'━'*80}\n")
     
-    def save_results(self, output_dir: Path):
+    def save_results(self, output_dir: Path, detailed: bool = False):
         """Save results to JSON and markdown."""
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        mode_suffix = 'detailed' if detailed else 'stats'
         
         # Convert to JSON-serializable format
         results_dicts = []
@@ -520,16 +728,18 @@ class AblationTestSuite:
             }
             results_dicts.append(result_dict)
         
-        json_file = output_dir / f'ablation_results_{timestamp}.json'
+        json_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.json'
         with open(json_file, 'w') as f:
             json.dump(results_dicts, f, indent=2, default=str)
         
         print(f"\nResults saved to: {json_file}")
         
         # Generate markdown report
-        self._generate_markdown_report(output_dir, timestamp, results_dicts)
+        self._generate_markdown_report(output_dir, timestamp, results_dicts, mode_suffix)
+        
+        return json_file
     
-    def _generate_markdown_report(self, output_dir: Path, timestamp: str, results_dicts: List[Dict]):
+    def _generate_markdown_report(self, output_dir: Path, timestamp: str, results_dicts: List[Dict], mode_suffix: str):
         """Generate comprehensive markdown report for thesis."""
         
         successful_tests = [r for r in self.results if r.success]
@@ -717,13 +927,105 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 
 ---
 
+## Mode Winner Analysis
+
+"""
+        # Compute per-query winners
+        query_scores = {}
+        for rd in results_dicts:
+            q = rd['query']
+            if q not in query_scores:
+                query_scores[q] = {'category': rd['category'], 'scores': {}}
+            query_scores[q]['scores'][rd['mode']] = rd['ragas']['faithfulness_score']
+        
+        report += """### Per-Query Winners (by Faithfulness)
+
+| Query | Category | Semantic | Graph | Dual | Winner |
+|-------|----------|----------|-------|------|--------|
+"""
+        winners = {'semantic': 0, 'graph': 0, 'dual': 0, 'tie': 0}
+        query_winners = []
+        
+        for query, data in query_scores.items():
+            scores = data['scores']
+            sem = scores.get('semantic', 0)
+            graph = scores.get('graph', 0)
+            dual = scores.get('dual', 0)
+            
+            max_score = max(sem, graph, dual)
+            if max_score == 0:
+                winner = 'N/A'
+            elif sem == graph == dual:
+                winner = 'tie'
+                winners['tie'] += 1
+            elif sem == max_score:
+                winner = 'semantic'
+                winners['semantic'] += 1
+            elif graph == max_score:
+                winner = 'graph'
+                winners['graph'] += 1
+            else:
+                winner = 'dual'
+                winners['dual'] += 1
+            
+            query_winners.append({'query': query, 'category': data['category'], 'winner': winner})
+            q_short = query[:35] + '...' if len(query) > 35 else query
+            winner_fmt = f"**{winner}**" if winner not in ['N/A', 'tie'] else winner
+            report += f"| {q_short} | {data['category']} | {sem:.2f} | {graph:.2f} | {dual:.2f} | {winner_fmt} |\n"
+        
+        report += f"""
+### Winner Summary
+
+| Mode | Wins | Percentage |
+|------|------|------------|
+| Semantic | {winners['semantic']} | {winners['semantic']/max(1,sum(winners.values()))*100:.1f}% |
+| Graph | {winners['graph']} | {winners['graph']/max(1,sum(winners.values()))*100:.1f}% |
+| Dual | {winners['dual']} | {winners['dual']/max(1,sum(winners.values()))*100:.1f}% |
+| Tie | {winners['tie']} | {winners['tie']/max(1,sum(winners.values()))*100:.1f}% |
+
+### Best Mode by Category
+
+| Category | Best Mode | Semantic | Graph | Dual |
+|----------|-----------|----------|-------|------|
+"""
+        # Aggregate by category
+        cat_scores = {}
+        for rd in results_dicts:
+            cat = rd['category']
+            if cat not in cat_scores:
+                cat_scores[cat] = {'semantic': [], 'graph': [], 'dual': []}
+            cat_scores[cat][rd['mode']].append(rd['ragas']['faithfulness_score'])
+        
+        for cat, modes in sorted(cat_scores.items()):
+            avgs = {}
+            for mode in ['semantic', 'graph', 'dual']:
+                if modes[mode]:
+                    avgs[mode] = sum(modes[mode]) / len(modes[mode])
+                else:
+                    avgs[mode] = 0
+            
+            best = max(avgs, key=avgs.get)
+            best_fmt = f"**{best.upper()}**"
+            report += f"| {cat} | {best_fmt} | {avgs['semantic']:.2f} | {avgs['graph']:.2f} | {avgs['dual']:.2f} |\n"
+
+        report += """
+---
+
 ## Test Queries
 
-| # | Query | Category | Expected Strength |
-|---|-------|----------|-------------------|
+| # | Query | Category |
+|---|-------|----------|
 """
-        for i, q in enumerate(TEST_QUERIES, 1):
-            report += f"| {i} | {q['query']} | {q['category']} | {q.get('expected_strength', 'dual')} |\n"
+        # Get unique queries from results (preserves order)
+        seen = set()
+        unique_queries = []
+        for rd in results_dicts:
+            if rd['query'] not in seen:
+                seen.add(rd['query'])
+                unique_queries.append({'query': rd['query'], 'category': rd['category']})
+        
+        for i, q in enumerate(unique_queries, 1):
+            report += f"| {i} | {q['query']} | {q['category']} |\n"
         
         report += f"""
 ---
@@ -775,7 +1077,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 *Generated by src/analysis/ablation_study.py v1.1*
 """
         
-        report_file = output_dir / f'ablation_report_{timestamp}.md'
+        report_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.md'
         with open(report_file, 'w') as f:
             f.write(report)
         
@@ -787,29 +1089,94 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Retrieval ablation study')
-    parser.add_argument('--quick', action='store_true', help='Quick test with 2 queries')
-    parser.add_argument('--queries', type=int, help='Number of queries')
-    parser.add_argument('--no-ragas', action='store_true', help='Skip RAGAS')
-    parser.add_argument('-o', '--output', type=str, default='data/analysis/results', help='Output dir')
+    parser = argparse.ArgumentParser(
+        description='Retrieval ablation study',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Detailed analysis (6 queries, full answers printed)
+  python src/analysis/ablation_study.py --detailed
+
+  # Stats mode (30 queries, aggregate metrics for charts)
+  python src/analysis/ablation_study.py --full
+  
+  # Quick debug (2 queries, no RAGAS)
+  python src/analysis/ablation_study.py --quick --no-ragas
+  
+  # Export to LaTeX after running
+  python src/analysis/ablation_latex_export.py data/analysis/results/ablation_detailed_*.json
+        """
+    )
+    parser.add_argument('--detailed', action='store_true', 
+                        help='Detailed mode: 6 queries, full answers, verbose metrics')
+    parser.add_argument('--full', action='store_true', 
+                        help='Stats mode: 30 queries, aggregate metrics for charts')
+    parser.add_argument('--quick', action='store_true', 
+                        help='Quick test with 2 queries (debug)')
+    parser.add_argument('--queries', type=int, 
+                        help='Override number of queries')
+    parser.add_argument('--no-ragas', action='store_true', 
+                        help='Skip RAGAS evaluation')
+    parser.add_argument('--latex', action='store_true',
+                        help='Also export LaTeX files (table, vars, appendix)')
+    parser.add_argument('-o', '--output', type=str, default='data/analysis/results', 
+                        help='Output directory')
     
     args = parser.parse_args()
     
     try:
-        if args.quick:
-            queries = TEST_QUERIES[:2]
-        elif args.queries:
-            queries = TEST_QUERIES[:args.queries]
+        # Determine mode
+        if args.detailed:
+            queries = QUICK_QUERIES  # 6 diverse queries
+            detailed = True
+            print("=" * 80)
+            print("  DETAILED MODE: 6 queries × 3 modes = 18 tests")
+            print("  Full answers and per-query analysis will be printed")
+            print("=" * 80)
+        elif args.full:
+            queries = FULL_QUERIES  # 30 queries
+            detailed = False
+            print("=" * 80)
+            print("  STATS MODE: 30 queries × 3 modes = 90 tests")
+            print("  Compact output, aggregate statistics for charts")
+            print("=" * 80)
         else:
-            queries = TEST_QUERIES
+            queries = QUICK_QUERIES
+            detailed = False
+            print("=" * 80)
+            print("  DEFAULT MODE: 6 queries × 3 modes = 18 tests")
+            print("  Use --detailed for full answers, --full for 30 queries")
+            print("=" * 80)
+        
+        # Apply overrides
+        if args.quick:
+            queries = queries[:2]
+            print(f"  Quick mode: limited to 2 queries")
+        elif args.queries:
+            queries = queries[:args.queries]
+            print(f"  Limited to {args.queries} queries")
+        
+        print(f"  RAGAS: {'enabled' if not args.no_ragas else 'DISABLED'}")
+        print(f"  LaTeX export: {'enabled' if args.latex else 'disabled'}")
+        print("=" * 80 + "\n")
         
         modes = [RetrievalMode.SEMANTIC, RetrievalMode.GRAPH, RetrievalMode.DUAL]
         
-        suite = AblationTestSuite(enable_ragas=not args.no_ragas)
+        suite = AblationTestSuite(enable_ragas=not args.no_ragas, detailed=detailed)
         suite.load_pipeline()
         suite.run_full_suite(queries, modes)
         suite.analyze_results()
-        suite.save_results(Path(args.output))
+        json_path = suite.save_results(Path(args.output), detailed=detailed)
+        
+        # LaTeX export if requested
+        if args.latex and json_path:
+            print("\n" + "=" * 80)
+            print("  LATEX EXPORT")
+            print("=" * 80)
+            from src.analysis.ablation_latex_export import LaTeXExporter
+            exporter = LaTeXExporter(json_path)
+            latex_dir = Path(args.output) / 'latex'
+            exporter.export_all(latex_dir)
         
         print("\nAblation study complete!\n")
         
