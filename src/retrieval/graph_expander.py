@@ -2,13 +2,15 @@
 """
 Graph expander for AI governance GraphRAG pipeline.
 
-Expands from query entities using Prize-Collecting Steiner Tree (PCST)
-optimization to find minimal connecting subgraph.
+Layered expansion strategy:
+- Single entity: PCST expansion (find valuable nearby nodes)
+- Multi-entity: Steiner Tree (connect) + k-NN expansion (context)
 """
 
 # Standard library
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Tuple
 import json
+import logging
 
 # Third-party
 import numpy as np
@@ -21,14 +23,37 @@ from config.retrieval_config import PCST_CONFIG
 # Dataclass imports (direct)
 from src.utils.dataclasses import ResolvedEntity, Subgraph, Relation
 
+logger = logging.getLogger(__name__)
+
+
+class ExpansionMetrics:
+    """Diagnostics for graph expansion."""
+    def __init__(self):
+        self.terminals_requested = 0
+        self.terminals_connected = 0
+        self.steiner_nodes_added = 0
+        self.expansion_nodes_added = 0
+        self.total_subgraph_nodes = 0
+        self.total_relations = 0
+        self.disconnected_terminals = []
+        self.algorithm_used = ""
+    
+    def __str__(self):
+        return (
+            f"Expansion: {self.algorithm_used} | "
+            f"Terminals: {self.terminals_connected}/{self.terminals_requested} | "
+            f"Steiner: +{self.steiner_nodes_added} | "
+            f"Expansion: +{self.expansion_nodes_added} | "
+            f"Total: {self.total_subgraph_nodes} nodes, {self.total_relations} rels"
+        )
+
 
 class GraphExpander:
     """
-    Expand from query entities using PCST optimization.
+    Expand from query entities using layered strategy.
     
-    Two-stage process:
-    1. Get k-NN candidates via FAISS (entity similarity)
-    2. Run PCST to find minimal connecting subgraph
+    Single entity: PCST to find valuable nearby nodes
+    Multi-entity: Steiner Tree (connect) + k-NN (expand)
     """
     
     def __init__(
@@ -64,6 +89,7 @@ class GraphExpander:
             self.index_to_entity = {v: k for k, v in entity_id_data.items()}
         
         self.config = PCST_CONFIG
+        self.last_metrics = None
         self._ensure_gds_projection()
     
     def _ensure_gds_projection(self):
@@ -94,67 +120,206 @@ class GraphExpander:
     
     def expand(self, resolved_entities: List[ResolvedEntity]) -> Subgraph:
         """
-        Main expansion method.
+        Main expansion method with layered strategy.
         
         Args:
-            resolved_entities: Entities resolved from query (Phase 3.3.1)
+            resolved_entities: Entities resolved from query
         
         Returns:
-            Subgraph with entities and relations from PCST
+            Subgraph with entities and relations
         """
+        self.last_metrics = ExpansionMetrics()
+        
         if not resolved_entities:
             return Subgraph(entity_ids=[], relations=[])
         
-        candidate_ids = self._get_faiss_candidates(resolved_entities)
-        
-        if not candidate_ids:
-            print("Warning: No valid entities found in index")
-            return Subgraph(entity_ids=[], relations=[])
+        self.last_metrics.terminals_requested = len(resolved_entities)
+        terminal_ids = [e.entity_id for e in resolved_entities]
         
         if len(resolved_entities) == 1:
-            subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
-            relations = []
-        else:
-            subgraph_entity_ids, relations = self._run_pcst(
-                terminal_ids=[e.entity_id for e in resolved_entities],
-                candidate_ids=candidate_ids
+            # Single entity: PCST expansion
+            subgraph_entity_ids, relations = self._expand_single(
+                resolved_entities[0]
             )
+            self.last_metrics.algorithm_used = "PCST"
+        else:
+            # Multi-entity: Steiner Tree + k-NN expansion
+            subgraph_entity_ids, relations = self._expand_multi(
+                resolved_entities
+            )
+            self.last_metrics.algorithm_used = "SteinerTree+kNN"
+        
+        self.last_metrics.total_subgraph_nodes = len(subgraph_entity_ids)
+        self.last_metrics.total_relations = len(relations)
+        
+        # Log diagnostics
+        print(f"   {self.last_metrics}")
+        if self.last_metrics.disconnected_terminals:
+            print(f"   WARNING: Disconnected terminals: {self.last_metrics.disconnected_terminals}")
         
         return Subgraph(
             entity_ids=subgraph_entity_ids,
             relations=relations
         )
     
-    def _get_faiss_candidates(self, resolved_entities: List[ResolvedEntity]) -> List[str]:
-        """Get k-NN candidates via FAISS similarity."""
-        candidates = set()
+    def _expand_single(self, entity: ResolvedEntity) -> Tuple[List[str], List[Relation]]:
+        """
+        Single entity expansion using PCST.
         
-        for entity in resolved_entities:
-            if entity.entity_id not in self.entity_id_map:
-                print(f"Warning: Skipping entity not in index: {entity.entity_id}")
-                continue
-            
-            candidates.add(entity.entity_id)
-            
-            entity_idx = self.entity_id_map[entity.entity_id]
-            entity_embedding = self.faiss_index.reconstruct(entity_idx).reshape(1, -1)
-            
-            k = self.config['k_candidates']
-            distances, indices = self.faiss_index.search(entity_embedding, k + 1)
-            
-            for idx in indices[0]:
-                if idx in self.index_to_entity:
-                    candidate_id = self.index_to_entity[idx]
-                    candidates.add(candidate_id)
+        Finds valuable nearby nodes by maximizing prizes - costs.
+        """
+        entity_id = entity.entity_id
         
-        return list(candidates)
+        if entity_id not in self.entity_id_map:
+            print(f"Warning: Entity not in index: {entity_id}")
+            return [entity_id], []
+        
+        # Get query embedding for prize assignment
+        entity_idx = self.entity_id_map[entity_id]
+        query_embedding = self.faiss_index.reconstruct(entity_idx)
+        
+        # Get k-NN candidates and their similarities (for prizes)
+        candidates_with_scores = self._get_candidates_with_scores(entity, query_embedding)
+        
+        if not candidates_with_scores:
+            return [entity_id], []
+        
+        # Set prizes on candidate nodes in Neo4j
+        candidate_ids = list(candidates_with_scores.keys())
+        self._set_node_prizes(candidates_with_scores)
+        
+        try:
+            # Run PCST from source entity
+            subgraph_ids = self._run_pcst_expansion(entity_id, candidate_ids)
+            
+            self.last_metrics.terminals_connected = 1
+            self.last_metrics.expansion_nodes_added = len(subgraph_ids) - 1
+            
+        except Exception as e:
+            logger.warning(f"PCST failed: {e}, falling back to k-NN")
+            print(f"   PCST failed ({e}), using k-NN fallback")
+            subgraph_ids = candidate_ids[:self.config['max_entities']]
+            self.last_metrics.expansion_nodes_added = len(subgraph_ids) - 1
+        
+        finally:
+            # Clean up temporary prizes
+            self._clear_node_prizes(candidate_ids)
+        
+        # Get relations between subgraph nodes
+        relations = self._get_subgraph_relations(subgraph_ids)
+        
+        return subgraph_ids, relations
     
-    def _run_pcst(
-        self,
-        terminal_ids: List[str],
-        candidate_ids: List[str]
-    ) -> tuple[List[str], List[Relation]]:
-        """Run PCST to find minimal connecting subgraph."""
+    def _expand_multi(self, resolved_entities: List[ResolvedEntity]) -> Tuple[List[str], List[Relation]]:
+        """
+        Multi-entity expansion: Steiner Tree (connect) + k-NN (expand).
+        
+        Layer 1: Find minimum tree connecting all terminals
+        Layer 2: Expand from spine nodes to add context
+        """
+        terminal_ids = [e.entity_id for e in resolved_entities]
+        
+        # Layer 1: Steiner Tree to connect terminals
+        spine_ids = self._run_steiner_tree(terminal_ids)
+        
+        # Track connectivity metrics
+        connected_terminals = set(terminal_ids) & set(spine_ids)
+        self.last_metrics.terminals_connected = len(connected_terminals)
+        self.last_metrics.steiner_nodes_added = len(set(spine_ids) - set(terminal_ids))
+        self.last_metrics.disconnected_terminals = list(set(terminal_ids) - connected_terminals)
+        
+        if not spine_ids:
+            # Steiner Tree failed, fall back to k-NN for each entity
+            print("   Steiner Tree returned empty, using k-NN fallback")
+            all_candidates = set()
+            for entity in resolved_entities:
+                candidates = self._get_faiss_candidates([entity])
+                all_candidates.update(candidates[:self.config['k_expansion']])
+            spine_ids = list(all_candidates)
+        
+        # Layer 2: k-NN expansion from spine nodes
+        expanded_ids = self._expand_from_spine(spine_ids, terminal_ids)
+        self.last_metrics.expansion_nodes_added = len(expanded_ids) - len(spine_ids)
+        
+        # Get relations between all subgraph nodes
+        relations = self._get_subgraph_relations(expanded_ids)
+        
+        return expanded_ids, relations
+    
+    def _get_candidates_with_scores(
+        self, 
+        entity: ResolvedEntity, 
+        query_embedding: np.ndarray
+    ) -> Dict[str, float]:
+        """Get k-NN candidates with similarity scores for prizes."""
+        candidates = {}
+        
+        entity_idx = self.entity_id_map.get(entity.entity_id)
+        if entity_idx is None:
+            return candidates
+        
+        # Always include the source entity with max prize
+        candidates[entity.entity_id] = 1.0
+        
+        k = self.config['k_candidates']
+        distances, indices = self.faiss_index.search(query_embedding.reshape(1, -1), k + 1)
+        
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx in self.index_to_entity:
+                candidate_id = self.index_to_entity[idx]
+                # Convert L2 distance to similarity (prize)
+                # L2 distance for normalized vectors: d = sqrt(2 - 2*cos_sim)
+                # So cos_sim = 1 - d^2/2
+                similarity = max(0, 1 - (dist / 2))
+                candidates[candidate_id] = float(similarity)
+        
+        return candidates
+    
+    def _set_node_prizes(self, prizes: Dict[str, float]):
+        """Set temporary prize property on nodes for PCST."""
+        with self.driver.session() as session:
+            session.run("""
+                UNWIND $prizes AS prize_data
+                MATCH (e:Entity {entity_id: prize_data.id})
+                SET e.prize = prize_data.prize
+            """, prizes=[{"id": k, "prize": v} for k, v in prizes.items()])
+    
+    def _clear_node_prizes(self, entity_ids: List[str]):
+        """Remove temporary prize property from nodes."""
+        with self.driver.session() as session:
+            session.run("""
+                MATCH (e:Entity)
+                WHERE e.entity_id IN $entity_ids
+                REMOVE e.prize
+            """, entity_ids=entity_ids)
+    
+    def _run_pcst_expansion(self, source_id: str, candidate_ids: List[str]) -> List[str]:
+        """Run PCST from source node to find valuable subgraph."""
+        with self.driver.session() as session:
+            result = session.run("""
+                MATCH (source:Entity {entity_id: $source_id})
+                
+                CALL gds.prizecollectingSteinerTree.stream('entity-graph', {
+                    sourceNode: id(source),
+                    prizeProperty: 'prize'
+                })
+                YIELD nodeId
+                
+                WITH collect(nodeId) AS subgraphNodeIds
+                MATCH (e:Entity)
+                WHERE id(e) IN subgraphNodeIds
+                RETURN collect(e.entity_id) AS entity_ids
+            """, source_id=source_id)
+            
+            record = result.single()
+            if record and record['entity_ids']:
+                return record['entity_ids']
+            else:
+                # PCST returned empty, return candidates
+                return candidate_ids[:self.config['max_entities']]
+    
+    def _run_steiner_tree(self, terminal_ids: List[str]) -> List[str]:
+        """Run Steiner Tree to connect terminal nodes."""
         with self.driver.session() as session:
             try:
                 result = session.run("""
@@ -177,17 +342,63 @@ class GraphExpander:
                 
                 record = result.single()
                 if record and record['entity_ids']:
-                    subgraph_entity_ids = record['entity_ids']
+                    return record['entity_ids']
                 else:
-                    subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
-                
+                    return terminal_ids  # Fallback to just terminals
+                    
             except Exception as e:
-                print(f"Warning: PCST failed ({e}), falling back to k-NN candidates")
-                subgraph_entity_ids = candidate_ids[:self.config['max_entities']]
+                logger.warning(f"Steiner Tree failed: {e}")
+                print(f"   Steiner Tree failed ({e}), returning terminals only")
+                return terminal_ids
+    
+    def _expand_from_spine(self, spine_ids: List[str], terminal_ids: List[str]) -> List[str]:
+        """Expand from spine nodes using k-NN to add context."""
+        expanded = set(spine_ids)
+        
+        k_expansion = self.config.get('k_expansion', 3)
+        max_entities = self.config['max_entities']
+        
+        for entity_id in spine_ids:
+            if len(expanded) >= max_entities:
+                break
+                
+            if entity_id not in self.entity_id_map:
+                continue
             
-            relations = self._get_subgraph_relations(subgraph_entity_ids)
+            entity_idx = self.entity_id_map[entity_id]
+            entity_embedding = self.faiss_index.reconstruct(entity_idx).reshape(1, -1)
             
-            return subgraph_entity_ids, relations
+            distances, indices = self.faiss_index.search(entity_embedding, k_expansion + 1)
+            
+            for idx in indices[0]:
+                if len(expanded) >= max_entities:
+                    break
+                if idx in self.index_to_entity:
+                    expanded.add(self.index_to_entity[idx])
+        
+        return list(expanded)
+    
+    def _get_faiss_candidates(self, resolved_entities: List[ResolvedEntity]) -> List[str]:
+        """Get k-NN candidates via FAISS similarity."""
+        candidates = set()
+        
+        for entity in resolved_entities:
+            if entity.entity_id not in self.entity_id_map:
+                continue
+            
+            candidates.add(entity.entity_id)
+            
+            entity_idx = self.entity_id_map[entity.entity_id]
+            entity_embedding = self.faiss_index.reconstruct(entity_idx).reshape(1, -1)
+            
+            k = self.config['k_candidates']
+            distances, indices = self.faiss_index.search(entity_embedding, k + 1)
+            
+            for idx in indices[0]:
+                if idx in self.index_to_entity:
+                    candidates.add(self.index_to_entity[idx])
+        
+        return list(candidates)
     
     def _get_subgraph_relations(self, entity_ids: List[str]) -> List[Relation]:
         """Extract relations between entities in subgraph."""
