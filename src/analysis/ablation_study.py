@@ -231,12 +231,12 @@ class AblationTestSuite:
         # Retrieval processor
         self.processor = RetrievalProcessor(
             embedding_model=embedding_model,
-            faiss_entity_index_path=data_dir / 'faiss' / 'entities.index',
-            entity_ids_path=data_dir / 'faiss' / 'entity_ids.json',
-            normalized_entities_path=data_dir / 'processed' / 'entities.json',
+            faiss_entity_index_path=data_dir / 'processed' / 'faiss' / 'entity_embeddings.index',
+            entity_ids_path=data_dir / 'processed' / 'faiss' / 'entity_id_map.json',
+            normalized_entities_path=data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl',
             aliases_path=data_dir / 'processed' / 'entities' / 'aliases.json',
-            faiss_chunk_index_path=data_dir / 'faiss' / 'chunks.index',
-            chunk_ids_path=data_dir / 'faiss' / 'chunk_ids.json',
+            faiss_chunk_index_path=data_dir / 'processed' / 'faiss' / 'chunk_embeddings.index',
+            chunk_ids_path=data_dir / 'processed' / 'faiss' / 'chunk_id_map.json',
             neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
             neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
             neo4j_password=os.getenv('NEO4J_PASSWORD')
