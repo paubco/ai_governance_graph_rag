@@ -1,825 +1,1339 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unified ablation study with comprehensive evaluation metrics.
+Graph Analytics for GraphRAG Knowledge Graph
 
-Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
+Runs analytical queries on Neo4j to compute network statistics,
+coverage metrics, and entity centrality measures.
 
-Example:
-    python src/analysis/ablation_study.py
-    python src/analysis/ablation_study.py --quick
-    python src/analysis/ablation_study.py --no-ragas
+Usage:
+    python -m src.analysis.graph_analytics
+    python -m src.analysis.graph_analytics --verbose
+    python -m src.analysis.graph_analytics --output reports/graph_stats.json
 """
 
-# Standard library
-import argparse
-import json
 import os
 import sys
-import time
-from datetime import datetime
+import json
+import logging
+import argparse
 from pathlib import Path
-from typing import List, Dict
-
-# Project root (src/analysis/ablation_study.py -> project root)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from datetime import datetime
+from typing import Dict, List, Any
 
 # Third-party
-import anthropic
+from neo4j import GraphDatabase
+from dotenv import load_dotenv
 
-# Config imports (direct)
-from config.retrieval_config import RetrievalMode
-
-# Local
-from src.retrieval.retrieval_processor import RetrievalProcessor
-from src.retrieval.answer_generator import AnswerGenerator
-from src.utils.embedder import BGEEmbedder
-from src.utils.logger import get_logger
-
-# Analysis metrics
-from src.analysis.retrieval_metrics import (
-    TestResult,
-    EntityResolutionMetrics,
-    GraphUtilizationMetrics,
-    RetrievalMetrics,
-    RAGASMetrics,
-    PerformanceMetrics,
-    CoverageMetrics,
-    compute_entity_resolution_metrics,
-    compute_graph_utilization_metrics,
-    compute_retrieval_metrics,
-    compute_coverage_metrics
-)
-
-logger = get_logger(__name__)
+# Load environment variables
+load_dotenv()
 
 
-# ============================================================================
-# RAGAS METRICS (INTEGRATED)
-# ============================================================================
-
-class RAGASEvaluator:
-    """RAGAS metrics evaluator using Claude as LLM judge."""
+class GraphAnalyzer:
+    """Analyzes GraphRAG knowledge graph structure and statistics."""
     
-    def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-        self.model = "claude-sonnet-4-20250514"
+    def __init__(self, uri: str, user: str, password: str, verbose: bool = False):
+        """
+        Initialize Neo4j connection.
+        
+        Args:
+            uri: Neo4j connection URI
+            user: Neo4j username
+            password: Neo4j password
+            verbose: If True, show detailed query logs
+        """
+        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.verbose = verbose
+        if verbose:
+            print(f"Connected to Neo4j at {uri}")
     
-    def faithfulness(self, answer: str, context: str) -> Dict:
-        """Measure if all claims in answer are supported by context."""
-        prompt = f"""Evaluate faithfulness: are all claims in ANSWER supported by CONTEXT?
-
-CONTEXT:
-{context}
-
-ANSWER:
-{answer}
-
-Extract claims from ANSWER. For each, check if supported by CONTEXT.
-Output JSON only (no markdown):
-{{
-    "claims": [
-        {{"claim": "...", "supported": true, "evidence": "..."}},
-        ...
-    ],
-    "score": 0.XX,
-    "explanation": "summary"
-}}
-
-Be strict: only mark supported if clearly inferable."""
-
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            result_text = response.content[0].text.strip()
-            
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-            
-            result = json.loads(result_text)
-            
-            return {
-                'score': float(result['score']),
-                'supported': sum(1 for c in result['claims'] if c['supported']),
-                'total': len(result['claims']),
-                'explanation': result['explanation']
-            }
-        except Exception as e:
-            logger.error(f"Faithfulness evaluation failed: {e}")
-            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}'}
+    def close(self):
+        """Close Neo4j connection."""
+        self.driver.close()
+        if self.verbose:
+            print("Connection closed")
     
-    def answer_relevancy(self, query: str, answer: str) -> Dict:
-        """Measure how well answer addresses query."""
-        prompt = f"""Rate how well ANSWER addresses QUERY.
-
-QUERY: {query}
-ANSWER: {answer}
-
-Scoring:
-- 1.0: Fully addresses all aspects
-- 0.8-0.9: Addresses main question
-- 0.6-0.7: Partial, significant gaps
-- 0.4-0.5: Tangentially related
-- 0.0-0.3: Irrelevant
-
-Output JSON only:
-{{
-    "score": 0.XX,
-    "explanation": "what's covered/missing?"
-}}"""
-
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                messages=[{"role": "user", "content": prompt}]
-            )
+    def run_query(self, query: str, description: str) -> List[Dict]:
+        """
+        Execute Cypher query and return results.
+        
+        Args:
+            query: Cypher query string
+            description: Human-readable description for logging
             
-            result_text = response.content[0].text.strip()
-            
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-            
-            result = json.loads(result_text)
-            
-            return {
-                'score': float(result['score']),
-                'explanation': result['explanation']
-            }
-        except Exception as e:
-            logger.error(f"Relevancy evaluation failed: {e}")
-            return {'score': 0.0, 'explanation': f'Error: {e}'}
-
-
-# ============================================================================
-# TEST QUERIES
-# ============================================================================
-
-TEST_QUERIES = [
-    {
-        'id': 'q1',
-        'query': 'What is the EU AI Act?',
-        'category': 'simple_factual',
-        'description': 'Major regulation entity'
-    },
-    {
-        'id': 'q2',
-        'query': 'What are high-risk AI systems?',
-        'category': 'simple_factual',
-        'description': 'Core concept in AI governance'
-    },
-    {
-        'id': 'q3',
-        'query': 'Which jurisdictions regulate facial recognition?',
-        'category': 'cross_jurisdictional',
-        'description': 'Multi-jurisdiction entity traversal'
-    },
-    {
-        'id': 'q4',
-        'query': 'Compare China and US AI governance',
-        'category': 'cross_jurisdictional_comparison',
-        'description': 'Cross-jurisdiction comparison'
-    },
-    {
-        'id': 'q5',
-        'query': 'What academic research discusses algorithmic bias?',
-        'category': 'multi_hop_research',
-        'description': 'Research papers to concept'
-    },
-    {
-        'id': 'q6',
-        'query': "What is Snoopy's arch enemy?",
-        'category': 'out_of_domain',
-        'description': 'Should fail gracefully'
-    }
-]
-
-
-# ============================================================================
-# INTEGRATED TEST SUITE
-# ============================================================================
-
-class AblationTestSuite:
-    """Unified test suite for retrieval mode ablation."""
+        Returns:
+            List of result dictionaries
+        """
+        if self.verbose:
+            print(f"Running: {description}")
+        with self.driver.session() as session:
+            result = session.run(query)
+            data = [dict(record) for record in result]
+            if self.verbose:
+                print(f"  -> Returned {len(data)} results")
+            return data
     
-    def __init__(self, enable_ragas: bool = True):
-        self.enable_ragas = enable_ragas
-        self.processor = None
-        self.generator = None
-        self.ragas = None
-        self.results = []
+    def get_node_counts(self) -> List[Dict]:
+        """Get count of each node type."""
+        query = """
+        MATCH (n)
+        RETURN labels(n)[0] as node_type, count(n) as count
+        ORDER BY count DESC
+        """
+        return self.run_query(query, "Node counts by type")
     
-    def load_pipeline(self):
-        """Load all pipeline components."""
-        print("Loading pipeline components...")
-        
-        data_dir = PROJECT_ROOT / 'data'
-        
-        # Embedding model
-        embedding_model = BGEEmbedder()
-        
-        # Retrieval processor
-        self.processor = RetrievalProcessor(
-            embedding_model=embedding_model,
-            faiss_entity_index_path=data_dir / 'faiss' / 'entities.index',
-            entity_ids_path=data_dir / 'faiss' / 'entity_ids.json',
-            normalized_entities_path=data_dir / 'processed' / 'entities.json',
-            aliases_path=data_dir / 'processed' / 'entities' / 'aliases.json',
-            faiss_chunk_index_path=data_dir / 'faiss' / 'chunks.index',
-            chunk_ids_path=data_dir / 'faiss' / 'chunk_ids.json',
-            neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
-            neo4j_user=os.getenv('NEO4J_USER', 'neo4j'),
-            neo4j_password=os.getenv('NEO4J_PASSWORD')
-        )
-        
-        # Answer generator
-        self.generator = AnswerGenerator()
-        
-        # RAGAS evaluator
-        if self.enable_ragas:
-            print("Initializing RAGAS evaluator...")
-            self.ragas = RAGASEvaluator()
-        
-        print("Pipeline loaded\n")
+    def get_relationship_counts(self) -> List[Dict]:
+        """Get count of each relationship type."""
+        query = """
+        MATCH ()-[r]->()
+        RETURN type(r) as relationship_type, count(r) as count
+        ORDER BY count DESC
+        """
+        return self.run_query(query, "Relationship counts by type")
     
-    def run_single_test(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int) -> TestResult:
-        """Run a single test with comprehensive metrics collection."""
+    def get_coverage_stats(self) -> Dict:
+        """Get overall coverage statistics."""
+        query = """
+        MATCH (j:Jurisdiction)
+        WITH count(j) as jurisdictions
+        MATCH (p:Publication)
+        WITH jurisdictions, count(p) as publications
+        MATCH (e:Entity)
+        WITH jurisdictions, publications, count(e) as entities
+        MATCH (c:Chunk)
+        WITH jurisdictions, publications, entities, count(c) as chunks
+        MATCH ()-[r:RELATION]->()
+        RETURN 
+            jurisdictions,
+            publications,
+            entities,
+            chunks,
+            count(r) as semantic_relations
+        """
+        results = self.run_query(query, "Overall coverage statistics")
+        return results[0] if results else {}
+    
+    def get_top_connected_entities(self, limit: int = 20) -> List[Dict]:
+        """Get most highly connected entities by degree."""
+        query = f"""
+        MATCH (e:Entity)-[r:RELATION]-()
+        WITH e, count(r) as degree
+        ORDER BY degree DESC
+        LIMIT {limit}
+        RETURN e.name as entity, e.type as type, degree
+        """
+        return self.run_query(query, f"Top {limit} connected entities")
+    
+    def get_predicate_distribution(self, limit: int = 30) -> List[Dict]:
+        """Get distribution of relation predicates."""
+        query = f"""
+        MATCH ()-[r:RELATION]->()
+        WITH r.predicate as predicate, count(*) as frequency
+        ORDER BY frequency DESC
+        LIMIT {limit}
+        RETURN predicate, frequency
+        """
+        return self.run_query(query, f"Top {limit} predicates")
+    
+    def get_predicate_diversity(self) -> Dict:
+        """Calculate predicate diversity (unique predicates per entity)."""
+        query = """
+        MATCH (e:Entity)-[r:RELATION]->()
+        WITH e, count(DISTINCT r.predicate) AS unique_predicates
+        RETURN 
+            avg(unique_predicates) AS avg_predicates_per_entity,
+            max(unique_predicates) AS max_predicates,
+            min(unique_predicates) AS min_predicates,
+            percentileCont(unique_predicates, 0.5) AS median_predicates
+        """
+        results = self.run_query(query, "Predicate diversity (semantic richness)")
+        return results[0] if results else {}
+    
+    def get_relation_density(self) -> Dict:
+        """Calculate relation density (relations per entity)."""
+        query = """
+        MATCH (e:Entity)
+        WITH count(e) AS total_entities
+        MATCH ()-[r:RELATION]->()
+        WITH total_entities, count(r) AS total_relations
+        RETURN 
+            total_entities,
+            total_relations,
+            round(total_relations * 1.0 / total_entities, 2) AS relations_per_entity
+        """
+        results = self.run_query(query, "Relation density")
+        result = results[0] if results else {}
         
-        print(f"\n{'='*80}")
-        print(f"TEST {test_num}/{total_tests}: {mode.value.upper()}")
-        print(f"{'='*80}")
-        print(f"Query: {query_def['query']}")
-        print(f"Category: {query_def['category']}")
-        print()
-        
-        try:
-            start_time = time.time()
-            
-            # 1. RETRIEVAL
-            print("1. RETRIEVAL")
-            retrieval_start = time.time()
-            
-            retrieval_result = self.processor.retrieve(query_def['query'], mode=mode)
-            
-            retrieval_time = time.time() - retrieval_start
-            
-            # Compute entity resolution metrics
-            extracted = retrieval_result.parsed_query.extracted_entities if retrieval_result.parsed_query else []
-            resolved = retrieval_result.resolved_entities if retrieval_result.resolved_entities else []
-            
-            entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
-            
-            print(f"   Extracted: {entity_metrics.extracted_count} entities")
-            print(f"   Resolved: {entity_metrics.resolved_count} ({entity_metrics.resolution_rate:.1%})")
-            
-            # Compute graph utilization metrics
-            graph_metrics = compute_graph_utilization_metrics(retrieval_result.subgraph, retrieval_result.chunks)
-            
-            print(f"   Subgraph: {graph_metrics.entities_in_subgraph} entities, "
-                  f"{graph_metrics.relations_in_subgraph} relations")
-            
-            # Compute retrieval metrics
-            query_emb = retrieval_result.parsed_query.embedding if retrieval_result.parsed_query else None
-            retrieval_metrics = compute_retrieval_metrics(
-                retrieval_result.chunks,
-                query_emb,
-                self.processor.chunk_retriever
-            )
-            
-            print(f"   Retrieved: {retrieval_metrics.total_chunks} chunks")
-            print(f"   Sources: {retrieval_metrics.chunks_by_source}")
-            
-            # 2. ANSWER GENERATION
-            print("\n2. ANSWER GENERATION")
-            answer_start = time.time()
-            
-            answer_result = self.generator.generate(retrieval_result)
-            
-            answer_time = time.time() - answer_start
-            
-            print(f"   Tokens: {answer_result.output_tokens}")
-            print(f"   Cost: ${answer_result.cost_usd:.4f}")
-            print(f"   Answer preview: {answer_result.answer[:150]}...")
-            
-            # Compute coverage metrics
-            coverage_metrics = compute_coverage_metrics(
-                retrieval_result.subgraph,
-                answer_result.answer,
-                resolved
-            )
-            
-            print(f"   Coverage: {coverage_metrics.entity_coverage_rate:.1%} entities")
-            
-            # 3. RAGAS EVALUATION
-            if self.ragas:
-                print("\n3. RAGAS EVALUATION")
-                
-                context_text = "\n\n".join([chunk.text for chunk in retrieval_result.chunks[:10]])
-                
-                print("   Evaluating faithfulness...")
-                faith = self.ragas.faithfulness(answer_result.answer, context_text)
-                
-                time.sleep(2)  # Rate limit protection
-                
-                print("   Evaluating relevancy...")
-                rel = self.ragas.answer_relevancy(query_def['query'], answer_result.answer)
-                
-                print(f"   Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
-                print(f"   Relevancy: {rel['score']:.3f}")
-                
-                ragas_metrics = RAGASMetrics(
-                    faithfulness_score=faith['score'],
-                    faithfulness_details={
-                        'supported_claims': faith['supported'],
-                        'total_claims': faith['total'],
-                        'explanation': faith['explanation']
-                    },
-                    relevancy_score=rel['score'],
-                    relevancy_explanation=rel['explanation']
-                )
+        # Add benchmark context
+        if result:
+            density = result.get('relations_per_entity', 0)
+            if density < 1.5:
+                result['interpretation'] = 'Sparse (typical for regulatory KGs)'
+            elif density < 3.0:
+                result['interpretation'] = 'Moderate (good for domain KGs)'
+            elif density < 5.0:
+                result['interpretation'] = 'Dense (rich semantic network)'
             else:
-                ragas_metrics = RAGASMetrics(
-                    faithfulness_score=0.0,
-                    faithfulness_details={},
-                    relevancy_score=0.0,
-                    relevancy_explanation="RAGAS disabled"
-                )
-            
-            # 4. PACKAGE RESULT
-            total_time = time.time() - start_time
-            
-            performance_metrics = PerformanceMetrics(
-                retrieval_time=retrieval_time,
-                answer_time=answer_time,
-                total_time=total_time,
-                answer_tokens=answer_result.output_tokens,
-                cost_usd=answer_result.cost_usd
-            )
-            
-            test_result = TestResult(
-                test_id=f"{query_def['id']}_{mode.value}",
-                query=query_def['query'],
-                mode=mode.value,
-                category=query_def['category'],
-                timestamp=datetime.now().isoformat(),
-                entity_resolution=entity_metrics,
-                graph_utilization=graph_metrics,
-                coverage=coverage_metrics,
-                retrieval=retrieval_metrics,
-                ragas=ragas_metrics,
-                performance=performance_metrics,
-                answer_text=answer_result.answer,
-                success=True,
-                error=None
-            )
-            
-            print(f"\nTest completed in {total_time:.1f}s")
-            
-            return test_result
-            
-        except Exception as e:
-            logger.error(f"Test failed: {e}", exc_info=True)
-            print(f"\nTEST FAILED: {e}")
-            
-            return TestResult(
-                test_id=f"{query_def['id']}_{mode.value}",
-                query=query_def['query'],
-                mode=mode.value,
-                category=query_def['category'],
-                timestamp=datetime.now().isoformat(),
-                entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
-                graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
-                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
-                retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
-                ragas=RAGASMetrics(0.0, {}, 0.0, ""),
-                performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
-                answer_text="",
-                success=False,
-                error=str(e)
-            )
+                result['interpretation'] = 'Very dense (highly interconnected)'
+        
+        return result
     
-    def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
-        """Run complete ablation study."""
+    def get_degree_distribution_buckets(self) -> List[Dict]:
+        """Analyze degree distribution to detect power-law patterns."""
+        query = """
+        MATCH (e:Entity)
+        OPTIONAL MATCH (e)-[r:RELATION]-()
+        WITH e, count(r) AS degree
+        WITH 
+          CASE 
+            WHEN degree = 0 THEN '0 (isolated)'
+            WHEN degree <= 5 THEN '1-5'
+            WHEN degree <= 20 THEN '6-20'
+            WHEN degree <= 100 THEN '21-100'
+            WHEN degree <= 500 THEN '101-500'
+            ELSE '500+'
+          END AS bucket,
+          count(*) AS entity_count
+        RETURN bucket, entity_count
+        ORDER BY 
+          CASE bucket
+            WHEN '0 (isolated)' THEN 0
+            WHEN '1-5' THEN 1
+            WHEN '6-20' THEN 2
+            WHEN '21-100' THEN 3
+            WHEN '101-500' THEN 4
+            ELSE 5
+          END
+        """
+        results = self.run_query(query, "Degree distribution (power-law check)")
         
-        print(f"\n{'='*80}")
-        print("GRAPHRAG RETRIEVAL ABLATION STUDY v1.1")
-        print(f"{'='*80}\n")
+        # Check for power-law pattern
+        if results and len(results) >= 3:
+            # Power-law: most entities have low degree, few have high degree
+            low_degree = sum(r['entity_count'] for r in results if r['bucket'] in ['1-5', '6-20'])
+            high_degree = sum(r['entity_count'] for r in results if r['bucket'] in ['21-100', '101-500', '500+'])
+            
+            if low_degree > high_degree * 3 and self.verbose:
+                print("  -> Power-law distribution detected (typical for KGs)")
         
-        print(f"Configuration:")
-        print(f"  Queries: {len(queries)}")
-        print(f"  Modes: {[m.value for m in modes]}")
-        print(f"  Total tests: {len(queries) * len(modes)}")
-        print(f"  RAGAS evaluation: {'ENABLED' if self.enable_ragas else 'DISABLED'}")
-        print()
-        
-        test_num = 0
-        total_tests = len(queries) * len(modes)
-        
-        for query_def in queries:
-            for mode in modes:
-                test_num += 1
-                result = self.run_single_test(query_def, mode, test_num, total_tests)
-                self.results.append(result)
-        
-        return self.results
+        return results
     
-    def analyze_results(self):
-        """Generate analysis summary."""
+    def get_property_completeness(self) -> Dict:
+        """Calculate metadata completeness for structured nodes."""
+        query = """
+        MATCH (p:Publication)
+        WITH p,
+          (CASE WHEN p.title IS NOT NULL AND p.title <> '' THEN 1 ELSE 0 END +
+           CASE WHEN p.year IS NOT NULL THEN 1 ELSE 0 END +
+           CASE WHEN p.doi IS NOT NULL AND p.doi <> '' THEN 1 ELSE 0 END +
+           CASE WHEN p.abstract IS NOT NULL AND p.abstract <> '' THEN 1 ELSE 0 END) AS filled_fields
+        WITH avg(filled_fields) / 4.0 AS avg_completeness
         
-        print(f"\n\n{'='*80}")
-        print("ANALYSIS SUMMARY")
-        print(f"{'='*80}\n")
+        MATCH (a:Author)
+        WITH avg_completeness, 
+             count(CASE WHEN a.name IS NOT NULL AND a.name <> '' THEN 1 END) * 1.0 / count(a) AS author_completeness
         
-        successful_tests = [r for r in self.results if r.success]
+        MATCH (j:Journal)
+        WITH avg_completeness, author_completeness,
+             count(CASE WHEN j.name IS NOT NULL AND j.name <> '' THEN 1 END) * 1.0 / count(j) AS journal_completeness
         
-        print(f"Tests completed: {len(successful_tests)}/{len(self.results)}\n")
-        
-        for mode in ['semantic', 'graph', 'dual']:
-            mode_results = [r for r in successful_tests if r.mode == mode]
-            if mode_results:
-                avg_chunks = sum(r.retrieval.total_chunks for r in mode_results) / len(mode_results)
-                avg_entities = sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results)
-                
-                print(f"{mode.upper():10} -> {avg_chunks:.1f} chunks, {avg_entities:.1f} entities")
-                
-                if self.enable_ragas:
-                    avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
-                    avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
-                    print(f"           Faithfulness: {avg_faith:.3f}, Relevancy: {avg_rel:.3f}")
+        RETURN 
+            round(avg_completeness * 100, 1) AS publication_completeness_pct,
+            round(author_completeness * 100, 1) AS author_completeness_pct,
+            round(journal_completeness * 100, 1) AS journal_completeness_pct
+        """
+        results = self.run_query(query, "Property completeness (metadata quality)")
+        return results[0] if results else {}
     
-    def save_results(self, output_dir: Path):
-        """Save results to JSON and markdown."""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    def get_cross_type_connectivity(self) -> List[Dict]:
+        """Analyze how different node types connect (integration quality)."""
+        query = """
+        MATCH (a)-[r]->(b)
+        WHERE labels(a)[0] <> labels(b)[0]
+        WITH labels(a)[0] AS from_type, 
+             labels(b)[0] AS to_type,
+             type(r) AS rel_type,
+             count(*) AS connections
+        ORDER BY connections DESC
+        RETURN from_type, to_type, rel_type, connections
+        LIMIT 30
+        """
+        return self.run_query(query, "Cross-type connectivity (integration quality)")
+    
+    # ========================================================================
+    # GRAPH COHESION METRICS (New)
+    # ========================================================================
+    
+    def get_connected_components(self) -> Dict:
+        """
+        Analyze connected components in the semantic entity graph.
+        Shows graph fragmentation - ideally one giant component.
         
-        # Convert to JSON-serializable format
-        results_dicts = []
-        for r in self.results:
-            result_dict = {
-                'test_id': r.test_id,
-                'query': r.query,
-                'mode': r.mode,
-                'category': r.category,
-                'success': r.success,
-                'error': r.error,
-                'entity_resolution': {
-                    'extracted_count': r.entity_resolution.extracted_count,
-                    'resolved_count': r.entity_resolution.resolved_count,
-                    'resolution_rate': r.entity_resolution.resolution_rate,
-                    'avg_confidence': r.entity_resolution.avg_confidence,
-                    'entity_names': r.entity_resolution.entity_names,
-                    'match_types': r.entity_resolution.match_types
-                },
-                'graph_utilization': {
-                    'entities_in_subgraph': r.graph_utilization.entities_in_subgraph,
-                    'relations_in_subgraph': r.graph_utilization.relations_in_subgraph,
-                    'relation_types': r.graph_utilization.relation_types,
-                    'jurisdictions_covered': r.graph_utilization.jurisdictions_covered
-                },
-                'retrieval': {
-                    'total_chunks': r.retrieval.total_chunks,
-                    'chunks_by_source': r.retrieval.chunks_by_source,
-                    'avg_chunk_score': r.retrieval.avg_chunk_score,
-                    'avg_query_similarity': r.retrieval.avg_query_similarity,
-                    'source_diversity': r.retrieval.source_diversity,
-                    'jurisdiction_diversity': r.retrieval.jurisdiction_diversity
-                },
-                'coverage': {
-                    'entities_in_subgraph': r.coverage.entities_in_subgraph,
-                    'entities_in_answer': r.coverage.entities_in_answer,
-                    'entity_coverage_rate': r.coverage.entity_coverage_rate,
-                    'relations_in_subgraph': r.coverage.relations_in_subgraph,
-                    'relations_mentioned': r.coverage.relations_mentioned,
-                    'relation_coverage_rate': r.coverage.relation_coverage_rate,
-                    'covered_entities': r.coverage.covered_entities,
-                    'uncovered_entities': r.coverage.uncovered_entities
-                },
-                'ragas': {
-                    'faithfulness_score': r.ragas.faithfulness_score,
-                    'faithfulness_details': r.ragas.faithfulness_details,
-                    'relevancy_score': r.ragas.relevancy_score,
-                    'relevancy_explanation': r.ragas.relevancy_explanation
-                },
-                'performance': {
-                    'retrieval_time': r.performance.retrieval_time,
-                    'answer_time': r.performance.answer_time,
-                    'total_time': r.performance.total_time,
-                    'answer_tokens': r.performance.answer_tokens,
-                    'cost_usd': r.performance.cost_usd
+        Note: Uses only RELATION edges between entities for semantic cohesion.
+        """
+        # Count weakly connected components using simple BFS approximation
+        # Full WCC needs GDS plugin, so we approximate with sampling
+        
+        # 1. Get total entities and isolated entities
+        isolation_query = """
+        MATCH (e:Entity)
+        WHERE NOT (e)-[:RELATION]-()
+        RETURN count(e) as isolated_entities
+        """
+        isolated = self.run_query(isolation_query, "Isolated entities")
+        isolated_count = isolated[0]['isolated_entities'] if isolated else 0
+        
+        # 2. Get total entities
+        total_query = """
+        MATCH (e:Entity)
+        RETURN count(e) as total_entities
+        """
+        total = self.run_query(total_query, "Total entities")
+        total_count = total[0]['total_entities'] if total else 0
+        
+        # 3. Sample reachability from top hubs to estimate giant component
+        # Note: Full reachability requires GDS plugin, using simple connected count
+        # Simpler query for approximation
+        giant_query = """
+        MATCH (e:Entity)-[:RELATION]-()
+        WITH DISTINCT e
+        RETURN count(e) as connected_entities
+        """
+        connected = self.run_query(giant_query, "Connected entities (in giant component)")
+        connected_count = connected[0]['connected_entities'] if connected else 0
+        
+        result = {
+            'total_entities': total_count,
+            'isolated_entities': isolated_count,
+            'connected_entities': connected_count,
+            'isolation_rate_pct': round(100.0 * isolated_count / max(1, total_count), 2),
+            'connectivity_rate_pct': round(100.0 * connected_count / max(1, total_count), 2)
+        }
+        
+        # Interpretation
+        if result['connectivity_rate_pct'] > 90:
+            result['interpretation'] = 'Highly connected graph (single giant component)'
+        elif result['connectivity_rate_pct'] > 70:
+            result['interpretation'] = 'Well connected with some isolated clusters'
+        elif result['connectivity_rate_pct'] > 50:
+            result['interpretation'] = 'Moderately fragmented graph'
+        else:
+            result['interpretation'] = 'Highly fragmented - many disconnected components'
+        
+        return result
+    
+    def get_type_homophily(self) -> Dict:
+        """
+        Measure type homophily: do entities prefer to connect to same-type entities?
+        
+        Homophily ratio = intra-type relations / total relations
+        High homophily suggests type-based clustering.
+        """
+        query = """
+        MATCH (a:Entity)-[r:RELATION]->(b:Entity)
+        WITH a.type as source_type, b.type as target_type, count(*) as rel_count
+        WITH source_type, target_type, rel_count,
+             CASE WHEN source_type = target_type THEN rel_count ELSE 0 END as intra_type_count
+        WITH sum(rel_count) as total_relations,
+             sum(intra_type_count) as intra_type_relations
+        RETURN 
+            total_relations,
+            intra_type_relations,
+            total_relations - intra_type_relations as inter_type_relations,
+            round(100.0 * intra_type_relations / total_relations, 2) as homophily_pct
+        """
+        results = self.run_query(query, "Type homophily analysis")
+        result = results[0] if results else {}
+        
+        if result:
+            homophily = result.get('homophily_pct', 0)
+            if homophily > 70:
+                result['interpretation'] = 'High homophily - entities cluster by type'
+            elif homophily > 40:
+                result['interpretation'] = 'Moderate homophily - mixed clustering'
+            else:
+                result['interpretation'] = 'Low homophily - rich cross-type connections'
+        
+        return result
+    
+    def get_type_homophily_breakdown(self) -> List[Dict]:
+        """
+        Breakdown of homophily by entity type.
+        Shows which types are most insular vs most integrative.
+        """
+        query = """
+        MATCH (a:Entity)-[r:RELATION]->(b:Entity)
+        WITH a.type as source_type, 
+             CASE WHEN a.type = b.type THEN 'intra' ELSE 'inter' END as connection_type,
+             count(*) as count
+        WITH source_type, 
+             sum(CASE WHEN connection_type = 'intra' THEN count ELSE 0 END) as intra,
+             sum(CASE WHEN connection_type = 'inter' THEN count ELSE 0 END) as inter,
+             sum(count) as total
+        WHERE total >= 10
+        RETURN 
+            source_type,
+            intra,
+            inter,
+            total,
+            round(100.0 * intra / total, 1) as homophily_pct
+        ORDER BY total DESC
+        LIMIT 20
+        """
+        return self.run_query(query, "Type homophily breakdown")
+    
+    def get_intra_type_density(self) -> List[Dict]:
+        """
+        Calculate relation density within each entity type.
+        
+        Density = actual_relations / possible_relations
+        For type with N entities: possible = N*(N-1)/2 (undirected)
+        
+        Higher density within a type suggests tighter semantic cohesion.
+        """
+        # Two separate queries to avoid Cypher scope issues
+        # First get type counts
+        type_query = """
+        MATCH (e:Entity)
+        WITH e.type as entity_type, count(e) as type_count
+        WHERE type_count >= 5
+        RETURN entity_type, type_count
+        ORDER BY type_count DESC
+        LIMIT 20
+        """
+        type_results = self.run_query(type_query, "Entity type counts")
+        
+        # Then get intra-type relation counts
+        intra_query = """
+        MATCH (a:Entity)-[r:RELATION]-(b:Entity)
+        WHERE a.type = b.type AND elementId(a) < elementId(b)
+        RETURN a.type as entity_type, count(r) as intra_relations
+        """
+        intra_results = self.run_query(intra_query, "Intra-type relation counts")
+        
+        # Join in Python
+        intra_map = {r['entity_type']: r['intra_relations'] for r in intra_results}
+        
+        results = []
+        for t in type_results:
+            entity_type = t['entity_type']
+            type_count = t['type_count']
+            intra_relations = intra_map.get(entity_type, 0)
+            possible = type_count * (type_count - 1) // 2
+            density = round(100.0 * intra_relations / possible, 4) if possible > 0 else 0
+            results.append({
+                'entity_type': entity_type,
+                'type_count': type_count,
+                'intra_relations': intra_relations,
+                'possible_relations': possible,
+                'density_pct': density
+            })
+        
+        return results
+    
+    def get_layer_integration_score(self) -> Dict:
+        """
+        Measure how well semantic entities integrate with metadata layer.
+        
+        Checks:
+        1. Entity -> Chunk (provenance via EXTRACTED_FROM)
+        2. Entity -> Jurisdiction (via SAME_AS)
+        3. Entity -> Publication (via MATCHED_TO)
+        4. Entity -> Author/Journal (via SAME_AS)
+        
+        Returns raw counts for clarity.
+        """
+        query = """
+        // Count each cross-layer relation type independently
+        CALL { MATCH ()-[r:EXTRACTED_FROM]->() RETURN count(r) as c } WITH c as extracted_from
+        CALL { MATCH ()-[r:SAME_AS]->(:Jurisdiction) RETURN count(r) as c } WITH extracted_from, c as same_as_jurisdiction
+        CALL { MATCH ()-[r:SAME_AS]->(:Author) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, c as same_as_author
+        CALL { MATCH ()-[r:SAME_AS]->(:Journal) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, c as same_as_journal
+        CALL { MATCH ()-[r:MATCHED_TO]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, c as matched_to
+        CALL { MATCH ()-[r:CITES]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, c as cites
+        CALL { MATCH ()-[r:AUTHORED_BY]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, c as authored_by
+        CALL { MATCH ()-[r:PUBLISHED_IN]->() RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, c as published_in
+        CALL { MATCH (:Jurisdiction)-[r:CONTAINS]->(:Chunk) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, c as jur_contains
+        CALL { MATCH (:Publication)-[r:CONTAINS]->(:Chunk) RETURN count(r) as c } WITH extracted_from, same_as_jurisdiction, same_as_author, same_as_journal, matched_to, cites, authored_by, published_in, jur_contains, c as pub_contains
+        
+        RETURN 
+            extracted_from,
+            same_as_jurisdiction,
+            same_as_author,
+            same_as_journal,
+            matched_to,
+            cites,
+            authored_by,
+            published_in,
+            jur_contains,
+            pub_contains,
+            (extracted_from + same_as_jurisdiction + same_as_author + same_as_journal + 
+             matched_to + cites + authored_by + published_in + jur_contains + pub_contains) as total_cross_layer
+        """
+        results = self.run_query(query, "Layer integration counts")
+        result = results[0] if results else {}
+        
+        return result
+    
+    def get_hub_centrality_by_type(self) -> List[Dict]:
+        """
+        Analyze which entity types produce the most hubs (high-degree nodes).
+        Shows which types are central to the knowledge graph.
+        """
+        query = """
+        MATCH (e:Entity)-[r:RELATION]-()
+        WITH e, count(r) as degree
+        WITH e.type as entity_type, degree,
+             CASE 
+                 WHEN degree >= 100 THEN 'mega_hub'
+                 WHEN degree >= 50 THEN 'major_hub'
+                 WHEN degree >= 20 THEN 'minor_hub'
+                 ELSE 'regular'
+             END as hub_category
+        WITH entity_type, hub_category, count(*) as count
+        WITH entity_type, 
+             collect({category: hub_category, count: count}) as hub_dist,
+             sum(count) as total_in_type
+        UNWIND hub_dist as h
+        WITH entity_type, total_in_type,
+             sum(CASE WHEN h.category = 'mega_hub' THEN h.count ELSE 0 END) as mega_hubs,
+             sum(CASE WHEN h.category = 'major_hub' THEN h.count ELSE 0 END) as major_hubs,
+             sum(CASE WHEN h.category = 'minor_hub' THEN h.count ELSE 0 END) as minor_hubs
+        WHERE total_in_type >= 10
+        RETURN 
+            entity_type,
+            total_in_type,
+            mega_hubs,
+            major_hubs,
+            minor_hubs,
+            mega_hubs + major_hubs + minor_hubs as total_hubs,
+            round(100.0 * (mega_hubs + major_hubs + minor_hubs) / total_in_type, 1) as hub_rate_pct
+        ORDER BY total_hubs DESC
+        LIMIT 15
+        """
+        return self.run_query(query, "Hub centrality by entity type")
+    
+    def analyze_author_collaboration_network(self) -> Dict[str, Any]:
+        """Analyze author collaboration network structure."""
+        # Get author collaboration stats
+        collab_query = """
+        MATCH (a1:Author)<-[:AUTHORED_BY]-(p:Publication)-[:AUTHORED_BY]->(a2:Author)
+        WHERE elementId(a1) < elementId(a2)
+        WITH a1, a2, count(p) as papers_together
+        WITH count(*) as total_collaborations, 
+             collect({author1: a1.name, author2: a2.name, papers: papers_together}) as collabs
+        RETURN total_collaborations, collabs
+        """
+        collab_results = self.run_query(collab_query, "Author collaborations")
+        
+        # Get degree distribution
+        degree_query = """
+        MATCH (a:Author)<-[:AUTHORED_BY]-(p:Publication)-[:AUTHORED_BY]->(coauthor:Author)
+        WHERE a <> coauthor
+        WITH a, count(DISTINCT coauthor) as num_collaborators
+        RETURN 
+            avg(num_collaborators) as avg_collaborators,
+            max(num_collaborators) as max_collaborators,
+            min(num_collaborators) as min_collaborators,
+            percentileCont(num_collaborators, 0.5) as median_collaborators,
+            count(a) as authors_with_collaborators
+        """
+        degree_results = self.run_query(degree_query, "Author collaboration degrees")
+        
+        # Degree distribution histogram
+        hist_query = """
+        MATCH (a:Author)<-[:AUTHORED_BY]-(p:Publication)-[:AUTHORED_BY]->(coauthor:Author)
+        WHERE a <> coauthor
+        WITH a, count(DISTINCT coauthor) as num_collaborators
+        WITH 
+          CASE 
+            WHEN num_collaborators = 1 THEN '1'
+            WHEN num_collaborators <= 3 THEN '2-3'
+            WHEN num_collaborators <= 5 THEN '4-5'
+            WHEN num_collaborators <= 10 THEN '6-10'
+            ELSE '10+'
+          END as bucket,
+          count(*) as author_count
+        RETURN bucket, author_count
+        ORDER BY 
+          CASE bucket
+            WHEN '1' THEN 1
+            WHEN '2-3' THEN 2
+            WHEN '4-5' THEN 3
+            WHEN '6-10' THEN 4
+            ELSE 5
+          END
+        """
+        hist_results = self.run_query(hist_query, "Author collaboration degree distribution")
+        
+        # Total authors for E-R comparison
+        total_authors_query = """
+        MATCH (a:Author)
+        RETURN count(a) as total_authors
+        """
+        author_count_results = self.run_query(total_authors_query, "Total author count")
+        
+        # Compile results
+        result = {
+            'degree_stats': degree_results[0] if degree_results else {},
+            'degree_distribution': hist_results,
+            'total_authors': author_count_results[0]['total_authors'] if author_count_results else 0
+        }
+        
+        # Add E-R comparison
+        if collab_results and author_count_results:
+            n = author_count_results[0]['total_authors']
+            e = collab_results[0]['total_collaborations']
+            if n > 1:
+                # Expected avg degree in E-R random graph with same N, E
+                er_avg_degree = (2 * e) / n
+                actual_avg = result['degree_stats'].get('avg_collaborators') or 0
+                result['erdos_renyi_comparison'] = {
+                    'actual_avg_degree': actual_avg,
+                    'er_expected_avg_degree': round(er_avg_degree, 2),
+                    'interpretation': 'Similar to random' if abs(actual_avg - er_avg_degree) < 0.5 else 'Structured (non-random)'
                 }
+        
+        return result
+    
+    def analyze_citation_network(self) -> Dict[str, Any]:
+        """Analyze citation network structure (L1 -> L2 citations via CITES)."""
+        # In-degree distribution (most cited L2 papers)
+        in_degree_query = """
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
+        RETURN 
+            avg(times_cited) as avg_citations,
+            max(times_cited) as max_citations,
+            percentileCont(times_cited, 0.5) as median_citations,
+            count(l2) as cited_publications
+        """
+        in_degree_results = self.run_query(in_degree_query, "Citation in-degrees (L2 papers)")
+        
+        # In-degree distribution histogram
+        in_hist_query = """
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
+        WITH 
+          CASE 
+            WHEN times_cited = 1 THEN '1'
+            WHEN times_cited <= 3 THEN '2-3'
+            WHEN times_cited <= 5 THEN '4-5'
+            WHEN times_cited <= 10 THEN '6-10'
+            ELSE '10+'
+          END as bucket,
+          count(*) as pub_count
+        RETURN bucket, pub_count
+        ORDER BY 
+          CASE bucket
+            WHEN '1' THEN 1
+            WHEN '2-3' THEN 2
+            WHEN '4-5' THEN 3
+            WHEN '6-10' THEN 4
+            ELSE 5
+          END
+        """
+        in_hist_results = self.run_query(in_hist_query, "Citation in-degree distribution")
+        
+        # Top cited L2 papers
+        top_cited_query = """
+        MATCH (l2:L2Publication)<-[:CITES]-(p:Publication)
+        WITH l2, count(p) as times_cited
+        ORDER BY times_cited DESC
+        LIMIT 10
+        RETURN l2.title as title, l2.author as author, times_cited
+        """
+        top_cited_results = self.run_query(top_cited_query, "Most cited L2 publications")
+        
+        # Total L2 pubs for E-R comparison
+        total_l2_query = """
+        MATCH (l2:L2Publication)
+        RETURN count(l2) as total_l2_pubs
+        """
+        l2_count_results = self.run_query(total_l2_query, "Total L2 publications")
+        
+        # Total citations (CITES relationships)
+        total_citations_query = """
+        MATCH (:Publication)-[c:CITES]->(:L2Publication)
+        RETURN count(c) as total_citations
+        """
+        citation_count_results = self.run_query(total_citations_query, "Total citation links")
+        
+        result = {
+            'in_degree_stats': in_degree_results[0] if in_degree_results else {},
+            'in_degree_distribution': in_hist_results,
+            'top_cited': top_cited_results,
+            'total_l2_publications': l2_count_results[0]['total_l2_pubs'] if l2_count_results else 0,
+            'total_citations': citation_count_results[0]['total_citations'] if citation_count_results else 0
+        }
+        
+        # E-R comparison
+        if l2_count_results and citation_count_results:
+            n = l2_count_results[0]['total_l2_pubs']
+            e = citation_count_results[0]['total_citations']
+            if n > 0:
+                # Expected avg in-degree in E-R directed graph
+                er_avg_in_degree = e / n
+                actual_avg = result['in_degree_stats'].get('avg_citations') or 0
+                result['erdos_renyi_comparison'] = {
+                    'actual_avg_in_degree': actual_avg,
+                    'er_expected_avg_in_degree': round(er_avg_in_degree, 2),
+                    'interpretation': 'Similar to random' if abs(actual_avg - er_avg_in_degree) < 0.5 else 'Preferential attachment (non-random)'
+                }
+        
+        return result
+    
+    def analyze_academic_regulatory_bridges(self) -> Dict[str, Any]:
+        """Analyze entities that bridge academic and regulatory domains."""
+        # Entities in both domains
+        bridge_query = """
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->(c1:Chunk)<-[:CONTAINS]-(j:Jurisdiction)
+        MATCH (e)-[:EXTRACTED_FROM]->(c2:Chunk)<-[:CONTAINS]-(p:Publication)
+        WITH e, 
+             count(DISTINCT j) as num_jurisdictions,
+             count(DISTINCT p) as num_papers
+        RETURN 
+            count(e) as bridging_entities,
+            avg(num_jurisdictions) as avg_jurisdictions_per_bridge,
+            avg(num_papers) as avg_papers_per_bridge,
+            max(num_jurisdictions) as max_jurisdictions,
+            max(num_papers) as max_papers
+        """
+        bridge_results = self.run_query(bridge_query, "Academic-regulatory bridge entities")
+        
+        # Top bridging entities
+        top_bridges_query = """
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->(c1:Chunk)<-[:CONTAINS]-(j:Jurisdiction)
+        MATCH (e)-[:EXTRACTED_FROM]->(c2:Chunk)<-[:CONTAINS]-(p:Publication)
+        WITH e, 
+             count(DISTINCT j) as num_jurisdictions,
+             count(DISTINCT p) as num_papers
+        WITH e, num_jurisdictions, num_papers,
+             num_jurisdictions + num_papers as bridge_score
+        ORDER BY bridge_score DESC
+        LIMIT 20
+        RETURN e.name as entity, e.type as type, num_jurisdictions, num_papers, bridge_score
+        """
+        top_bridges_results = self.run_query(top_bridges_query, "Top bridging entities")
+        
+        # Isolated entities (only in one domain)
+        isolation_query = """
+        MATCH (e:Entity)
+        OPTIONAL MATCH (e)-[:EXTRACTED_FROM]->(:Chunk)<-[:CONTAINS]-(j:Jurisdiction)
+        OPTIONAL MATCH (e)-[:EXTRACTED_FROM]->(:Chunk)<-[:CONTAINS]-(p:Publication)
+        WITH e, 
+             count(DISTINCT j) as in_regulations,
+             count(DISTINCT p) as in_papers
+        WITH 
+          CASE 
+            WHEN in_regulations > 0 AND in_papers > 0 THEN 'bridging'
+            WHEN in_regulations > 0 THEN 'regulation_only'
+            WHEN in_papers > 0 THEN 'academic_only'
+            ELSE 'isolated'
+          END as category,
+          count(e) as entity_count
+        RETURN category, entity_count
+        """
+        isolation_results = self.run_query(isolation_query, "Entity domain distribution")
+        
+        result = {
+            'bridge_stats': bridge_results[0] if bridge_results else {},
+            'top_bridges': top_bridges_results,
+            'domain_distribution': isolation_results
+        }
+        
+        # Calculate cohesion metrics
+        if isolation_results:
+            total = sum(r['entity_count'] for r in isolation_results)
+            bridging = next((r['entity_count'] for r in isolation_results if r['category'] == 'bridging'), 0)
+            result['cohesion'] = {
+                'total_entities': total,
+                'bridging_entities': bridging,
+                'bridging_percentage': round(100 * bridging / total, 2) if total > 0 else 0,
+                'interpretation': 'Highly integrated' if (bridging / total if total > 0 else 0) > 0.3 else 'Domain-siloed'
             }
-            results_dicts.append(result_dict)
         
-        json_file = output_dir / f'ablation_results_{timestamp}.json'
-        with open(json_file, 'w') as f:
-            json.dump(results_dicts, f, indent=2, default=str)
-        
-        print(f"\nResults saved to: {json_file}")
-        
-        # Generate markdown report
-        self._generate_markdown_report(output_dir, timestamp, results_dicts)
+        return result
     
-    def _generate_markdown_report(self, output_dir: Path, timestamp: str, results_dicts: List[Dict]):
-        """Generate comprehensive markdown report for thesis."""
+    def get_cross_jurisdictional_entities(self, min_jurisdictions: int = 2) -> List[Dict]:
+        """Get entities mentioned in multiple jurisdictions."""
+        query = f"""
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->(:Chunk)<-[:CONTAINS]-(j:Jurisdiction)
+        WITH e.name as entity, e.type as type, collect(DISTINCT j.code) as jurisdictions
+        WHERE size(jurisdictions) >= {min_jurisdictions}
+        RETURN entity, type, jurisdictions, size(jurisdictions) as coverage
+        ORDER BY coverage DESC
+        LIMIT 50
+        """
+        return self.run_query(query, f"Entities in {min_jurisdictions}+ jurisdictions")
+    
+    def get_academic_regulation_bridge(self) -> List[Dict]:
+        """Get entities that bridge academic papers and regulations."""
+        query = """
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->(c1:Chunk)<-[:CONTAINS]-(j:Jurisdiction)
+        MATCH (e)-[:EXTRACTED_FROM]->(c2:Chunk)<-[:CONTAINS]-(p:Publication)
+        WITH e.name as entity, e.type as type, 
+             collect(DISTINCT j.code) as jurisdictions,
+             collect(DISTINCT p.title)[..3] as papers
+        RETURN entity, type, jurisdictions, papers, 
+               size(jurisdictions) as jur_count,
+               size(papers) as paper_count
+        ORDER BY jur_count DESC, paper_count DESC
+        LIMIT 30
+        """
+        return self.run_query(query, "Entities bridging academic + regulatory sources")
+    
+    def get_citation_enrichment_stats(self) -> Dict:
+        """Get statistics on citation enrichment from Phase 2A."""
+        query = """
+        MATCH (e:Entity)-[:MATCHED_TO]->(l2:L2Publication)
+        WITH count(DISTINCT e) as matched_entities, count(DISTINCT l2) as cited_pubs
+        MATCH (:Publication)-[:CITES]->(:L2Publication)
+        WITH matched_entities, cited_pubs, count(*) as citation_links
+        RETURN matched_entities, cited_pubs, citation_links
+        """
+        results = self.run_query(query, "Citation enrichment statistics")
+        return results[0] if results else {}
+    
+    def get_orphan_stats(self) -> Dict:
+        """Detect orphan nodes (nodes with no relationships)."""
+        query = """
+        MATCH (n)
+        WHERE NOT (n)-[]-()
+        RETURN labels(n)[0] as node_type, count(n) as orphan_count
+        ORDER BY orphan_count DESC
+        """
+        results = self.run_query(query, "Orphan node detection")
+        return {r['node_type']: r['orphan_count'] for r in results}
+    
+    def get_entity_type_distribution(self) -> List[Dict]:
+        """Get distribution of entity types."""
+        query = """
+        MATCH (e:Entity)
+        WITH e.type as entity_type, count(*) as count
+        ORDER BY count DESC
+        RETURN entity_type, count
+        """
+        return self.run_query(query, "Entity type distribution")
+    
+    def get_provenance_coverage(self) -> Dict:
+        """Calculate what percentage of entities/chunks have proper provenance."""
+        query = """
+        MATCH (e:Entity)
+        WITH count(e) as total_entities
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->(:Chunk)
+        WITH total_entities, count(DISTINCT e) as entities_with_chunks
+        MATCH (c:Chunk)
+        WITH total_entities, entities_with_chunks, count(c) as total_chunks
+        MATCH (c:Chunk)<-[:CONTAINS]-()
+        RETURN 
+            total_entities,
+            entities_with_chunks,
+            total_chunks,
+            count(DISTINCT c) as chunks_with_source,
+            (entities_with_chunks * 100.0 / total_entities) as entity_coverage_pct,
+            (count(DISTINCT c) * 100.0 / total_chunks) as chunk_coverage_pct
+        """
+        results = self.run_query(query, "Provenance coverage")
+        return results[0] if results else {}
+    
+    def run_all_analyses(self) -> Dict[str, Any]:
+        """
+        Run all analytical queries and compile results.
         
-        successful_tests = [r for r in self.results if r.success]
-        n_queries = len(set(r.query for r in self.results))
+        Returns:
+            Dictionary containing all analysis results
+        """
+        results = {
+            'metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'neo4j_uri': self.driver._pool.address[0]
+            },
+            'node_counts': self.get_node_counts(),
+            'relationship_counts': self.get_relationship_counts(),
+            'coverage_stats': self.get_coverage_stats(),
+            'top_connected_entities': self.get_top_connected_entities(20),
+            'predicate_distribution': self.get_predicate_distribution(30),
+            'cross_jurisdictional_entities': self.get_cross_jurisdictional_entities(2),
+            'academic_regulation_bridge': self.get_academic_regulation_bridge(),
+            'citation_enrichment': self.get_citation_enrichment_stats(),
+            'entity_type_distribution': self.get_entity_type_distribution(),
+            'provenance_coverage': self.get_provenance_coverage(),
+            'orphan_stats': self.get_orphan_stats(),
+            # KG-specific metrics
+            'predicate_diversity': self.get_predicate_diversity(),
+            'relation_density': self.get_relation_density(),
+            'degree_distribution': self.get_degree_distribution_buckets(),
+            'property_completeness': self.get_property_completeness(),
+            'cross_type_connectivity': self.get_cross_type_connectivity(),
+            # Graph cohesion metrics (NEW)
+            'connected_components': self.get_connected_components(),
+            'type_homophily': self.get_type_homophily(),
+            'type_homophily_breakdown': self.get_type_homophily_breakdown(),
+            'layer_integration': self.get_layer_integration_score(),
+            'hub_centrality_by_type': self.get_hub_centrality_by_type(),
+            # Network science metrics
+            'author_collaboration_network': self.analyze_author_collaboration_network(),
+            'citation_network': self.analyze_citation_network(),
+            'bridge_network_analysis': self.analyze_academic_regulatory_bridges()
+        }
         
-        # Group by mode for summary
-        mode_stats = {}
-        for mode in ['semantic', 'graph', 'dual']:
-            mode_results = [r for r in successful_tests if r.mode == mode]
-            if mode_results:
-                mode_stats[mode] = {
-                    'faith_avg': sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results),
-                    'relev_avg': sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results),
-                    'time_avg': sum(r.performance.total_time for r in mode_results) / len(mode_results),
-                    'cost_avg': sum(r.performance.cost_usd for r in mode_results) / len(mode_results),
-                    'entities_avg': sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results),
-                    'relations_avg': sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results),
-                    'resolution_avg': sum(r.entity_resolution.resolution_rate for r in mode_results) / len(mode_results),
-                    'e_cov_avg': sum(r.coverage.entity_coverage_rate for r in mode_results) / len(mode_results),
-                    'r_cov_avg': sum(r.coverage.relation_coverage_rate for r in mode_results) / len(mode_results),
-                }
+        # Print report
+        if self.verbose:
+            self._print_verbose_report(results)
+        else:
+            self._print_report(results)
         
-        # Calculate totals
-        total_cost = sum(r.performance.cost_usd for r in successful_tests)
-        total_time = sum(r.performance.total_time for r in successful_tests)
-        avg_faith = sum(r.ragas.faithfulness_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
-        avg_relev = sum(r.ragas.relevancy_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
+        return results
+    
+    def _print_report(self, results: Dict[str, Any]):
+        """Print clean summary report with clear section separation."""
+        cov = results['coverage_stats']
+        cc = results.get('connected_components', {})
+        homophily = results.get('type_homophily', {})
+        integration = results.get('layer_integration', {})
+        density = results['relation_density']
+        cite_net = results.get('citation_network', {})
+        bridge_net = results.get('bridge_network_analysis', {})
         
-        report = f"""# GraphRAG Retrieval Ablation Study v1.1
-
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-**Phase:** 3 - Retrieval & Answer Generation  
-**Status:** Complete
-
----
-
-## Executive Summary
-
-Comparative evaluation of three retrieval strategies for cross-jurisdictional AI governance queries. Tests entity resolution, graph traversal, semantic search, and hybrid approaches against RAGAS quality metrics.
-
-### Study Overview
-| Metric | Value |
-|--------|-------|
-| Total Tests | {len(self.results)} |
-| Successful | {len(successful_tests)} |
-| Queries | {n_queries} |
-| Modes | semantic, graph, dual |
-| Total Cost | ${total_cost:.4f} |
-| Total Time | {total_time:.1f}s |
-
-### Key Results
-| Metric | Value |
-|--------|-------|
-| Avg Faithfulness | {avg_faith:.3f} |
-| Avg Relevancy | {avg_relev:.3f} |
-| Entity Resolution | 100% (in-domain) |
-| Best Overall Mode | {'semantic' if mode_stats.get('semantic', {}).get('faith_avg', 0) >= mode_stats.get('graph', {}).get('faith_avg', 0) else 'graph'} |
-
----
-
-## Mode Comparison
-
-### Performance by Mode
-| Mode | Faithfulness | Relevancy | Resolution | E.Cov | R.Cov | Time | Cost |
-|------|-------------|-----------|------------|-------|-------|------|------|
-"""
-        for mode, stats in mode_stats.items():
-            best_faith = max(s.get('faith_avg', 0) for s in mode_stats.values())
-            marker = "**" if stats['faith_avg'] == best_faith else ""
-            report += f"| {mode.upper()} | {marker}{stats['faith_avg']:.3f}{marker} | {stats['relev_avg']:.3f} | {stats['resolution_avg']:.1%} | {stats['e_cov_avg']:.1%} | {stats['r_cov_avg']:.1%} | {stats['time_avg']:.1f}s | ${stats['cost_avg']:.4f} |\n"
+        print("\n" + "="*75)
+        print("  GRAPHRAG KNOWLEDGE GRAPH ANALYTICS REPORT")
+        print("="*75)
         
-        report += """
-### Graph Utilization by Mode
-| Mode | Avg Entities | Avg Relations | Subgraph Density |
-|------|-------------|---------------|------------------|
-"""
-        for mode, stats in mode_stats.items():
-            density = stats['relations_avg'] / stats['entities_avg'] if stats['entities_avg'] > 0 else 0
-            report += f"| {mode.upper()} | {stats['entities_avg']:.1f} | {stats['relations_avg']:.1f} | {density:.2f} |\n"
+        # ===== OVERVIEW =====
+        print(f"\n{'─'*75}")
+        print("  OVERVIEW")
+        print(f"{'─'*75}")
+        print(f"  Documents: {cov.get('jurisdictions', 0)} jurisdictions + {cov.get('publications', 0)} academic papers")
+        print(f"  Chunks: {cov.get('chunks', 0):,}")
         
-        report += """
----
-
-## Results by Query Category
-
-"""
-        # Group by category
-        categories = {}
-        for rd in results_dicts:
-            cat = rd['category']
-            if cat not in categories:
-                categories[cat] = []
-            categories[cat].append(rd)
+        # ===== SEMANTIC LAYER =====
+        print(f"\n{'─'*75}")
+        print("  SEMANTIC LAYER  (Extracted entities and their relationships)")
+        print(f"{'─'*75}")
+        print(f"  Entities: {cov.get('entities', 0):,}")
+        print(f"  Relations: {cov.get('semantic_relations', 0):,}")
+        print(f"  Relation density: {density.get('relations_per_entity', 0):.1f} per entity  [{density.get('interpretation', '')}]")
+        print(f"  Connectivity: {cc.get('connectivity_rate_pct', 0):.1f}% in giant component, {cc.get('isolated_entities', 0)} isolated")
+        print(f"  Type homophily: {homophily.get('homophily_pct', 0):.1f}% intra-type  [<30% = rich cross-type connections]")
         
-        for cat, cat_results in categories.items():
-            report += f"""### {cat.replace('_', ' ').title()}
-
-| Query | Mode | Faith | Relev | Res | Subgraph | S/R/E | Sim | E.Cov | P/R | Jur | Time |
-|-------|------|-------|-------|-----|----------|-------|-----|-------|-----|-----|------|
-"""
-            for rd in cat_results:
-                src = rd['retrieval']['chunks_by_source']
-                s_chunks = src.get('semantic', 0)
-                r_chunks = src.get('graph_provenance', 0)
-                e_chunks = src.get('graph_entity', 0)
-                
-                src_div = rd['retrieval'].get('source_diversity', {})
-                p_count = src_div.get('paper', 0)
-                r_count = src_div.get('regulation', 0)
-                
-                jur = rd['retrieval'].get('jurisdiction_diversity', [])
-                jur_count = len(jur) if jur else 0
-                
-                e_cov = rd['coverage'].get('entity_coverage_rate', 0) * 100
-                sim = rd['retrieval'].get('avg_query_similarity', 0)
-                
-                subgraph = f"{rd['graph_utilization']['entities_in_subgraph']}/{rd['graph_utilization']['relations_in_subgraph']}"
-                
-                # Truncate query
-                q_short = rd['query'][:30] + "..." if len(rd['query']) > 30 else rd['query']
-                
-                report += f"| {q_short} | {rd['mode']} | {rd['ragas']['faithfulness_score']:.2f} | {rd['ragas']['relevancy_score']:.2f} | {rd['entity_resolution']['resolved_count']} | {subgraph} | {s_chunks}/{r_chunks}/{e_chunks} | {sim:.2f} | {e_cov:.0f}% | {p_count}/{r_count} | {jur_count} | {rd['performance']['total_time']:.1f}s |\n"
-            
-            report += "\n"
+        print(f"\n  Top Connected Entities:")
+        for i, entity in enumerate(results['top_connected_entities'][:5], 1):
+            print(f"    {i}. {entity['entity'][:35]:<35} ({entity['type']:<16}) {entity['degree']:,} connections")
         
-        report += """---
-
-## Entity Resolution Analysis
-
-### Match Type Distribution
-| Match Type | Count | Percentage |
-|------------|-------|------------|
-"""
-        # Aggregate match types
-        all_match_types = {}
-        total_matches = 0
-        for rd in results_dicts:
-            for mt, count in rd['entity_resolution'].get('match_types', {}).items():
-                all_match_types[mt] = all_match_types.get(mt, 0) + count
-                total_matches += count
+        # ===== METADATA LAYER =====
+        print(f"\n{'─'*75}")
+        print("  METADATA LAYER  (Structured bibliographic data)")
+        print(f"{'─'*75}")
+        print(f"  L1 Publications (in corpus): {cov.get('publications', 0)}")
+        print(f"  L2 Publications (cited):     {cite_net.get('total_l2_publications', 0)}")
+        print(f"  Authors: {results.get('author_collaboration_network', {}).get('total_authors', 0)}")
+        journal_count = next((n['count'] for n in results.get('node_counts', []) if n.get('node_type') == 'Journal'), 0)
+        print(f"  Journals: {journal_count}")
         
-        for mt, count in sorted(all_match_types.items(), key=lambda x: -x[1]):
-            pct = count / total_matches * 100 if total_matches > 0 else 0
-            report += f"| {mt} | {count} | {pct:.1f}% |\n"
+        author_net = results.get('author_collaboration_network', {})
+        if author_net.get('degree_stats'):
+            print(f"\n  Author Collaboration Network:")
+            print(f"    Avg co-authors per author: {author_net['degree_stats'].get('avg_collaborators', 0):.1f}")
+            er = author_net.get('erdos_renyi_comparison', {})
+            if er:
+                print(f"    vs Erdős-Rényi random graph: {er.get('er_expected_avg_degree', 0):.1f} expected")
+                print(f"    [{er.get('interpretation', '')}]")
         
-        report += f"""
-### Resolution Quality
-| Metric | Value |
-|--------|-------|
-| Total Entities Extracted | {sum(rd['entity_resolution']['extracted_count'] for rd in results_dicts)} |
-| Total Entities Resolved | {sum(rd['entity_resolution']['resolved_count'] for rd in results_dicts)} |
-| Overall Resolution Rate | {sum(rd['entity_resolution']['resolved_count'] for rd in results_dicts) / max(1, sum(rd['entity_resolution']['extracted_count'] for rd in results_dicts)):.1%} |
-
----
-
-## Source Diversity
-
-### Document Types Retrieved
-| Source Type | Chunks | Percentage |
-|-------------|--------|------------|
-"""
-        # Aggregate source types
-        all_sources = {}
-        total_src = 0
-        for rd in results_dicts:
-            for src, count in rd['retrieval'].get('source_diversity', {}).items():
-                all_sources[src] = all_sources.get(src, 0) + count
-                total_src += count
+        print(f"\n  Citation Network:")
+        in_stats = cite_net.get('in_degree_stats', {})
+        print(f"    Total citations: {cite_net.get('total_citations', 0)}")
+        print(f"    Avg citations per L2: {in_stats.get('avg_citations', 0) or 0:.2f}")
+        print(f"    Max citations: {in_stats.get('max_citations', 0) or 0}")
+        if in_stats.get('max_citations', 0) <= 1:
+            print(f"    [!] All L2s cited exactly once - likely deduplication issue")
         
-        for src, count in sorted(all_sources.items(), key=lambda x: -x[1]):
-            pct = count / total_src * 100 if total_src > 0 else 0
-            report += f"| {src} | {count} | {pct:.1f}% |\n"
+        # ===== CROSS-LAYER INTEGRATION =====
+        print(f"\n{'─'*75}")
+        print("  CROSS-LAYER INTEGRATION  (Semantic ↔ Metadata connections)")
+        print(f"{'─'*75}")
+        print(f"")
+        print(f"  {'Cross-Layer Relation':<40} {'Count':>10}")
+        print(f"  {'-'*38} {'-'*10}")
+        print(f"  {'EXTRACTED_FROM (Entity→Chunk)':<40} {integration.get('extracted_from', 0):>10,}")
+        print(f"  {'CONTAINS (Jurisdiction→Chunk)':<40} {integration.get('jur_contains', 0):>10,}")
+        print(f"  {'CONTAINS (Publication→Chunk)':<40} {integration.get('pub_contains', 0):>10,}")
+        print(f"  {'SAME_AS (Entity→Jurisdiction)':<40} {integration.get('same_as_jurisdiction', 0):>10,}")
+        print(f"  {'SAME_AS (Entity→Author)':<40} {integration.get('same_as_author', 0):>10,}")
+        print(f"  {'SAME_AS (Entity→Journal)':<40} {integration.get('same_as_journal', 0):>10,}")
+        print(f"  {'MATCHED_TO (Entity→Publication)':<40} {integration.get('matched_to', 0):>10,}")
+        print(f"  {'CITES (Publication→L2)':<40} {integration.get('cites', 0):>10,}")
+        print(f"  {'AUTHORED_BY (Publication→Author)':<40} {integration.get('authored_by', 0):>10,}")
+        print(f"  {'PUBLISHED_IN (Publication→Journal)':<40} {integration.get('published_in', 0):>10,}")
+        print(f"  {'-'*38} {'-'*10}")
+        print(f"  {'TOTAL CROSS-LAYER RELATIONS':<40} {integration.get('total_cross_layer', 0):>10,}")
         
-        # Aggregate jurisdictions
-        all_jurs = set()
-        for rd in results_dicts:
-            all_jurs.update(rd['retrieval'].get('jurisdiction_diversity', []))
+        # ===== DOMAIN ANALYSIS =====
+        print(f"\n{'─'*75}")
+        print("  DOMAIN ANALYSIS  (Cross-jurisdictional and academic-regulatory)")
+        print(f"{'─'*75}")
         
-        report += f"""
-### Jurisdictions Covered
-| Metric | Value |
-|--------|-------|
-| Unique Jurisdictions | {len(all_jurs)} |
-| Jurisdictions | {', '.join(sorted(all_jurs)[:10])}{'...' if len(all_jurs) > 10 else ''} |
-
----
-
-## Test Queries
-
-| # | Query | Category | Expected Strength |
-|---|-------|----------|-------------------|
-"""
-        for i, q in enumerate(TEST_QUERIES, 1):
-            report += f"| {i} | {q['query']} | {q['category']} | {q.get('expected_strength', 'dual')} |\n"
+        cross_jur = results['cross_jurisdictional_entities']
+        if cross_jur:
+            multi_jur = [e for e in cross_jur if e['coverage'] >= 2]
+            print(f"  Cross-Jurisdictional Entities:")
+            print(f"    Entities in 2+ jurisdictions: {len(multi_jur)}")
+            print(f"    Max jurisdictions: {max(e['coverage'] for e in cross_jur)}")
+            print(f"    Top: {cross_jur[0]['entity']} ({cross_jur[0]['coverage']} jurisdictions)")
         
-        report += f"""
----
-
-## Methodology
-
-### Retrieval Modes
-
-| Mode | Description |
-|------|-------------|
-| **SEMANTIC** | Vector similarity search via FAISS (baseline RAG) |
-| **GRAPH** | Entity-centric traversal via Neo4j + Steiner Tree |
-| **DUAL** | Hybrid: semantic chunks + graph-connected chunks |
-
-### Evaluation Metrics
-
-| Metric | Source | Description |
-|--------|--------|-------------|
-| Faithfulness | RAGAS | Claims supported by retrieved context |
-| Relevancy | RAGAS | Answer addresses the query |
-| Resolution | Pipeline | Entities matched to knowledge graph |
-| E.Cov | Pipeline | Subgraph entities mentioned in answer |
-| R.Cov | Pipeline | Subgraph relations reflected in answer |
-| S/R/E | Pipeline | Semantic/Relation/Entity chunk counts |
-| P/R | Pipeline | Paper/Regulation source split |
-| Jur | Pipeline | Unique jurisdictions in context |
-
-### System Configuration
-
-| Component | Configuration |
-|-----------|---------------|
-| Entity Resolution | 3-stage (exact → alias → fuzzy) |
-| Graph Expansion | Steiner Tree via Neo4j GDS |
-| Embedding Model | BGE-M3 (1024 dim) |
-| Answer Generation | Claude Sonnet |
-| Graph | 38,266 entities, 339,268 relations |
-
----
-
-## Limitations
-
-- ⚠️ No ground truth annotations (automated RAGAS only)
-- ⚠️ Small sample size ({n_queries} queries × 3 modes)
-- ⚠️ Steiner Tree (not PCST) for graph expansion
-- ⚠️ Single evaluator model (Claude)
-
----
-
-*Generated by src/analysis/ablation_study.py v1.1*
-"""
+        bridge_stats = bridge_net.get('bridge_stats', {})
+        domain_dist = bridge_net.get('domain_distribution', [])
+        cohesion = bridge_net.get('cohesion', {})
         
-        report_file = output_dir / f'ablation_report_{timestamp}.md'
-        with open(report_file, 'w') as f:
-            f.write(report)
+        print(f"\n  Academic-Regulatory Bridges:")
+        print(f"    Entities appearing in BOTH regulatory docs AND academic papers")
+        if domain_dist:
+            for d in domain_dist:
+                label = {'bridging': 'Bridging (both)', 'academic_only': 'Academic only', 'regulation_only': 'Regulatory only'}.get(d['category'], d['category'])
+                print(f"      {label:<20} {d['entity_count']:>6,} entities")
+        if cohesion:
+            print(f"    Bridge rate: {cohesion.get('bridging_percentage', 0):.1f}%  [{cohesion.get('interpretation', '')}]")
         
-        print(f"Markdown report saved to: {report_file}")
+        # ===== ISSUES =====
+        orphans = results['orphan_stats']
+        issues = []
+        
+        if orphans:
+            for node_type, count in orphans.items():
+                issues.append(f"WARNING: {count} orphan {node_type} nodes (no relationships)")
+        
+        if integration.get('jurisdiction_coverage_pct', 0) == 0 and integration.get('same_as_coverage_pct', 0) == 0:
+            issues.append("WARNING: No SAME_AS relations imported - entity↔metadata linking broken")
+        
+        if cite_net.get('in_degree_stats', {}).get('max_citations', 0) <= 1 and cite_net.get('total_l2_publications', 0) > 100:
+            issues.append("WARNING: L2 publications not deduplicated - each cited exactly once")
+        
+        print(f"\n{'─'*75}")
+        print("  ISSUES & WARNINGS")
+        print(f"{'─'*75}")
+        if issues:
+            for issue in issues:
+                print(f"  {issue}")
+        else:
+            print(f"  None detected")
+        
+        print("\n" + "="*75)
+        print("  Use --verbose for full metrics, distributions, and top-N lists")
+        print("="*75 + "\n")
+    
+    def _print_verbose_report(self, results: Dict[str, Any]):
+        """Print detailed report with clear section separation."""
+        cov = results['coverage_stats']
+        
+        print("\n" + "="*80)
+        print("  GRAPHRAG KNOWLEDGE GRAPH - DETAILED ANALYTICS REPORT")
+        print("="*80)
+        
+        # ===================================================================
+        # OVERVIEW
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  1. OVERVIEW")
+        print(f"{'━'*80}")
+        print(f"  Jurisdictions: {cov.get('jurisdictions', 0)}")
+        print(f"  Academic Publications: {cov.get('publications', 0)}")
+        print(f"  Chunks: {cov.get('chunks', 0):,}")
+        print(f"  Entities: {cov.get('entities', 0):,}")
+        print(f"  Semantic Relations: {cov.get('semantic_relations', 0):,}")
+        
+        # ===================================================================
+        # SEMANTIC LAYER
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  2. SEMANTIC LAYER  (Extracted entities and relationships)")
+        print(f"{'━'*80}")
+        print("     Entities extracted from text via LLM, connected by semantic relations.")
+        print("     This forms the core knowledge graph for question answering.")
+        
+        # Relation Density
+        density = results['relation_density']
+        print(f"\n  2.1 Relation Density")
+        print(f"      {density.get('relations_per_entity', 0):.2f} relations/entity")
+        print(f"      Interpretation: {density.get('interpretation', 'N/A')}")
+        print(f"      Benchmark: Domain KGs typically have 2-5 relations/entity")
+        
+        # Predicate Diversity
+        pred_div = results['predicate_diversity']
+        print(f"\n  2.2 Predicate Diversity (semantic richness)")
+        print(f"      Avg predicates per entity: {pred_div.get('avg_predicates_per_entity', 0):.2f}")
+        print(f"      Max predicates: {pred_div.get('max_predicates', 0)}")
+        print(f"      Median: {pred_div.get('median_predicates', 0):.1f}")
+        
+        # Degree Distribution
+        print(f"\n  2.3 Degree Distribution (power-law analysis)")
+        print(f"      Healthy KGs show power-law: many low-degree, few high-degree nodes")
+        deg_dist = results['degree_distribution']
+        for bucket in deg_dist:
+            print(f"        {bucket['bucket']:15} {bucket['entity_count']:>6,} entities")
+        
+        # Connectivity
+        cc = results.get('connected_components', {})
+        print(f"\n  2.4 Graph Connectivity")
+        print(f"      Total entities: {cc.get('total_entities', 0):,}")
+        print(f"      In giant component: {cc.get('connected_entities', 0):,} ({cc.get('connectivity_rate_pct', 0):.1f}%)")
+        print(f"      Isolated (no relations): {cc.get('isolated_entities', 0):,} ({cc.get('isolation_rate_pct', 0):.1f}%)")
+        print(f"      Interpretation: {cc.get('interpretation', 'N/A')}")
+        
+        # Type Homophily
+        homophily = results.get('type_homophily', {})
+        print(f"\n  2.5 Type Homophily (do same-type entities cluster together?)")
+        print(f"      Total relations: {homophily.get('total_relations', 0):,}")
+        print(f"      Intra-type (A→A): {homophily.get('intra_type_relations', 0):,} ({homophily.get('homophily_pct', 0):.1f}%)")
+        print(f"      Inter-type (A→B): {homophily.get('inter_type_relations', 0):,}")
+        print(f"      Interpretation: {homophily.get('interpretation', 'N/A')}")
+        print(f"      [<30% = rich cross-type semantic connections]")
+        
+        homophily_breakdown = results.get('type_homophily_breakdown', [])
+        if homophily_breakdown:
+            print(f"\n      By entity type:")
+            for h in homophily_breakdown[:5]:
+                print(f"        {h['source_type']:20} {h['homophily_pct']:5.1f}% intra-type ({h['total']:,} relations)")
+        
+        # Hub Analysis
+        hub_types = results.get('hub_centrality_by_type', [])
+        if hub_types:
+            print(f"\n  2.6 Hub Centrality by Type")
+            print(f"      Hub = highly connected entity. Categories: mega(≥100), major(≥50), minor(≥20)")
+            for h in hub_types[:10]:
+                print(f"        {h['entity_type']:20} {h['total_hubs']:>4} hubs ({h['hub_rate_pct']:>5.1f}%)  [mega:{h['mega_hubs']:>2}, major:{h['major_hubs']:>3}, minor:{h['minor_hubs']:>4}]")
+        
+        # Top Connected Entities
+        print(f"\n  2.7 Top 10 Connected Entities")
+        for i, entity in enumerate(results['top_connected_entities'][:10], 1):
+            print(f"      {i:2}. {entity['entity'][:45]:<45} ({entity['type']:<16}) {entity['degree']:>5,} conn")
+        
+        # Entity Type Distribution
+        print(f"\n  2.8 Entity Type Distribution (Top 10)")
+        entity_types = results['entity_type_distribution'][:10]
+        for et in entity_types:
+            print(f"        {et['entity_type']:20} {et['count']:>6,}")
+        
+        # ===================================================================
+        # METADATA LAYER
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  3. METADATA LAYER  (Structured bibliographic data)")
+        print(f"{'━'*80}")
+        print("     Publications, authors, journals - structured data from Scopus/references.")
+        
+        # Property Completeness
+        completeness = results['property_completeness']
+        print(f"\n  3.1 Metadata Completeness")
+        print(f"      Publications: {completeness.get('publication_completeness_pct', 0):.1f}% (title, year, DOI, abstract)")
+        print(f"      Authors: {completeness.get('author_completeness_pct', 0):.1f}% (name)")
+        print(f"      Journals: {completeness.get('journal_completeness_pct', 0):.1f}% (name)")
+        
+        # Author Collaboration Network
+        print(f"\n  3.2 Author Collaboration Network")
+        print(f"      Two authors are 'collaborators' if they co-authored a paper.")
+        author_net = results['author_collaboration_network']
+        deg_stats = author_net.get('degree_stats', {})
+        print(f"      Total authors: {author_net.get('total_authors', 0)}")
+        print(f"      With collaborators: {deg_stats.get('authors_with_collaborators', 0)}")
+        print(f"      Avg collaborators: {deg_stats.get('avg_collaborators', 0):.2f}")
+        print(f"      Max collaborators: {deg_stats.get('max_collaborators', 0)}")
+        print(f"      Median: {deg_stats.get('median_collaborators', 0):.1f}")
+        
+        if 'erdos_renyi_comparison' in author_net:
+            er = author_net['erdos_renyi_comparison']
+            print(f"\n      Erdős-Rényi comparison (is structure random or meaningful?):")
+            print(f"        Actual avg degree: {er['actual_avg_degree']:.2f}")
+            print(f"        Random graph expected: {er['er_expected_avg_degree']:.2f}")
+            print(f"        Interpretation: {er['interpretation']}")
+        
+        print(f"\n      Collaboration degree distribution:")
+        for bucket in author_net.get('degree_distribution', []):
+            print(f"        {bucket['bucket']:>6} collaborators → {bucket['author_count']:>4} authors")
+        
+        # Citation Network
+        print(f"\n  3.3 Citation Network")
+        print(f"      L1 = papers in corpus, L2 = papers they cite (references).")
+        print(f"      CITES relationship: L1 Publication → L2 Publication")
+        cite_net = results['citation_network']
+        in_stats = cite_net.get('in_degree_stats', {})
+        print(f"      L1 publications: {cov.get('publications', 0)}")
+        print(f"      L2 publications: {cite_net.get('total_l2_publications', 0)}")
+        print(f"      Total citations: {cite_net.get('total_citations', 0)}")
+        print(f"      Avg citations per L2: {in_stats.get('avg_citations') or 0:.2f}")
+        print(f"      Max citations: {in_stats.get('max_citations') or 0}")
+        print(f"      Median: {in_stats.get('median_citations') or 0:.1f}")
+        
+        if 'erdos_renyi_comparison' in cite_net:
+            er = cite_net['erdos_renyi_comparison']
+            print(f"\n      Erdős-Rényi comparison:")
+            print(f"        Actual avg in-degree: {er['actual_avg_in_degree']:.2f}")
+            print(f"        Random expected: {er['er_expected_avg_in_degree']:.2f}")
+            print(f"        Interpretation: {er['interpretation']}")
+        
+        if cite_net.get('in_degree_distribution'):
+            print(f"\n      Citation in-degree distribution:")
+            for bucket in cite_net.get('in_degree_distribution', []):
+                print(f"        {bucket['bucket']:>6} citations → {bucket['pub_count']:>4} publications")
+        
+        if cite_net.get('top_cited'):
+            print(f"\n      Top 10 Most Cited L2 Publications:")
+            for i, pub in enumerate(cite_net.get('top_cited', [])[:10], 1):
+                title = (pub['title'][:45] + '...') if pub['title'] and len(pub['title']) > 45 else (pub['title'] or 'N/A')
+                author = pub['author'][:25] if pub['author'] else 'N/A'
+                print(f"        {i:2}. {title:<50} by {author:<25} ({pub['times_cited']} cites)")
+        
+        # ===================================================================
+        # CROSS-LAYER INTEGRATION
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  4. CROSS-LAYER INTEGRATION  (Semantic ↔ Metadata connections)")
+        print(f"{'━'*80}")
+        
+        integration = results.get('layer_integration', {})
+        print(f"\n  4.1 Cross-Layer Relations (counts)")
+        print(f"      {'Relation Type':<45} {'Count':>10}")
+        print(f"      {'-'*43} {'-'*10}")
+        print(f"      {'EXTRACTED_FROM (Entity→Chunk)':<45} {integration.get('extracted_from', 0):>10,}")
+        print(f"      {'CONTAINS (Jurisdiction→Chunk)':<45} {integration.get('jur_contains', 0):>10,}")
+        print(f"      {'CONTAINS (Publication→Chunk)':<45} {integration.get('pub_contains', 0):>10,}")
+        print(f"      {'SAME_AS (Entity→Jurisdiction)':<45} {integration.get('same_as_jurisdiction', 0):>10,}")
+        print(f"      {'SAME_AS (Entity→Author)':<45} {integration.get('same_as_author', 0):>10,}")
+        print(f"      {'SAME_AS (Entity→Journal)':<45} {integration.get('same_as_journal', 0):>10,}")
+        print(f"      {'MATCHED_TO (Entity→Publication)':<45} {integration.get('matched_to', 0):>10,}")
+        print(f"      {'CITES (Publication→L2)':<45} {integration.get('cites', 0):>10,}")
+        print(f"      {'AUTHORED_BY (Publication→Author)':<45} {integration.get('authored_by', 0):>10,}")
+        print(f"      {'PUBLISHED_IN (Publication→Journal)':<45} {integration.get('published_in', 0):>10,}")
+        print(f"      {'-'*43} {'-'*10}")
+        print(f"      {'TOTAL':<45} {integration.get('total_cross_layer', 0):>10,}")
+        
+        # Cross-Type Connectivity
+        print(f"\n  4.2 Cross-Type Connectivity (top relationship patterns)")
+        cross_type = results['cross_type_connectivity'][:10]
+        for conn in cross_type:
+            print(f"        {conn['from_type']:15} →[{conn['rel_type']:15}]→ {conn['to_type']:15} ({conn['connections']:,})")
+        
+        # Provenance
+        prov = results['provenance_coverage']
+        print(f"\n  4.3 Provenance Coverage")
+        print(f"      Entities with chunk links: {prov.get('entity_coverage_pct', 0):.1f}%")
+        print(f"      Chunks with source docs: {prov.get('chunk_coverage_pct', 0):.1f}%")
+        
+        # ===================================================================
+        # DOMAIN ANALYSIS
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  5. DOMAIN ANALYSIS  (Cross-jurisdictional & Academic-Regulatory)")
+        print(f"{'━'*80}")
+        
+        # Cross-Jurisdictional
+        print(f"\n  5.1 Cross-Jurisdictional Coverage")
+        print(f"      Entities appearing in regulatory docs from multiple jurisdictions.")
+        cross_jur = results['cross_jurisdictional_entities']
+        if cross_jur:
+            print(f"      Entities in 2+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 2])}")
+            print(f"      Entities in 3+ jurisdictions: {len([e for e in cross_jur if e['coverage'] >= 3])}")
+            print(f"      Max coverage: {max(e['coverage'] for e in cross_jur)} jurisdictions")
+            print(f"\n      Top cross-jurisdictional entities:")
+            for i, entity in enumerate(cross_jur[:5], 1):
+                print(f"        {i}. {entity['entity'][:40]:<40} {entity['coverage']:>2} jurisdictions")
+        
+        # Academic-Regulatory Bridges
+        print(f"\n  5.2 Academic-Regulatory Bridges")
+        print(f"      Entities appearing in BOTH regulatory docs AND academic papers.")
+        bridge_net = results['bridge_network_analysis']
+        bridge_stats = bridge_net.get('bridge_stats', {})
+        print(f"      Bridging entities: {bridge_stats.get('bridging_entities', 0):,}")
+        print(f"      Avg jurisdictions per bridge: {bridge_stats.get('avg_jurisdictions_per_bridge', 0):.2f}")
+        print(f"      Avg papers per bridge: {bridge_stats.get('avg_papers_per_bridge', 0):.2f}")
+        
+        if 'cohesion' in bridge_net:
+            cohesion = bridge_net['cohesion']
+            print(f"\n      Domain Distribution:")
+            print(f"        Bridging: {cohesion['bridging_entities']:,} ({cohesion['bridging_percentage']:.1f}%)")
+        
+        for dist in bridge_net.get('domain_distribution', []):
+            label = {'bridging': 'Bridging (both)', 'academic_only': 'Academic only', 'regulation_only': 'Regulatory only'}.get(dist['category'], dist['category'])
+            print(f"        {label:<20} {dist['entity_count']:>6,} entities")
+        
+        if bridge_net.get('cohesion'):
+            print(f"      Interpretation: {bridge_net['cohesion']['interpretation']}")
+        
+        if bridge_net.get('top_bridges'):
+            print(f"\n      Top 10 Bridging Entities:")
+            for i, bridge in enumerate(bridge_net.get('top_bridges', [])[:10], 1):
+                print(f"        {i:2}. {bridge['entity'][:40]:<40} ({bridge['type']:<15}) {bridge['num_jurisdictions']:>2} jurs, {bridge['num_papers']:>3} papers")
+        
+        # ===================================================================
+        # ISSUES
+        # ===================================================================
+        print(f"\n{'━'*80}")
+        print("  6. ISSUES & WARNINGS")
+        print(f"{'━'*80}")
+        
+        orphans = results['orphan_stats']
+        issues_found = False
+        
+        if orphans:
+            for node_type, count in orphans.items():
+                print(f"  WARNING: {count} orphan {node_type} nodes (no relationships)")
+                issues_found = True
+        
+        if integration.get('jurisdiction_coverage_pct', 0) == 0 and integration.get('same_as_coverage_pct', 0) == 0:
+            print(f"  WARNING: No SAME_AS relations imported - entity↔metadata linking broken")
+            issues_found = True
+        
+        cite_net = results['citation_network']
+        if cite_net.get('in_degree_stats', {}).get('max_citations', 0) <= 1 and cite_net.get('total_l2_publications', 0) > 100:
+            print(f"  WARNING: L2 publications not deduplicated - each cited exactly once")
+            issues_found = True
+        
+        if not issues_found:
+            print(f"  None detected")
+        
+        print("\n" + "="*80 + "\n")
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Retrieval ablation study')
-    parser.add_argument('--quick', action='store_true', help='Quick test with 2 queries')
-    parser.add_argument('--queries', type=int, help='Number of queries')
-    parser.add_argument('--no-ragas', action='store_true', help='Skip RAGAS')
-    parser.add_argument('-o', '--output', type=str, default='data/analysis/results', help='Output dir')
+    """Main execution."""
+    parser = argparse.ArgumentParser(description='Analyze GraphRAG knowledge graph')
+    parser.add_argument('--uri', type=str, help='Neo4j URI (default: env NEO4J_URI)')
+    parser.add_argument('--user', type=str, default='neo4j', help='Neo4j user (default: neo4j)')
+    parser.add_argument('--password', type=str, help='Neo4j password (default: env NEO4J_PASSWORD)')
+    parser.add_argument('--output', type=str, help='Output JSON file path (optional)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show query-by-query progress and full report')
     
     args = parser.parse_args()
     
+    # Suppress neo4j driver warnings (deprecated functions, missing properties)
+    logging.getLogger('neo4j').setLevel(logging.ERROR)
+    
+    # Get credentials
+    uri = args.uri or os.getenv('NEO4J_URI')
+    user = args.user or os.getenv('NEO4J_USER', 'neo4j')
+    password = args.password or os.getenv('NEO4J_PASSWORD')
+    
+    if not uri or not password:
+        print("ERROR: --uri and --password required (or set NEO4J_URI and NEO4J_PASSWORD env vars)")
+        sys.exit(1)
+    
+    # Run analysis
+    analyzer = GraphAnalyzer(uri, user, password, verbose=args.verbose)
+    
     try:
-        if args.quick:
-            queries = TEST_QUERIES[:2]
-        elif args.queries:
-            queries = TEST_QUERIES[:args.queries]
-        else:
-            queries = TEST_QUERIES
+        results = analyzer.run_all_analyses()
         
-        modes = [RetrievalMode.SEMANTIC, RetrievalMode.GRAPH, RetrievalMode.DUAL]
+        # Save to file if requested
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            
+            print(f"\nResults saved to {output_path}")
         
-        suite = AblationTestSuite(enable_ragas=not args.no_ragas)
-        suite.load_pipeline()
-        suite.run_full_suite(queries, modes)
-        suite.analyze_results()
-        suite.save_results(Path(args.output))
-        
-        print("\nAblation study complete!\n")
-        
-    except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error("Ablation study failed: %s", str(e), exc_info=True)
-        print(f"\nError: {e}")
-        sys.exit(1)
+    finally:
+        analyzer.close()
 
 
 if __name__ == '__main__':
