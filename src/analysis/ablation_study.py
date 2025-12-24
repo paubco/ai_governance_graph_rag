@@ -84,7 +84,8 @@ class RAGASEvaluator:
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment")
         self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = "claude-sonnet-4-20250514"
+        # Use Haiku for evaluation - 12x cheaper than Sonnet, sufficient for judging
+        self.model = "claude-3-5-haiku-20241022"
         self.max_retries = max_retries
     
     def _parse_json_response(self, content: str) -> Dict:
@@ -310,9 +311,9 @@ class AblationTestSuite:
         # Answer generator
         self.generator = AnswerGenerator()
         
-        # RAGAS evaluator (Claude with large context window)
+        # RAGAS evaluator (Claude Haiku - cheap but reliable)
         if self.enable_ragas:
-            print("Initializing RAGAS evaluator (Claude with 200k context)...")
+            print("Initializing RAGAS evaluator (Claude Haiku)...")
             self.ragas = RAGASEvaluator()
         
         print("Pipeline loaded\n")
@@ -530,7 +531,7 @@ class AblationTestSuite:
         print(f"  Queries: {len(queries)}")
         print(f"  Modes: {[m.value for m in modes]}")
         print(f"  Total tests: {total_tests}")
-        print(f"  RAGAS evaluation: {'ENABLED (Claude 200k context)' if self.enable_ragas else 'DISABLED'}")
+        print(f"  RAGAS evaluation: {'ENABLED (Haiku)' if self.enable_ragas else 'DISABLED'}")
         print(f"  Execution: {'PARALLEL (' + str(self.max_workers) + ' workers)' if self.parallel else 'SEQUENTIAL'}")
         print()
         
@@ -1326,7 +1327,7 @@ Examples:
             queries = queries[:args.queries]
             print(f"  Limited to {args.queries} queries")
         
-        print(f"  RAGAS: {'enabled (Claude)' if not args.no_ragas else 'DISABLED'}")
+        print(f"  RAGAS: {'enabled (Haiku)' if not args.no_ragas else 'DISABLED'}")
         print(f"  LaTeX export: {'enabled' if args.latex else 'disabled'}")
         print(f"  Parallel: {'enabled (' + str(args.workers) + ' workers)' if args.parallel else 'disabled'}")
         print("=" * 80 + "\n")
