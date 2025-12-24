@@ -234,7 +234,7 @@ class GraphExpander:
                 result = session.run("""
                     MATCH (n:Entity)
                     WHERE n.entity_id IN $terminal_ids
-                    WITH collect(id(n)) AS terminalNodeIds
+                    WITH collect(elementId(n)) AS terminalNodeIds
                     
                     CALL gds.beta.steinerTree.stream('entity-graph', {
                         sourceNode: terminalNodeIds[0],
@@ -245,7 +245,7 @@ class GraphExpander:
                     
                     WITH collect(nodeId) AS subgraphNodeIds
                     MATCH (e:Entity)
-                    WHERE id(e) IN subgraphNodeIds
+                    WHERE elementId(e) IN subgraphNodeIds
                     RETURN collect(e.entity_id) AS entity_ids
                 """, terminal_ids=terminal_ids, delta=self.config['delta'])
                 
