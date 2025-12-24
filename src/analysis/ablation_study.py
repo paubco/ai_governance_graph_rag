@@ -35,7 +35,7 @@ from config.retrieval_config import RetrievalMode
 # Local
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from src.utils.embeddings import EmbeddingModel
+from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 
 # Analysis metrics
@@ -226,7 +226,7 @@ class AblationTestSuite:
         data_dir = PROJECT_ROOT / 'data'
         
         # Embedding model
-        embedding_model = EmbeddingModel()
+        embedding_model = BGEEmbedder()
         
         # Retrieval processor
         self.processor = RetrievalProcessor(
