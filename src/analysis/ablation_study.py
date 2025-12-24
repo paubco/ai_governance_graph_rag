@@ -20,12 +20,15 @@ Example:
 import argparse
 import json
 import os
+import re
 import sys
 import textwrap
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
+from threading import Lock
+from typing import List, Dict, Tuple, Optional
 
 # Project root (src/analysis/ablation_study.py -> project root)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -63,18 +66,103 @@ logger = get_logger(__name__)
 
 
 # ============================================================================
-# RAGAS METRICS (INTEGRATED)
+# RAGAS METRICS - Claude with robust parsing
 # ============================================================================
 
 class RAGASEvaluator:
-    """RAGAS metrics evaluator using Claude as LLM judge."""
+    """
+    RAGAS metrics evaluator using Claude API.
     
-    def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+    Uses Claude for large context window (200k tokens) - essential for 
+    faithfulness evaluation with full retrieval context.
+    
+    Includes robust JSON parsing with retry and regex fallback.
+    """
+    
+    def __init__(self, max_retries: int = 2):
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not found in environment")
+        self.client = anthropic.Anthropic(api_key=api_key)
         self.model = "claude-sonnet-4-20250514"
+        self.max_retries = max_retries
+    
+    def _parse_json_response(self, content: str) -> Dict:
+        """
+        Robust JSON parsing with multiple fallback strategies.
+        
+        Pattern from project's query_parser.py and extraction pipeline.
+        """
+        cleaned = content.strip()
+        
+        # 1. Remove markdown fences (```json ... ```)
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            # Remove first line if it's a fence
+            if lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            # Remove last line if it's a fence
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        
+        # 2. Try direct parse
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        
+        # 3. Try to extract JSON object from text (LLM sometimes adds preamble)
+        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+        
+        # 4. Regex fallback - extract score directly
+        score_match = re.search(r'"score"\s*:\s*([\d.]+)', cleaned)
+        if score_match:
+            # Try to also get explanation
+            expl_match = re.search(r'"explanation"\s*:\s*"([^"]*)"', cleaned)
+            return {
+                'score': float(score_match.group(1)),
+                'claims': [],
+                'explanation': expl_match.group(1) if expl_match else 'Extracted via regex fallback'
+            }
+        
+        # 5. Last resort - return zero with error info
+        logger.warning(f"JSON parse failed, content preview: {cleaned[:200]}")
+        return {'score': 0.0, 'claims': [], 'explanation': f'Parse failed: {cleaned[:100]}'}
+    
+    def _call_with_retry(self, messages: List[Dict], max_tokens: int) -> str:
+        """Call Claude API with retry on transient failures."""
+        last_error = None
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    messages=messages
+                )
+                return response.content[0].text.strip()
+                
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    logger.warning(f"API call failed (attempt {attempt + 1}), retrying in {wait_time}s: {e}")
+                    time.sleep(wait_time)
+        
+        raise last_error
     
     def faithfulness(self, answer: str, context: str) -> Dict:
-        """Measure if all claims in answer are supported by context."""
+        """
+        Measure if all claims in answer are supported by context.
+        
+        Uses Claude's large context window to evaluate full retrieval context.
+        """
         prompt = f"""Evaluate faithfulness: are all claims in ANSWER supported by CONTEXT?
 
 CONTEXT:
@@ -84,40 +172,44 @@ ANSWER:
 {answer}
 
 Extract claims from ANSWER. For each, check if supported by CONTEXT.
-Output JSON only (no markdown):
+
+Return JSON with this exact structure (no markdown fences):
 {{
     "claims": [
-        {{"claim": "...", "supported": true, "evidence": "..."}},
-        ...
+        {{"claim": "claim text", "supported": true, "evidence": "quote from context"}},
+        {{"claim": "another claim", "supported": false, "evidence": "not found in context"}}
     ],
-    "score": 0.XX,
-    "explanation": "summary"
+    "score": 0.75,
+    "explanation": "X of Y claims are supported because..."
 }}
 
-Be strict: only mark supported if clearly inferable."""
+Be strict: only mark supported if clearly stated or directly inferable from context.
+Return ONLY the JSON object, no other text."""
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}]
+            result_text = self._call_with_retry(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000
             )
             
-            result_text = response.content[0].text.strip()
+            result = self._parse_json_response(result_text)
             
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
+            claims = result.get('claims', [])
+            supported = sum(1 for c in claims if c.get('supported', False))
+            total = len(claims)
             
-            result = json.loads(result_text)
+            # Calculate score if not provided or zero
+            score = result.get('score', 0)
+            if score == 0 and total > 0:
+                score = supported / total
             
             return {
-                'score': float(result['score']),
-                'supported': sum(1 for c in result['claims'] if c['supported']),
-                'total': len(result['claims']),
-                'explanation': result['explanation']
+                'score': float(score),
+                'supported': supported,
+                'total': total,
+                'explanation': result.get('explanation', '')
             }
+            
         except Exception as e:
             logger.error(f"Faithfulness evaluation failed: {e}")
             return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}'}
@@ -127,41 +219,37 @@ Be strict: only mark supported if clearly inferable."""
         prompt = f"""Rate how well ANSWER addresses QUERY.
 
 QUERY: {query}
+
 ANSWER: {answer}
 
-Scoring:
-- 1.0: Fully addresses all aspects
-- 0.8-0.9: Addresses main question
-- 0.6-0.7: Partial, significant gaps
-- 0.4-0.5: Tangentially related
-- 0.0-0.3: Irrelevant
+Scoring guide:
+- 1.0: Fully addresses all aspects of the question
+- 0.8-0.9: Addresses the main question well
+- 0.6-0.7: Partial answer, significant gaps
+- 0.4-0.5: Tangentially related only
+- 0.0-0.3: Irrelevant or wrong
 
-Output JSON only:
+Return JSON with this exact structure (no markdown fences):
 {{
-    "score": 0.XX,
-    "explanation": "what's covered/missing?"
-}}"""
+    "score": 0.85,
+    "explanation": "The answer covers X and Y but misses Z..."
+}}
+
+Return ONLY the JSON object, no other text."""
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                messages=[{"role": "user", "content": prompt}]
+            result_text = self._call_with_retry(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500
             )
             
-            result_text = response.content[0].text.strip()
-            
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-            
-            result = json.loads(result_text)
+            result = self._parse_json_response(result_text)
             
             return {
-                'score': float(result['score']),
-                'explanation': result['explanation']
+                'score': float(result.get('score', 0.0)),
+                'explanation': result.get('explanation', '')
             }
+            
         except Exception as e:
             logger.error(f"Relevancy evaluation failed: {e}")
             return {'score': 0.0, 'explanation': f'Error: {e}'}
@@ -184,13 +272,17 @@ TEST_QUERIES = QUICK_QUERIES
 class AblationTestSuite:
     """Unified test suite for retrieval mode ablation."""
     
-    def __init__(self, enable_ragas: bool = True, detailed: bool = False):
+    def __init__(self, enable_ragas: bool = True, detailed: bool = False, parallel: bool = False, max_workers: int = 4):
         self.enable_ragas = enable_ragas
         self.detailed = detailed  # Detailed mode: full answers, verbose metrics
+        self.parallel = parallel  # Parallel mode: run tests concurrently
+        self.max_workers = max_workers
         self.processor = None
         self.generator = None
         self.ragas = None
         self.results = []
+        self.results_lock = Lock()  # Thread-safe results collection
+        self.print_lock = Lock()  # Thread-safe printing
     
     def load_pipeline(self):
         """Load all pipeline components."""
@@ -218,9 +310,9 @@ class AblationTestSuite:
         # Answer generator
         self.generator = AnswerGenerator()
         
-        # RAGAS evaluator
+        # RAGAS evaluator (Claude with large context window)
         if self.enable_ragas:
-            print("Initializing RAGAS evaluator...")
+            print("Initializing RAGAS evaluator (Claude with 200k context)...")
             self.ragas = RAGASEvaluator()
         
         print("Pipeline loaded\n")
@@ -426,27 +518,101 @@ class AblationTestSuite:
             )
     
     def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
-        """Run complete ablation study."""
+        """Run complete ablation study (sequential or parallel)."""
         
         print(f"\n{'='*80}")
-        print("GRAPHRAG RETRIEVAL ABLATION STUDY v1.1")
+        print("GRAPHRAG RETRIEVAL ABLATION STUDY v1.2")
         print(f"{'='*80}\n")
+        
+        total_tests = len(queries) * len(modes)
         
         print(f"Configuration:")
         print(f"  Queries: {len(queries)}")
         print(f"  Modes: {[m.value for m in modes]}")
-        print(f"  Total tests: {len(queries) * len(modes)}")
-        print(f"  RAGAS evaluation: {'ENABLED' if self.enable_ragas else 'DISABLED'}")
+        print(f"  Total tests: {total_tests}")
+        print(f"  RAGAS evaluation: {'ENABLED (Claude 200k context)' if self.enable_ragas else 'DISABLED'}")
+        print(f"  Execution: {'PARALLEL (' + str(self.max_workers) + ' workers)' if self.parallel else 'SEQUENTIAL'}")
         print()
         
+        # Build test list
+        test_list = []
         test_num = 0
-        total_tests = len(queries) * len(modes)
-        
         for query_def in queries:
             for mode in modes:
                 test_num += 1
-                result = self.run_single_test(query_def, mode, test_num, total_tests)
-                self.results.append(result)
+                test_list.append((query_def, mode, test_num, total_tests))
+        
+        if self.parallel and not self.detailed:
+            # Parallel execution (only in non-detailed mode)
+            self._run_parallel(test_list)
+        else:
+            # Sequential execution
+            self._run_sequential(test_list)
+        
+        return self.results
+    
+    def _run_sequential(self, test_list: List[Tuple]):
+        """Run tests sequentially."""
+        for query_def, mode, test_num, total_tests in test_list:
+            result = self.run_single_test(query_def, mode, test_num, total_tests)
+            self.results.append(result)
+    
+    def _run_parallel(self, test_list: List[Tuple]):
+        """
+        Run tests in parallel using ThreadPoolExecutor.
+        
+        Note: Neo4j and FAISS are thread-safe for reads.
+        Rate limiter handles Together.ai API limits.
+        """
+        completed = 0
+        total = len(test_list)
+        
+        print(f"  Starting {total} tests with {self.max_workers} workers...\n")
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all tasks
+            future_to_test = {
+                executor.submit(self._run_test_wrapper, query_def, mode, test_num, total): 
+                (query_def, mode, test_num)
+                for query_def, mode, test_num, total in test_list
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_test):
+                query_def, mode, test_num = future_to_test[future]
+                try:
+                    result = future.result()
+                    with self.results_lock:
+                        self.results.append(result)
+                        completed += 1
+                    
+                    # Progress update
+                    with self.print_lock:
+                        q_short = query_def['query'][:35] + '...' if len(query_def['query']) > 35 else query_def['query']
+                        faith = f"{result.ragas.faithfulness_score:.2f}" if self.enable_ragas else "N/A"
+                        print(f"  ✓ [{completed}/{total}] {mode.value:8} | Faith: {faith} | {q_short}")
+                        
+                except Exception as e:
+                    with self.print_lock:
+                        print(f"  ✗ [{test_num}/{total}] {mode.value:8} | ERROR: {e}")
+        
+        # Sort results by test_id for consistent output
+        self.results.sort(key=lambda r: r.test_id)
+        print(f"\n  Completed {completed}/{total} tests")
+    
+    def _run_test_wrapper(self, query_def: Dict, mode: RetrievalMode, test_num: int, total_tests: int) -> TestResult:
+        """
+        Wrapper for parallel execution with minimal output.
+        """
+        # Suppress detailed output in parallel mode
+        old_detailed = self.detailed
+        self.detailed = False
+        
+        try:
+            result = self.run_single_test(query_def, mode, test_num, total_tests)
+            return result
+        finally:
+            self.detailed = old_detailed
         
         return self.results
     
@@ -1113,6 +1279,10 @@ Examples:
                         help='Stats mode: 30 queries, aggregate metrics for charts')
     parser.add_argument('--quick', action='store_true', 
                         help='Quick test with 2 queries (debug)')
+    parser.add_argument('--parallel', action='store_true',
+                        help='Run tests in parallel (faster, recommended for --full)')
+    parser.add_argument('--workers', type=int, default=4,
+                        help='Number of parallel workers (default: 4)')
     parser.add_argument('--queries', type=int, 
                         help='Override number of queries')
     parser.add_argument('--no-ragas', action='store_true', 
@@ -1156,13 +1326,26 @@ Examples:
             queries = queries[:args.queries]
             print(f"  Limited to {args.queries} queries")
         
-        print(f"  RAGAS: {'enabled' if not args.no_ragas else 'DISABLED'}")
+        print(f"  RAGAS: {'enabled (Claude)' if not args.no_ragas else 'DISABLED'}")
         print(f"  LaTeX export: {'enabled' if args.latex else 'disabled'}")
+        print(f"  Parallel: {'enabled (' + str(args.workers) + ' workers)' if args.parallel else 'disabled'}")
         print("=" * 80 + "\n")
         
         modes = [RetrievalMode.SEMANTIC, RetrievalMode.GRAPH, RetrievalMode.DUAL]
         
-        suite = AblationTestSuite(enable_ragas=not args.no_ragas, detailed=detailed)
+        # Warn if parallel + detailed (doesn't make sense)
+        if args.parallel and detailed:
+            print("⚠️  Note: --parallel is ignored in --detailed mode (sequential output needed)")
+            parallel = False
+        else:
+            parallel = args.parallel
+        
+        suite = AblationTestSuite(
+            enable_ragas=not args.no_ragas, 
+            detailed=detailed,
+            parallel=parallel,
+            max_workers=args.workers
+        )
         suite.load_pipeline()
         suite.run_full_suite(queries, modes)
         suite.analyze_results()

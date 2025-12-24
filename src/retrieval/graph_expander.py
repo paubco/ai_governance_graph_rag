@@ -229,25 +229,41 @@ class GraphExpander:
     
     def _run_steiner_tree(self, terminal_ids: List[str]) -> List[str]:
         """Run Steiner Tree to connect terminal nodes."""
+        if len(terminal_ids) < 2:
+            return terminal_ids
+            
         with self.driver.session() as session:
             try:
-                result = session.run("""
+                # First, get Neo4j internal node IDs for terminals
+                node_result = session.run("""
                     MATCH (n:Entity)
                     WHERE n.entity_id IN $terminal_ids
-                    WITH collect(elementId(n)) AS terminalNodeIds
-                    
+                    RETURN id(n) AS nodeId, n.entity_id AS entityId
+                """, terminal_ids=terminal_ids)
+                
+                node_records = list(node_result)
+                if len(node_records) < 2:
+                    logger.warning(f"Only {len(node_records)} terminals found in graph")
+                    return terminal_ids
+                
+                neo4j_node_ids = [r['nodeId'] for r in node_records]
+                source_node = neo4j_node_ids[0]
+                target_nodes = neo4j_node_ids[1:]
+                
+                # Run Steiner Tree with explicit node IDs
+                result = session.run("""
                     CALL gds.beta.steinerTree.stream('entity-graph', {
-                        sourceNode: terminalNodeIds[0],
-                        targetNodes: terminalNodeIds[1..],
+                        sourceNode: $sourceNode,
+                        targetNodes: $targetNodes,
                         delta: $delta
                     })
                     YIELD nodeId
                     
                     WITH collect(nodeId) AS subgraphNodeIds
                     MATCH (e:Entity)
-                    WHERE elementId(e) IN subgraphNodeIds
+                    WHERE id(e) IN subgraphNodeIds
                     RETURN collect(e.entity_id) AS entity_ids
-                """, terminal_ids=terminal_ids, delta=self.config['delta'])
+                """, sourceNode=source_node, targetNodes=target_nodes, delta=self.config['delta'])
                 
                 record = result.single()
                 if record and record['entity_ids']:
