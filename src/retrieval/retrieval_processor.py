@@ -201,6 +201,7 @@ class RetrievalProcessor:
         
         # Attach metadata for evaluation
         result.parsed_query = understanding.parsed_query
+        result.resolved_entities = understanding.resolved_entities
         
         return result
     

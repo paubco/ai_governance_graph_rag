@@ -242,3 +242,5 @@ class RetrievalResult:
     chunks: List[RankedChunk]
     subgraph: Subgraph
     parsed_query: Optional[ParsedQuery] = None
+    resolved_entities: List[ResolvedEntity] = field(default_factory=list)
+    resolved_entities: List[ResolvedEntity] = None
