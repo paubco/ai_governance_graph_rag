@@ -275,7 +275,7 @@ class AblationTestSuite:
             
             # Compute entity resolution metrics
             extracted = retrieval_result.parsed_query.extracted_entities if retrieval_result.parsed_query else []
-            resolved = retrieval_result.parsed_query.resolved_entities if retrieval_result.parsed_query else []
+            resolved = retrieval_result.resolved_entities if retrieval_result.resolved_entities else []
             
             entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
             
