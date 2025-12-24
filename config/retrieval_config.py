@@ -192,17 +192,70 @@ ANSWER_GENERATION_CONFIG_MISTRAL = {
 # ============================================================================
 
 JURISDICTION_PATTERNS = {
-    r'\b(EU|European Union)\b': 'EU',
-    r'\b(US|USA|United States)\b': 'US',
-    r'\b(UK|United Kingdom)\b': 'UK',
+    # Europe - EU & Members
+    r'\b(EU|European Union|Europe)\b': 'EU',
+    r'\b(Austria|Austrian)\b': 'AT',
+    r'\b(Belgium|Belgian)\b': 'BE',
+    r'\b(Czech Republic|Czech|Czechia)\b': 'CZ',
+    r'\b(Denmark|Danish)\b': 'DK',
+    r'\b(Finland|Finnish)\b': 'FI',
+    r'\b(France|French)\b': 'FR',
+    r'\b(Germany|German)\b': 'DE',
+    r'\b(Hungary|Hungarian)\b': 'HU',
+    r'\b(Ireland|Irish)\b': 'IE',
+    r'\b(Italy|Italian)\b': 'IT',
+    r'\b(Luxembourg)\b': 'LU',
+    r'\b(Netherlands|Dutch|Holland)\b': 'NL',
+    r'\b(Norway|Norwegian)\b': 'NO',
+    r'\b(Poland|Polish)\b': 'PL',
+    r'\b(Portugal|Portuguese)\b': 'PT',
+    r'\b(Romania|Romanian)\b': 'RO',
+    r'\b(Spain|Spanish)\b': 'ES',
+    r'\b(Sweden|Swedish)\b': 'SE',
+    r'\b(Switzerland|Swiss)\b': 'CH',
+    r'\b(UK|United Kingdom|Britain|British)\b': 'GB',
+    
+    # Americas
+    r'\b(US|USA|United States|America|American)\b': 'US',
+    r'\b(Argentina|Argentine)\b': 'AR',
+    r'\b(Brazil|Brazilian)\b': 'BR',
+    r'\b(Canada|Canadian)\b': 'CA',
+    r'\b(Chile|Chilean)\b': 'CL',
+    r'\b(Colombia|Colombian)\b': 'CO',
+    r'\b(Mexico|Mexican)\b': 'MX',
+    r'\b(Peru|Peruvian)\b': 'PE',
+    
+    # Asia-Pacific
+    r'\b(Australia|Australian)\b': 'AU',
+    r'\b(China|Chinese|PRC)\b': 'CN',
+    r'\b(Hong Kong|HK)\b': 'HK',
+    r'\b(India|Indian)\b': 'IN',
+    r'\b(Indonesia|Indonesian)\b': 'ID',
+    r'\b(Israel|Israeli)\b': 'IL',
+    r'\b(Japan|Japanese)\b': 'JP',
+    r'\b(Malaysia|Malaysian)\b': 'MY',
+    r'\b(New Zealand|NZ|Kiwi)\b': 'NZ',
+    r'\b(Pakistan|Pakistani)\b': 'PK',
+    r'\b(Philippines|Filipino)\b': 'PH',
+    r'\b(Singapore|Singaporean)\b': 'SG',
+    r'\b(South Korea|Korea|Korean)\b': 'KR',
+    r'\b(Taiwan|Taiwanese)\b': 'TW',
+    
+    # Middle East & Africa
+    r'\b(Egypt|Egyptian)\b': 'EG',
+    r'\b(Kenya|Kenyan)\b': 'KE',
+    r'\b(Nigeria|Nigerian)\b': 'NG',
+    r'\b(Saudi Arabia|Saudi)\b': 'SA',
+    r'\b(South Africa|South African)\b': 'ZA',
+    r'\b(UAE|United Arab Emirates|Dubai|Emirati)\b': 'AE',
+    
+    # Regulation aliases → jurisdiction
     r'\b(GDPR)\b': 'EU',
-    r'\bCalifornia\b': 'US-CA',
-    r'\bNew York\b': 'US-NY',
-    r'\bChina\b': 'CN',
-    r'\bCanada\b': 'CA',
-    r'\bAustralia\b': 'AU',
-    r'\bJapan\b': 'JP',
-    r'\bSingapore\b': 'SG',
+    r'\b(AI Act|EU AI Act)\b': 'EU',
+    r'\b(DSA|Digital Services Act)\b': 'EU',
+    r'\b(DMA|Digital Markets Act)\b': 'EU',
+    r'\b(CCPA)\b': 'US',
+    r'\b(HIPAA)\b': 'US',
 }
 
 
@@ -211,11 +264,18 @@ JURISDICTION_PATTERNS = {
 # ============================================================================
 
 DOC_TYPE_PATTERNS = {
-    r'\b(regulations?|laws?|acts?|directives?)\b': 'regulation',
-    r'\b(papers?|articles?|stud(?:y|ies)|research)\b': 'paper',
-    r'\b(guidance|guidelines?|recommendations?)\b': 'guidance',
+    # Regulatory sources → filters to DLA Piper docs
+    r'\b(regulations?|regulatory|laws?|legal|legislation)\b': 'regulation',
+    r'\b(acts?|directives?|statutes?|ordinances?)\b': 'regulation',
+    r'\b(rules?|requirements?|compliance|mandatory)\b': 'regulation',
+    r'\b(jurisdiction|government|official)\b': 'regulation',
+    
+    # Academic sources → filters to Scopus papers
+    r'\b(papers?|articles?|publications?)\b': 'academic',
+    r'\b(stud(?:y|ies)|research|researchers?)\b': 'academic',
+    r'\b(journals?|proceedings?|conference)\b': 'academic',
+    r'\b(authors?|scholars?|academics?|literature)\b': 'academic',
 }
-
 
 # ============================================================================
 # EVALUATION CONFIGURATION
