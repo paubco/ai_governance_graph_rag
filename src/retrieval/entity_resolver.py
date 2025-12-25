@@ -82,22 +82,14 @@ class EntityResolver:
             self.entity_ids = {v: k for k, v in entity_id_list.items()}
         
         # Load normalized entities for metadata
-        self.entity_ids_by_id = {}
+        self.entities_by_id = {}
         self.name_to_id = {}
         
         try:
-            with open(normalized_entities_path, "r", encoding="utf-8") as f:
-                if str(normalized_entities_path).endswith(".jsonl"):
-                    entities_list = [json.loads(line) for line in f]
-                else:
-                    entities_list = json.load(f)
-            with open(normalized_entities_path, "r", encoding="utf-8") as f:
-                if str(normalized_entities_path).endswith(".jsonl"):
-                    entities_list = [json.loads(line) for line in f]
-                else:
-                    entities_list = json.load(f)
+            with open(normalized_entities_path, 'r', encoding='utf-8') as f:
+                entities_list = json.load(f)
             
-            self.entity_ids_by_id = {e['entity_id']: e for e in entities_list}
+            self.entities_by_id = {e['entity_id']: e for e in entities_list}
             self.name_to_id = self._build_name_lookup(entities_list)
             
         except Exception as e:
@@ -152,7 +144,6 @@ class EntityResolver:
                 match.query_mention = entity.name
             resolved.extend(fuzzy_matches)
         
-        print(f"  Resolved {len(entities)} mentions → {len(resolved)} entities")
         return resolved
     
     def _exact_match(self, mention: str) -> Optional[ResolvedEntity]:
@@ -169,7 +160,7 @@ class EntityResolver:
         
         if mention_lower in self.name_to_id:
             entity_id = self.name_to_id[mention_lower]
-            entity = self.entity_ids_by_id.get(entity_id)
+            entity = self.entities_by_id.get(entity_id)
             
             if entity:
                 return ResolvedEntity(
@@ -202,7 +193,7 @@ class EntityResolver:
             # Now find entity_id for canonical name
             if canonical_lower in self.name_to_id:
                 entity_id = self.name_to_id[canonical_lower]
-                entity = self.entity_ids_by_id.get(entity_id)
+                entity = self.entities_by_id.get(entity_id)
                 
                 if entity:
                     return ResolvedEntity(
@@ -260,7 +251,7 @@ class EntityResolver:
                 continue
             
             entity_id = self.entity_ids[idx]
-            entity = self.entity_ids_by_id.get(entity_id)
+            entity = self.entities_by_id.get(entity_id)
             
             if entity:
                 resolved.append(ResolvedEntity(
