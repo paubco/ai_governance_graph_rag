@@ -4,6 +4,7 @@ Retrieval processor for AI governance GraphRAG pipeline.
 
 v2.0: Two-stage retrieval for DUAL mode.
 Orchestrates full retrieval pipeline combining query understanding and context retrieval.
+
 """
 
 # Standard library
