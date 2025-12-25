@@ -2,13 +2,22 @@
 """
 Result ranker for AI governance GraphRAG pipeline.
 
-Merges, deduplicates, and ranks chunks from dual retrieval channels.
-Implements multiplicative scoring with entity coverage and provenance tracking.
+v2.0: Two-stage retrieval for DUAL mode.
+- SEMANTIC: Pure FAISS similarity (baseline)
+- GRAPH: Entity coverage scoring (baseline)
+- DUAL: Graph for recall, semantic for precision (two-stage)
+
+Key insight: Graph finds structurally-relevant chunks you wouldn't find semantically,
+but semantic similarity ensures the final ranking is query-relevant.
 """
 
 # Standard library
 from typing import List, Set, Dict, Optional
 from dataclasses import dataclass
+import numpy as np
+
+# Third-party
+import faiss
 
 # Config imports (direct)
 from config.retrieval_config import RANKING_CONFIG
@@ -23,33 +32,28 @@ from src.utils.dataclasses import (
 )
 
 
-@dataclass
-class ScoringDebugInfo:
-    """Debug information for scoring transparency."""
-    chunk_id: str
-    method: str
-    base_score: float
-    entity_coverage: Optional[float]
-    coverage_bonus: float
-    provenance_bonus: float
-    final_score: float
-    rank: int
-
-
 class ResultRanker:
     """
     Merge and rank chunks from dual retrieval channels.
     
-    Scoring strategy:
-    1. Graph chunks: Base score + entity coverage bonus + provenance bonus
-    2. Semantic chunks: FAISS similarity (baseline)
-    3. Deduplication: Keep highest score per chunk
+    Strategies by mode:
+    - SEMANTIC: Rank by FAISS similarity (already scored)
+    - GRAPH: Rank by entity coverage (terminal > path > other)
+    - DUAL: Two-stage (graph recall + semantic rerank)
     """
     
-    def __init__(self):
-        """Initialize result ranker with config."""
+    def __init__(self, chunk_index: faiss.Index = None, chunk_id_map: Dict = None):
+        """
+        Initialize result ranker.
+        
+        Args:
+            chunk_index: FAISS index for semantic reranking (needed for DUAL mode).
+            chunk_id_map: Mapping of chunk_id -> FAISS index position.
+        """
         self.config = RANKING_CONFIG
-        self.debug_info: Optional[List[ScoringDebugInfo]] = None
+        self.chunk_index = chunk_index
+        self.chunk_id_map = chunk_id_map or {}
+        self.index_to_chunk = {v: k for k, v in self.chunk_id_map.items()}
     
     def rank(
         self,
@@ -58,74 +62,40 @@ class ResultRanker:
         subgraph: Subgraph,
         filters: QueryFilters,
         query: str,
-        debug: bool = False
+        query_embedding: np.ndarray = None,
+        terminal_entity_ids: Set[str] = None,
+        mode: str = "dual"
     ) -> RetrievalResult:
         """
-        Merge, deduplicate, and rank chunks with entity coverage.
+        Merge, deduplicate, and rank chunks.
         
         Args:
-            graph_chunks: Chunks from graph retrieval channel.
+            graph_chunks: Chunks from graph retrieval.
             semantic_chunks: Chunks from semantic search.
             subgraph: PCST subgraph.
-            filters: Query filters.
+            filters: Query filters (jurisdiction, doc_type).
             query: Original query string.
-            debug: If True, collect detailed scoring information.
+            query_embedding: Query embedding for DUAL reranking.
+            terminal_entity_ids: Original query entity IDs (for graph scoring).
+            mode: "semantic", "graph", or "dual".
         
         Returns:
-            RetrievalResult with top-K ranked chunks.
+            RetrievalResult with ranked chunks.
         """
-        self.debug_info = [] if debug else None
+        terminal_ids = terminal_entity_ids or set()
         
-        relation_chunk_ids = self._get_relation_chunk_ids(subgraph)
-        total_entities = len(subgraph.entity_ids) if subgraph.entity_ids else 0
-        
-        scored_chunks = {}
-        
-        # Score Graph chunks
-        for chunk in graph_chunks:
-            score, source_path, debug_data = self._score_graph_chunk(
-                chunk, relation_chunk_ids, total_entities, filters
+        if mode == "semantic":
+            ranked = self._rank_semantic(semantic_chunks, filters)
+        elif mode == "graph":
+            ranked = self._rank_graph(graph_chunks, subgraph, terminal_ids, filters)
+        else:  # dual
+            ranked = self._rank_dual_twostage(
+                graph_chunks, semantic_chunks, subgraph, 
+                terminal_ids, filters, query_embedding
             )
-            
-            chunk_id = chunk.chunk_id
-            if chunk_id not in scored_chunks or score > scored_chunks[chunk_id]['score']:
-                scored_chunks[chunk_id] = {
-                    'chunk': chunk,
-                    'score': score,
-                    'source_path': source_path,
-                }
         
-        # Score Semantic chunks
-        for chunk in semantic_chunks:
-            score, source_path, debug_data = self._score_semantic_chunk(chunk, filters)
-            
-            chunk_id = chunk.chunk_id
-            if chunk_id not in scored_chunks or score > scored_chunks[chunk_id]['score']:
-                scored_chunks[chunk_id] = {
-                    'chunk': chunk,
-                    'score': score,
-                    'source_path': source_path,
-                }
-        
-        # Convert to RankedChunk objects
-        ranked_chunks = []
-        for chunk_data in scored_chunks.values():
-            chunk = chunk_data['chunk']
-            ranked_chunk = RankedChunk(
-                chunk_id=chunk.chunk_id,
-                text=chunk.text,
-                score=chunk_data['score'],
-                source_path=chunk_data['source_path'],
-                doc_id=chunk.document_id,
-                doc_type=chunk.metadata.get('doc_type', 'unknown'),
-                jurisdiction=chunk.metadata.get('jurisdiction'),
-                matching_entities=chunk.metadata.get('entities', []),
-            )
-            ranked_chunks.append(ranked_chunk)
-        
-        # Sort by score and take top-K
-        ranked_chunks.sort(key=lambda c: c.score, reverse=True)
-        top_k = ranked_chunks[:self.config['final_top_k']]
+        # Take top-K
+        top_k = ranked[:self.config['final_top_k']]
         
         return RetrievalResult(
             query=query,
@@ -133,89 +103,272 @@ class ResultRanker:
             subgraph=subgraph,
         )
     
-    def _get_relation_chunk_ids(self, subgraph: Subgraph) -> Set[str]:
-        """Extract chunk IDs from relation provenance."""
-        chunk_ids = set()
-        for relation in subgraph.relations:
-            chunk_ids.update(relation.chunk_ids)
-        return chunk_ids
-    
-    def _score_graph_chunk(
-        self,
-        chunk: Chunk,
-        relation_chunk_ids: Set[str],
-        total_entities: int,
+    def _rank_semantic(
+        self, 
+        chunks: List[Chunk], 
         filters: QueryFilters
-    ) -> tuple[float, str, Dict]:
+    ) -> List[RankedChunk]:
         """
-        Score chunk from graph retrieval using MULTIPLICATIVE system.
+        SEMANTIC mode: Pure FAISS similarity with filter penalties.
         
-        Formula: Final = BS × GB × SB
+        Score = similarity × jurisdiction_penalty × doc_type_penalty
         """
-        # BASE SCORE: Entity coverage
-        num_entities = len(chunk.metadata.get('entities', []))
-        entity_coverage = num_entities / total_entities if total_entities > 0 else 0.0
-        base_score = max(entity_coverage, chunk.metadata.get('score', 0.5))
+        ranked = []
+        for chunk in chunks:
+            base_score = chunk.metadata.get('score', 0.5)
+            penalty = self._compute_filter_penalty(chunk, filters)
+            final_score = base_score * penalty
+            
+            ranked.append(RankedChunk(
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                score=final_score,
+                source_path="semantic",
+                doc_id=chunk.document_id,
+                doc_type=chunk.metadata.get('doc_type', 'unknown'),
+                jurisdiction=chunk.metadata.get('jurisdiction'),
+                matching_entities=[],
+            ))
         
-        # GRAPH BONUS
-        is_provenance = chunk.metadata.get('is_relation_provenance', False)
-        if is_provenance:
-            graph_multiplier = self.config['graph_provenance_multiplier']
-            source_path = "graph_provenance"
+        ranked.sort(key=lambda c: c.score, reverse=True)
+        return ranked
+    
+    def _rank_graph(
+        self,
+        chunks: List[Chunk],
+        subgraph: Subgraph,
+        terminal_ids: Set[str],
+        filters: QueryFilters
+    ) -> List[RankedChunk]:
+        """
+        GRAPH mode: Entity coverage scoring.
+        
+        Score = terminal_coverage × 1.0 + path_coverage × 0.5 + provenance_bonus
+        
+        Where:
+        - terminal_coverage = # terminal entities in chunk / # total terminals
+        - path_coverage = # path entities in chunk / # path entities
+        - provenance_bonus = 0.1 if chunk is relation source
+        """
+        # Separate terminal vs path entities
+        path_ids = set(subgraph.entities) - terminal_ids if subgraph.entities else set()
+        
+        # Get relation provenance chunk IDs
+        relation_chunk_ids = set()
+        for rel in subgraph.relations:
+            relation_chunk_ids.update(rel.chunk_ids)
+        
+        ranked = []
+        for chunk in chunks:
+            chunk_entities = set(chunk.metadata.get('entities', []))
+            
+            # Terminal coverage (most important)
+            terminal_overlap = len(chunk_entities & terminal_ids)
+            terminal_coverage = terminal_overlap / len(terminal_ids) if terminal_ids else 0
+            
+            # Path coverage (secondary)
+            path_overlap = len(chunk_entities & path_ids)
+            path_coverage = path_overlap / len(path_ids) if path_ids else 0
+            
+            # Provenance bonus
+            is_provenance = chunk.metadata.get('is_relation_provenance', False)
+            provenance_bonus = 0.1 if is_provenance else 0
+            
+            # Combined score
+            base_score = (terminal_coverage * 1.0) + (path_coverage * 0.5) + provenance_bonus
+            
+            # Normalize to [0, 1] range (max possible ~1.6)
+            base_score = min(base_score / 1.6, 1.0)
+            
+            # Apply filter penalties
+            penalty = self._compute_filter_penalty(chunk, filters)
+            final_score = base_score * penalty
+            
+            source_path = "graph_provenance" if is_provenance else "graph_entity"
+            
+            ranked.append(RankedChunk(
+                chunk_id=chunk.chunk_id,
+                text=chunk.text,
+                score=final_score,
+                source_path=source_path,
+                doc_id=chunk.document_id,
+                doc_type=chunk.metadata.get('doc_type', 'unknown'),
+                jurisdiction=chunk.metadata.get('jurisdiction'),
+                matching_entities=list(chunk_entities),
+            ))
+        
+        ranked.sort(key=lambda c: c.score, reverse=True)
+        return ranked
+    
+    def _rank_dual_twostage(
+        self,
+        graph_chunks: List[Chunk],
+        semantic_chunks: List[Chunk],
+        subgraph: Subgraph,
+        terminal_ids: Set[str],
+        filters: QueryFilters,
+        query_embedding: np.ndarray
+    ) -> List[RankedChunk]:
+        """
+        DUAL mode: Two-stage retrieval.
+        
+        Stage 1: Graph provides RECALL (find chunks you wouldn't find semantically)
+        Stage 2: Semantic provides PRECISION (rerank by query similarity)
+        
+        This leverages the strength of both:
+        - Graph finds structurally-related content
+        - Semantic ensures relevance to query
+        """
+        # Collect all unique chunks
+        all_chunks = {}
+        chunk_sources = {}  # Track where each chunk came from
+        
+        # Get relation provenance chunk IDs
+        relation_chunk_ids = set()
+        for rel in subgraph.relations:
+            relation_chunk_ids.update(rel.chunk_ids)
+        
+        # Add graph chunks (with source tracking)
+        for chunk in graph_chunks:
+            cid = chunk.chunk_id
+            if cid not in all_chunks:
+                all_chunks[cid] = chunk
+                is_prov = chunk.metadata.get('is_relation_provenance', False)
+                chunk_sources[cid] = "graph_provenance" if is_prov else "graph_entity"
+        
+        # Add semantic chunks (with source tracking)
+        for chunk in semantic_chunks:
+            cid = chunk.chunk_id
+            if cid not in all_chunks:
+                all_chunks[cid] = chunk
+                chunk_sources[cid] = "semantic"
+            elif chunk_sources[cid].startswith("graph"):
+                # Chunk found by both - mark as dual
+                chunk_sources[cid] = "dual"
+        
+        # Stage 2: Rerank ALL by semantic similarity
+        if query_embedding is not None and self.chunk_index is not None:
+            # Get similarities for all chunks at once
+            chunk_similarities = self._batch_similarity(
+                list(all_chunks.keys()), 
+                query_embedding
+            )
         else:
-            graph_multiplier = self.config['graph_entity_multiplier']
-            source_path = "graph_entity"
+            # Fallback: use existing scores
+            chunk_similarities = {
+                cid: chunk.metadata.get('score', 0.5) 
+                for cid, chunk in all_chunks.items()
+            }
         
-        # STANDARD BONUS (penalties)
-        standard_multiplier = 1.0
-        jurisdiction = chunk.metadata.get('jurisdiction')
-        doc_type = chunk.metadata.get('doc_type')
+        # Build ranked results
+        ranked = []
+        for cid, chunk in all_chunks.items():
+            base_score = chunk_similarities.get(cid, 0.5)
+            
+            # Apply filter penalties
+            penalty = self._compute_filter_penalty(chunk, filters)
+            final_score = base_score * penalty
+            
+            # Small bonus for graph-found chunks (they're structurally relevant)
+            source = chunk_sources[cid]
+            if source == "dual":
+                # Found by both - slight boost
+                final_score *= 1.05
+            elif source in ["graph_provenance", "graph_entity"]:
+                # Found only by graph - keep score but track source
+                pass
+            
+            chunk_entities = chunk.metadata.get('entities', [])
+            
+            ranked.append(RankedChunk(
+                chunk_id=cid,
+                text=chunk.text,
+                score=final_score,
+                source_path=source,
+                doc_id=chunk.document_id,
+                doc_type=chunk.metadata.get('doc_type', 'unknown'),
+                jurisdiction=chunk.metadata.get('jurisdiction'),
+                matching_entities=chunk_entities if isinstance(chunk_entities, list) else [],
+            ))
         
-        if filters.jurisdiction_hints and jurisdiction not in filters.jurisdiction_hints:
-            standard_multiplier *= self.config['jurisdiction_penalty']
-        
-        if filters.doc_type_hints and doc_type not in filters.doc_type_hints:
-            standard_multiplier *= self.config['doc_type_penalty']
-        
-        final_score = base_score * graph_multiplier * standard_multiplier
-        
-        debug_data = {
-            'base_score': base_score,
-            'entity_coverage': entity_coverage,
-            'graph_multiplier': graph_multiplier,
-            'standard_multiplier': standard_multiplier,
-        }
-        
-        return final_score, source_path, debug_data
+        ranked.sort(key=lambda c: c.score, reverse=True)
+        return ranked
     
-    def _score_semantic_chunk(
-        self,
-        chunk: Chunk,
-        filters: QueryFilters
-    ) -> tuple[float, str, Dict]:
+    def _batch_similarity(
+        self, 
+        chunk_ids: List[str], 
+        query_embedding: np.ndarray
+    ) -> Dict[str, float]:
         """
-        Score chunk from semantic retrieval using MULTIPLICATIVE system.
+        Get semantic similarity for multiple chunks at once.
         
-        Formula: Final = BS × SB
+        Uses FAISS index to compute query-chunk similarities.
         """
-        base_score = chunk.metadata.get('score', 0.5)
+        similarities = {}
         
-        standard_multiplier = 1.0
+        # Get FAISS indices for chunks we have
+        faiss_indices = []
+        chunk_id_order = []
+        
+        for cid in chunk_ids:
+            if cid in self.chunk_id_map:
+                faiss_indices.append(self.chunk_id_map[cid])
+                chunk_id_order.append(cid)
+        
+        if not faiss_indices or self.chunk_index is None:
+            # Fallback: return default scores
+            return {cid: 0.5 for cid in chunk_ids}
+        
+        # Reconstruct chunk embeddings from FAISS
+        try:
+            chunk_embeddings = np.zeros((len(faiss_indices), self.chunk_index.d), dtype='float32')
+            for i, idx in enumerate(faiss_indices):
+                self.chunk_index.reconstruct(idx, chunk_embeddings[i])
+            
+            # Compute similarities
+            query_vec = query_embedding.reshape(1, -1).astype('float32')
+            
+            # Normalize for cosine similarity
+            faiss.normalize_L2(query_vec)
+            faiss.normalize_L2(chunk_embeddings)
+            
+            # Dot product = cosine similarity (after normalization)
+            sims = np.dot(chunk_embeddings, query_vec.T).flatten()
+            
+            for cid, sim in zip(chunk_id_order, sims):
+                similarities[cid] = float(sim)
+                
+        except Exception as e:
+            # Fallback on any FAISS error
+            print(f"Warning: FAISS similarity failed: {e}")
+            return {cid: 0.5 for cid in chunk_ids}
+        
+        # Fill in missing chunks with default
+        for cid in chunk_ids:
+            if cid not in similarities:
+                similarities[cid] = 0.5
+        
+        return similarities
+    
+    def _compute_filter_penalty(self, chunk: Chunk, filters: QueryFilters) -> float:
+        """
+        Compute multiplicative penalty for filter mismatches.
+        
+        Only applies if filters were actually detected in query.
+        """
+        penalty = 1.0
+        
         jurisdiction = chunk.metadata.get('jurisdiction')
         doc_type = chunk.metadata.get('doc_type')
         
-        if filters.jurisdiction_hints and jurisdiction not in filters.jurisdiction_hints:
-            standard_multiplier *= self.config['jurisdiction_penalty']
+        # Only penalize if user query had jurisdiction hints
+        if filters.jurisdiction_hints and jurisdiction:
+            if jurisdiction not in filters.jurisdiction_hints:
+                penalty *= self.config['jurisdiction_penalty']
         
-        if filters.doc_type_hints and doc_type not in filters.doc_type_hints:
-            standard_multiplier *= self.config['doc_type_penalty']
+        # Only penalize if user query had doc_type hints
+        if filters.doc_type_hints and doc_type:
+            if doc_type not in filters.doc_type_hints:
+                penalty *= self.config['doc_type_penalty']
         
-        final_score = base_score * standard_multiplier
-        source_path = "semantic"
-        
-        debug_data = {
-            'base_score': base_score,
-            'standard_multiplier': standard_multiplier,
-        }
-        
-        return final_score, source_path, debug_data
+        return penalty
