@@ -156,7 +156,8 @@ class GraphExpander:
         self.last_metrics.total_subgraph_nodes = len(subgraph_entity_ids)
         self.last_metrics.total_relations = len(relations)
         
-        # Log warning for disconnected terminals only
+        # Log diagnostics
+        print(f"   {self.last_metrics}")
         if self.last_metrics.disconnected_terminals:
             print(f"   WARNING: Disconnected terminals: {self.last_metrics.disconnected_terminals}")
         
