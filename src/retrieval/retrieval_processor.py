@@ -191,7 +191,7 @@ class RetrievalProcessor:
         
         if not understanding.resolved_entities:
             print("Warning: No entities resolved")
-            subgraph = Subgraph(entities=set(), relations=[])
+            subgraph = Subgraph(entity_ids=[], relations=[])
             graph_chunks = []
             
             if mode in [RetrievalMode.SEMANTIC, RetrievalMode.DUAL]:
@@ -208,10 +208,10 @@ class RetrievalProcessor:
             metrics = self.graph_expander.last_metrics
             if metrics:
                 print(f"   Expansion: {metrics.algorithm_used} | "
-                      f"Terminals: {metrics.terminals_found}/{metrics.terminals_requested} | "
+                      f"Terminals: {metrics.terminals_connected}/{metrics.terminals_requested} | "
                       f"Steiner: +{metrics.steiner_nodes_added} | "
                       f"Expansion: +{metrics.knn_nodes_added} | "
-                      f"Total: {len(subgraph.entities)} nodes, {len(subgraph.relations)} rels")
+                      f"Total: {len(subgraph.entity_ids)} nodes, {len(subgraph.relations)} rels")
             
             # Phase 3.3.2b: Mode-Aware Retrieval
             if mode == RetrievalMode.SEMANTIC:

@@ -151,7 +151,7 @@ class ResultRanker:
         - provenance_bonus = 0.1 if chunk is relation source
         """
         # Separate terminal vs path entities
-        path_ids = set(subgraph.entities) - terminal_ids if subgraph.entities else set()
+        path_ids = set(subgraph.entity_ids) - terminal_ids if subgraph.entity_ids else set()
         
         # Get relation provenance chunk IDs
         relation_chunk_ids = set()

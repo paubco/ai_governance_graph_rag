@@ -1328,6 +1328,7 @@ Examples:
             print(f"  Limited to {args.queries} queries")
         
         print(f"  RAGAS: {'enabled (Haiku)' if not args.no_ragas else 'DISABLED'}")
+        print(f"  Answer generation: Haiku")
         print(f"  LaTeX export: {'enabled' if args.latex else 'disabled'}")
         print(f"  Parallel: {'enabled (' + str(args.workers) + ' workers)' if args.parallel else 'disabled'}")
         print("=" * 80 + "\n")
