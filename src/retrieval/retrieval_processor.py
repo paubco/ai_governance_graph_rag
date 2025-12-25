@@ -210,7 +210,7 @@ class RetrievalProcessor:
                 print(f"   Expansion: {metrics.algorithm_used} | "
                       f"Terminals: {metrics.terminals_connected}/{metrics.terminals_requested} | "
                       f"Steiner: +{metrics.steiner_nodes_added} | "
-                      f"Expansion: +{metrics.knn_nodes_added} | "
+                      f"Expansion: +{metrics.expansion_nodes_added} | "
                       f"Total: {len(subgraph.entity_ids)} nodes, {len(subgraph.relations)} rels")
             
             # Phase 3.3.2b: Mode-Aware Retrieval
