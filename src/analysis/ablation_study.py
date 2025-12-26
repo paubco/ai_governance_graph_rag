@@ -350,7 +350,7 @@ class AblationTestSuite:
             
             # Compute entity resolution metrics
             extracted = retrieval_result.parsed_query.extracted_entities if retrieval_result.parsed_query else []
-            resolved = retrieval_result.resolved_entities if retrieval_result.resolved_entities else []
+            resolved = getattr(retrieval_result, 'resolved_entities', None) or []
             
             entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
             
@@ -494,7 +494,7 @@ class AblationTestSuite:
                         'doc_id': c.doc_id,
                         'doc_type': c.doc_type,
                         'score': c.score,
-                        'method': c.retrieval_method,
+                        'method': c.source_path,
                         'text': c.text,  # Full text for detailed mode
                         'cited': (i + 1) in cited_indices,
                         'jurisdiction': c.jurisdiction if hasattr(c, 'jurisdiction') else None
