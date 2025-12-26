@@ -2,19 +2,14 @@
 """
 Retrieval processor for AI governance GraphRAG pipeline.
 
-v2.0: Two-stage retrieval for DUAL mode.
-Orchestrates full retrieval pipeline combining query understanding and context retrieval.
-
+Orchestrates full retrieval pipeline combining query understanding and context
+retrieval.
 """
 
 # Standard library
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
-import json
-
-# Third-party
-import faiss
 
 # Config imports (direct)
 from config.retrieval_config import RetrievalMode
@@ -49,10 +44,6 @@ class RetrievalProcessor:
     Coordinates:
     - Phase 3.3.1: Query understanding (parse + resolve entities)
     - Phase 3.3.2: Context retrieval (PCST expansion + dual-channel + ranking)
-    
-    v2.0 Changes:
-    - DUAL mode uses two-stage retrieval (graph recall + semantic precision)
-    - Ranker receives FAISS index for semantic reranking
     """
     
     def __init__(
@@ -107,8 +98,6 @@ class RetrievalProcessor:
         self.graph_expander = None
         self.chunk_retriever = None
         self.result_ranker = None
-        self.chunk_index = None
-        self.chunk_id_map = None
         
         if neo4j_uri and faiss_chunk_index_path:
             self.graph_expander = GraphExpander(
@@ -127,21 +116,7 @@ class RetrievalProcessor:
                 chunk_id_map_path=str(chunk_ids_path),
             )
             
-            # Load FAISS index and chunk ID map for ranker (needed for DUAL reranking)
-            self.chunk_index = faiss.read_index(str(faiss_chunk_index_path))
-            with open(chunk_ids_path, 'r') as f:
-                chunk_id_data = json.load(f)
-            
-            if isinstance(chunk_id_data, list):
-                self.chunk_id_map = {cid: idx for idx, cid in enumerate(chunk_id_data)}
-            else:
-                self.chunk_id_map = chunk_id_data
-            
-            # Initialize ranker with FAISS index for two-stage reranking
-            self.result_ranker = ResultRanker(
-                chunk_index=self.chunk_index,
-                chunk_id_map=self.chunk_id_map
-            )
+            self.result_ranker = ResultRanker()
     
     def understand_query(self, query: str) -> QueryUnderstanding:
         """
@@ -185,14 +160,9 @@ class RetrievalProcessor:
         # Phase 3.3.1: Query Understanding
         understanding = self.understand_query(query)
         
-        # Track terminal (query) entity IDs for ranking
-        terminal_entity_ids = set(e.entity_id for e in understanding.resolved_entities)
-        
-        print(f"  Resolved {len(understanding.parsed_query.extracted_entities)} mentions → {len(terminal_entity_ids)} entities")
-        
         if not understanding.resolved_entities:
             print("Warning: No entities resolved")
-            subgraph = Subgraph(entity_ids=[], relations=[])
+            subgraph = Subgraph(entities=[], relations=[])
             graph_chunks = []
             
             if mode in [RetrievalMode.SEMANTIC, RetrievalMode.DUAL]:
@@ -202,48 +172,39 @@ class RetrievalProcessor:
             else:
                 semantic_chunks = []
         else:
-            # Phase 3.3.2a: Graph Expansion
-            subgraph = self.graph_expander.expand(understanding.resolved_entities)
-            
-            # Print expansion metrics
-            metrics = self.graph_expander.last_metrics
-            if metrics:
-                print(f"   Expansion: {metrics.algorithm_used} | "
-                      f"Terminals: {metrics.terminals_connected}/{metrics.terminals_requested} | "
-                      f"Steiner: +{metrics.steiner_nodes_added} | "
-                      f"Expansion: +{metrics.expansion_nodes_added} | "
-                      f"Total: {len(subgraph.entity_ids)} nodes, {len(subgraph.relations)} rels")
-            
-            # Phase 3.3.2b: Mode-Aware Retrieval
+            # Phase 3.3.2a: Graph Expansion (only for GRAPH and DUAL modes)
             if mode == RetrievalMode.SEMANTIC:
+                # SEMANTIC mode: skip graph expansion entirely
+                subgraph = Subgraph(entities=[], relations=[])
                 graph_chunks = []
                 semantic_chunks = self.chunk_retriever._retrieve_semantic(
                     understanding.parsed_query.embedding
                 )
-            elif mode == RetrievalMode.GRAPH:
-                graph_chunks = self.chunk_retriever._retrieve_graph(subgraph)
-                semantic_chunks = []
-            else:  # DUAL - get both for two-stage
-                graph_chunks = self.chunk_retriever._retrieve_graph(subgraph)
-                semantic_chunks = self.chunk_retriever._retrieve_semantic(
-                    understanding.parsed_query.embedding
-                )
+            else:
+                # GRAPH and DUAL modes: perform graph expansion
+                subgraph = self.graph_expander.expand(understanding.resolved_entities)
+                
+                # Phase 3.3.2b: Mode-Aware Retrieval
+                if mode == RetrievalMode.GRAPH:
+                    graph_chunks = self.chunk_retriever._retrieve_graph(subgraph)
+                    semantic_chunks = []
+                else:  # DUAL
+                    graph_chunks, semantic_chunks = self.chunk_retriever.retrieve_dual(
+                        subgraph=subgraph,
+                        query_embedding=understanding.parsed_query.embedding
+                    )
         
-        # Phase 3.3.2c: Ranking (mode-aware)
+        # Phase 3.3.2c: Ranking
         result = self.result_ranker.rank(
             graph_chunks=graph_chunks,
             semantic_chunks=semantic_chunks,
             subgraph=subgraph,
             filters=understanding.parsed_query.filters,
-            query=query,
-            query_embedding=understanding.parsed_query.embedding,
-            terminal_entity_ids=terminal_entity_ids,
-            mode=mode.value  # "semantic", "graph", or "dual"
+            query=query
         )
         
         # Attach metadata for evaluation
         result.parsed_query = understanding.parsed_query
-        result.resolved_entities = understanding.resolved_entities
         
         return result
     
