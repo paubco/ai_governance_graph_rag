@@ -7,12 +7,13 @@ Purpose: CLI interface for GraphRAG retrieval pipeline
 
 Author: Pau Barba i Colomer
 Created: 2025-12-12
-Modified: 2025-12-12
+Modified: 2025-12-26
 
 Usage:
     python scripts/run_query.py "What is the EU AI Act?"
     python scripts/run_query.py "Compare GDPR and CCPA" --mode dual --output results.json
     python scripts/run_query.py "High-risk AI systems" --verbose --no-answer
+    python scripts/run_query.py "Test query" --json-full  # Full chunk text in output
 
 References:
     - PHASE_3_DESIGN.md § 4 (Retrieval Pipeline)
@@ -21,6 +22,7 @@ References:
 
 import sys
 import os
+import re
 from pathlib import Path
 import argparse
 import json
@@ -56,6 +58,7 @@ Examples:
   python scripts/run_query.py "Compare GDPR and CCPA" --mode dual
   python scripts/run_query.py "High-risk AI systems" --output results.json --verbose
   python scripts/run_query.py "Test query" --no-answer  # Skip LLM call
+  python scripts/run_query.py "Test query" --json-full  # Full chunk text in JSON
         """
     )
     
@@ -68,9 +71,9 @@ Examples:
     parser.add_argument(
         '--mode',
         type=str,
-        choices=['dual', 'graphrag', 'naive'],
+        choices=['dual', 'graphrag', 'naive', 'semantic', 'graph'],
         default='dual',
-        help='Retrieval mode (default: dual)'
+        help='Retrieval mode (default: dual). Aliases: graphrag=graph, naive=semantic'
     )
     
     parser.add_argument(
@@ -95,6 +98,12 @@ Examples:
         '--no-answer',
         action='store_true',
         help='Skip answer generation (retrieval only, for testing)'
+    )
+    
+    parser.add_argument(
+        '--json-full',
+        action='store_true',
+        help='Include full chunk text in JSON output (not truncated)'
     )
     
     return parser.parse_args()
@@ -157,16 +166,17 @@ def load_pipeline():
 # QUERY EXECUTION
 # ============================================================================
 
-def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bool):
+def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bool, json_full: bool = False):
     """
     Execute query through full pipeline.
     
     Args:
         query: Query string.
-        mode: Retrieval mode (dual, graphrag, naive).
+        mode: Retrieval mode (dual, graphrag, naive, semantic, graph).
         verbose: Show detailed output.
         debug: Show scoring breakdown.
         skip_answer: Skip answer generation.
+        json_full: Include full chunk text in output.
         
     Returns:
         Dict with all results and metadata.
@@ -176,6 +186,13 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     # Debug implies verbose
     if debug:
         verbose = True
+    
+    # Normalize mode aliases
+    mode_map = {
+        'graphrag': 'graph',
+        'naive': 'semantic',
+    }
+    mode = mode_map.get(mode, mode)
     
     print(f"\n{'='*80}")
     print(f"QUERY: {query}")
@@ -205,7 +222,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     print("RETRIEVAL COMPLETE")
     print(f"{'-'*80}")
     print(f"Resolved entities: {len(retrieval_result.resolved_entities)}")
-    print(f"Subgraph: {len(retrieval_result.subgraph.entities)} entities, {len(retrieval_result.subgraph.relations)} relations")
+    print(f"Subgraph: {len(retrieval_result.subgraph.entity_ids)} entities, {len(retrieval_result.subgraph.relations)} relations")
     print(f"Retrieved chunks: {len(retrieval_result.chunks)}")
     
     # Show method breakdown
@@ -218,14 +235,14 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     if verbose:
         print(f"RESOLVED ENTITIES (top 10):")
         for i, entity in enumerate(retrieval_result.resolved_entities[:10], 1):
-            entity_name = entity_lookup.get(entity, 'unknown')
-            print(f"  {i}. {entity_name} ({entity[:16]}...)")
+            entity_name = entity_lookup.get(entity.entity_id, 'unknown')
+            print(f"  {i}. {entity_name} ({entity.entity_id[:16]}...)")
         
         print(f"\nSUBGRAPH RELATIONS (top 10):")
         for i, rel in enumerate(retrieval_result.subgraph.relations[:10], 1):
-            print(f"  {i}. {rel.source_name} --{rel.predicate}--> {rel.target_name}")
+            print(f"  {i}. {rel.source_name} --[{rel.predicate}]--> {rel.target_name}")
         
-        print(f"\nRETRIEVED CHUNKS (all {len(retrieval_result.chunks)}):")
+        print(f"\nRETRIEVED CHUNKS:")
         for i, chunk in enumerate(retrieval_result.chunks, 1):
             print(f"\n  [{i}] Chunk ID: {chunk.chunk_id}")
             print(f"      Doc: {chunk.doc_id} ({chunk.doc_type})")
@@ -308,6 +325,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     
     # Step 6: Answer generation
     answer_result = None
+    cited_chunks = []
     if not skip_answer:
         print(f"\n{'-'*80}")
         print("GENERATING ANSWER")
@@ -332,17 +350,17 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
         print(answer_result.answer)
         print(f"{'='*80}\n")
         
+        # Extract citations from answer
+        citations = re.findall(r'\[(\d+)\]', answer_result.answer)
+        cited_chunks = sorted(set(int(c) for c in citations))
+        
         # Citation mapping
         print(f"\n{'-'*80}")
         print("CITATION MAPPING")
         print(f"{'-'*80}")
         print("Citations in answer → Retrieved chunks:\n")
         
-        import re
-        citations = re.findall(r'\[(\d+)\]', answer_result.answer)
-        cited_nums = sorted(set(int(c) for c in citations))
-        
-        for num in cited_nums:
+        for num in cited_chunks:
             if num <= len(retrieval_result.chunks):
                 chunk = retrieval_result.chunks[num - 1]
                 print(f"[{num}] → Chunk {chunk.chunk_id}")
@@ -360,40 +378,51 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     
     print(f"\nTotal time: {elapsed:.2f}s")
     
-    # Build results dict
+    # Build results dict (aligned with ablation_study.py format)
     results = {
         'query': query,
         'mode': mode,
         'timestamp': start_time.isoformat(),
         'elapsed_seconds': elapsed,
+        'entity_resolution': {
+            'extracted_count': len(retrieval_result.parsed_query.extracted_entities) if retrieval_result.parsed_query else 0,
+            'resolved_count': len(retrieval_result.resolved_entities),
+            'entity_names': [entity_lookup.get(e.entity_id, e.entity_id) for e in retrieval_result.resolved_entities[:10]]
+        },
+        'graph_utilization': {
+            'entities_in_subgraph': len(retrieval_result.subgraph.entity_ids) if retrieval_result.subgraph.entity_ids else 0,
+            'relations_in_subgraph': len(retrieval_result.subgraph.relations) if retrieval_result.subgraph.relations else 0,
+        },
         'retrieval': {
-            'resolved_entities': retrieval_result.resolved_entities,
-            'subgraph': {
-                'entity_count': len(retrieval_result.subgraph.entities),
-                'relation_count': len(retrieval_result.subgraph.relations),
-                'entities': retrieval_result.subgraph.entities,
-                'relations': [
-                    {
-                        'source': rel.source_name,
-                        'predicate': rel.predicate,
-                        'target': rel.target_name,
-                        'confidence': rel.confidence,
-                    }
-                    for rel in retrieval_result.subgraph.relations
-                ]
-            },
-            'chunks': [
-                {
-                    'chunk_id': chunk.chunk_id,
-                    'doc_id': chunk.doc_id,
-                    'doc_type': chunk.doc_type,
-                    'score': chunk.score,
-                    'retrieval_method': chunk.retrieval_method,
-                    'text': chunk.text[:500]  # Truncate for JSON
-                }
-                for chunk in retrieval_result.chunks
-            ]
-        }
+            'total_chunks': len(retrieval_result.chunks),
+            'chunks_by_source': {
+                'graphrag': graphrag_count,
+                'semantic': naive_count
+            }
+        },
+        'chunks': [
+            {
+                'index': i + 1,
+                'chunk_id': chunk.chunk_id,
+                'doc_id': chunk.doc_id,
+                'doc_type': chunk.doc_type,
+                'score': chunk.score,
+                'method': chunk.retrieval_method,
+                'text': chunk.text if json_full else chunk.text[:500],
+                'jurisdiction': chunk.jurisdiction if hasattr(chunk, 'jurisdiction') else None,
+                'entities': list(chunk.entities) if chunk.entities else []
+            }
+            for i, chunk in enumerate(retrieval_result.chunks)
+        ],
+        'relations': [
+            {
+                'source': rel.source_name,
+                'predicate': rel.predicate,
+                'target': rel.target_name,
+                'confidence': rel.confidence
+            }
+            for rel in retrieval_result.subgraph.relations[:50]
+        ]
     }
     
     if answer_result:
@@ -404,6 +433,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
             'cost_usd': answer_result.cost_usd,
             'model': answer_result.model,
             'chunks_used': answer_result.retrieval_chunks_used,
+            'cited_chunks': cited_chunks
         }
     
     return results
@@ -424,7 +454,8 @@ def main():
             mode=args.mode,
             verbose=args.verbose,
             debug=args.debug,
-            skip_answer=args.no_answer
+            skip_answer=args.no_answer,
+            json_full=args.json_full
         )
         
         # Save to file if requested

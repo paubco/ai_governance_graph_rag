@@ -9,18 +9,7 @@ RAGAS metrics for comprehensive retrieval system evaluation.
 Example:
     metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
 """
-import os
-import sys
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict
 
-# Project root (src/analysis/ablation_study.py -> project root)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-    
 # Standard library
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
@@ -197,6 +186,12 @@ class TestResult:
     answer_text: str
     success: bool
     error: Optional[str] = None
+    
+    # Detailed mode data (optional, populated only in --detailed runs)
+    # These fields enable qualitative analysis in LaTeX appendix
+    chunks_detail: Optional[List[Dict]] = None      # Full chunk data for citation
+    cited_chunks: Optional[List[int]] = None        # [1, 3, 5] indices from answer
+    relations_detail: Optional[List[Dict]] = None   # Subgraph relations for display
 
 
 # ============================================================================

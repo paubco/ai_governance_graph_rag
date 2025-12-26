@@ -9,82 +9,24 @@ Coverage dimensions:
 - Jurisdiction: Single, Multi, Cross-comparison
 - Source: Paper-heavy, Regulation-heavy, Mixed
 - Resolution: Exact, Alias, Fuzzy
-- Difficulty: Simple, Medium, Complex
+- Difficulty: Simple, Medium, Complex, Expert
+
+Categories (7, statistically valid n>=5):
+- simple_factual (5)
+- multi_entity (5)
+- cross_jurisdictional (5)
+- relation_specific (5)
+- research (5)
+- edge_cases (5)
+- expert_specific (5)
+
+Query Sets:
+- FULL_QUERIES: 35 queries for comprehensive evaluation
+- DETAILED_QUERIES: 8 queries (1 per category + 1) for qualitative analysis
 """
 
 # =============================================================================
-# QUICK TEST SET (6 queries) - for detailed analysis
-# =============================================================================
-
-QUICK_QUERIES = [
-    # 1. Single entity, high-degree regulation
-    {
-        'id': 'q1',
-        'query': 'What is the EU AI Act?',
-        'category': 'simple_factual',
-        'entities': 1,
-        'target_entity': 'EU AI Act',
-        'expected_types': ['Regulation'],
-        'expected_mode': 'graph',
-        'description': 'High-degree regulation (1025 relations)'
-    },
-    # 2. Single entity, high-degree technology (tests different entity type)
-    {
-        'id': 'q2',
-        'query': 'How is ChatGPT regulated?',
-        'category': 'technology_regulation',
-        'entities': 1,
-        'target_entity': 'ChatGPT',
-        'expected_types': ['Technology'],
-        'expected_mode': 'graph',
-        'description': 'High-degree technology (1070 relations)'
-    },
-    # 3. Cross-jurisdictional (multi-location aggregation)
-    {
-        'id': 'q3',
-        'query': 'Which jurisdictions regulate facial recognition?',
-        'category': 'cross_jurisdictional',
-        'entities': 2,
-        'expected_types': ['Technology', 'Location'],
-        'expected_mode': 'graph',
-        'description': 'Technology across jurisdictions'
-    },
-    # 4. Comparison (Steiner Tree connecting multiple terminals)
-    {
-        'id': 'q4',
-        'query': 'Compare China and EU approaches to AI governance',
-        'category': 'comparison',
-        'entities': 3,
-        'expected_types': ['Location', 'Technology'],
-        'expected_mode': 'dual',
-        'description': 'Cross-jurisdiction comparison, tests Steiner Tree'
-    },
-    # 5. Relation-specific (tests `requires` predicate - 27k instances)
-    {
-        'id': 'q5',
-        'query': 'What transparency requirements does the EU AI Act impose?',
-        'category': 'relation_traversal',
-        'entities': 2,
-        'expected_types': ['Regulation', 'RegulatoryConcept'],
-        'expected_relations': ['requires'],
-        'expected_mode': 'graph',
-        'description': 'Tests relation traversal via requires predicate'
-    },
-    # 6. Out-of-domain (graceful failure, Easter egg)
-    {
-        'id': 'q6',
-        'query': "What is Snoopy's arch enemy?",
-        'category': 'out_of_domain',
-        'entities': 0,
-        'expected_types': [],
-        'expected_mode': 'semantic',
-        'description': 'Out-of-domain, should fail gracefully (Red Baron!)'
-    }
-]
-
-
-# =============================================================================
-# FULL TEST SET (30 queries) - for comprehensive evaluation
+# FULL TEST SET (35 queries) - for comprehensive evaluation
 # =============================================================================
 
 FULL_QUERIES = [
@@ -98,9 +40,6 @@ FULL_QUERIES = [
         'category': 'simple_factual',
         'entities': 1,
         'target_entity': 'EU AI Act',
-        'target_degree': 1025,
-        'expected_types': ['Regulation'],
-        'expected_mode': 'graph',
         'description': 'High-degree regulation'
     },
     {
@@ -109,9 +48,6 @@ FULL_QUERIES = [
         'category': 'simple_factual',
         'entities': 1,
         'target_entity': 'ChatGPT',
-        'target_degree': 1070,
-        'expected_types': ['Technology'],
-        'expected_mode': 'graph',
         'description': 'High-degree technology'
     },
     {
@@ -120,9 +56,6 @@ FULL_QUERIES = [
         'category': 'simple_factual',
         'entities': 1,
         'target_entity': 'transparency',
-        'target_degree': 1811,
-        'expected_types': ['RegulatoryConcept'],
-        'expected_mode': 'semantic',
         'description': 'High-degree concept (abstract)'
     },
     {
@@ -131,9 +64,6 @@ FULL_QUERIES = [
         'category': 'simple_factual',
         'entities': 1,
         'target_entity': 'European Commission',
-        'target_degree': 764,
-        'expected_types': ['Organization'],
-        'expected_mode': 'dual',
         'description': 'Organization entity'
     },
     {
@@ -142,9 +72,6 @@ FULL_QUERIES = [
         'category': 'simple_factual',
         'entities': 1,
         'target_entity': 'discriminatory impacts',
-        'target_degree': 1482,
-        'expected_types': ['Risk'],
-        'expected_mode': 'semantic',
         'description': 'Risk entity'
     },
     
@@ -157,9 +84,6 @@ FULL_QUERIES = [
         'query': 'What are high-risk AI systems?',
         'category': 'multi_entity',
         'entities': 2,
-        'expected_types': ['Risk', 'Technology'],
-        'expected_relations': ['appliesto', 'poses'],
-        'expected_mode': 'dual',
         'description': '2-entity, risk+technology'
     },
     {
@@ -167,9 +91,6 @@ FULL_QUERIES = [
         'query': 'How does machine learning relate to privacy risks?',
         'category': 'multi_entity',
         'entities': 2,
-        'expected_types': ['Technology', 'Risk'],
-        'expected_relations': ['poses', 'mitigates'],
-        'expected_mode': 'graph',
         'description': '2-entity, technology→risk'
     },
     {
@@ -177,9 +98,6 @@ FULL_QUERIES = [
         'query': 'What accountability requirements apply to AI systems?',
         'category': 'multi_entity',
         'entities': 2,
-        'expected_types': ['RegulatoryConcept', 'Technology'],
-        'expected_relations': ['requires', 'appliesto'],
-        'expected_mode': 'dual',
         'description': '2-entity, concept+technology'
     },
     {
@@ -187,9 +105,6 @@ FULL_QUERIES = [
         'query': 'How do algorithms affect human rights?',
         'category': 'multi_entity',
         'entities': 2,
-        'expected_types': ['Technology', 'PoliticalConcept'],
-        'expected_relations': ['affects', 'influences'],
-        'expected_mode': 'semantic',
         'description': '2-entity, tech→political'
     },
     {
@@ -197,9 +112,6 @@ FULL_QUERIES = [
         'query': 'What security risks do AI systems pose?',
         'category': 'multi_entity',
         'entities': 2,
-        'expected_types': ['Risk', 'Technology'],
-        'expected_relations': ['poses'],
-        'expected_mode': 'graph',
         'description': '2-entity, security focus'
     },
     
@@ -212,9 +124,7 @@ FULL_QUERIES = [
         'query': 'Which jurisdictions regulate facial recognition?',
         'category': 'cross_jurisdictional',
         'entities': 2,
-        'expected_types': ['Technology'],
         'jurisdictions': 'multiple',
-        'expected_mode': 'graph',
         'description': 'Tech across jurisdictions'
     },
     {
@@ -222,9 +132,7 @@ FULL_QUERIES = [
         'query': 'How does the EU regulate AI compared to China?',
         'category': 'cross_jurisdictional',
         'entities': 3,
-        'expected_types': ['Location', 'Technology'],
         'jurisdictions': ['EU', 'CN'],
-        'expected_mode': 'dual',
         'description': 'EU vs China comparison'
     },
     {
@@ -232,19 +140,15 @@ FULL_QUERIES = [
         'query': 'What AI regulations exist in Singapore?',
         'category': 'cross_jurisdictional',
         'entities': 2,
-        'expected_types': ['Location', 'Regulation'],
         'jurisdictions': ['SG'],
-        'expected_mode': 'graph',
         'description': 'Single jurisdiction (Singapore)'
     },
     {
         'id': 'cj4',
         'query': 'Compare US and EU approaches to AI transparency',
         'category': 'cross_jurisdictional',
-        'entities': 4,
-        'expected_types': ['Location', 'RegulatoryConcept'],
+        'entities': 3,
         'jurisdictions': ['US', 'EU'],
-        'expected_mode': 'dual',
         'description': 'US vs EU on concept'
     },
     {
@@ -252,9 +156,7 @@ FULL_QUERIES = [
         'query': 'How does Japan address AI ethics?',
         'category': 'cross_jurisdictional',
         'entities': 2,
-        'expected_types': ['Location', 'RegulatoryConcept'],
         'jurisdictions': ['JP'],
-        'expected_mode': 'semantic',
         'description': 'Single jurisdiction (Japan)'
     },
     
@@ -267,49 +169,39 @@ FULL_QUERIES = [
         'query': 'What requirements apply to AI in healthcare?',
         'category': 'relation_specific',
         'entities': 2,
-        'expected_relations': ['appliesto', 'requires'],
-        'expected_mode': 'graph',
-        'description': 'appliesto relation (51k instances)'
+        'description': 'appliesto relation'
     },
     {
         'id': 'rs2',
         'query': 'What does the EU AI Act require for high-risk systems?',
         'category': 'relation_specific',
         'entities': 3,
-        'expected_relations': ['requires'],
-        'expected_mode': 'graph',
-        'description': 'requires relation (27k instances)'
+        'description': 'requires relation'
     },
     {
         'id': 'rs3',
         'query': 'How is AI regulation enforced?',
         'category': 'relation_specific',
         'entities': 2,
-        'expected_relations': ['enforces'],
-        'expected_mode': 'dual',
-        'description': 'enforces relation (12k instances)'
+        'description': 'enforces relation'
     },
     {
         'id': 'rs4',
         'query': 'What measures mitigate AI bias?',
         'category': 'relation_specific',
         'entities': 2,
-        'expected_relations': ['mitigates'],
-        'expected_mode': 'graph',
-        'description': 'mitigates relation (9k instances)'
+        'description': 'mitigates relation'
     },
     {
         'id': 'rs5',
         'query': 'What risks does automated decision-making pose?',
         'category': 'relation_specific',
         'entities': 2,
-        'expected_relations': ['poses'],
-        'expected_mode': 'semantic',
-        'description': 'poses relation (9k instances)'
+        'description': 'poses relation'
     },
     
     # -------------------------------------------------------------------------
-    # CATEGORY 5: RESEARCH/ACADEMIC - 4 queries
+    # CATEGORY 5: RESEARCH/ACADEMIC - 5 queries
     # Tests: Paper-heavy retrieval, citations, academic concepts
     # -------------------------------------------------------------------------
     {
@@ -317,9 +209,7 @@ FULL_QUERIES = [
         'query': 'What academic research discusses algorithmic bias?',
         'category': 'research',
         'entities': 2,
-        'expected_types': ['Technology', 'Risk'],
         'source_bias': 'paper',
-        'expected_mode': 'semantic',
         'description': 'Academic focus, paper-heavy'
     },
     {
@@ -327,9 +217,7 @@ FULL_QUERIES = [
         'query': 'What studies examine AI sustainability?',
         'category': 'research',
         'entities': 2,
-        'expected_types': ['Technology', 'EconomicConcept'],
         'source_bias': 'paper',
-        'expected_mode': 'semantic',
         'description': 'Sustainability research'
     },
     {
@@ -337,9 +225,7 @@ FULL_QUERIES = [
         'query': 'How do researchers define explainable AI?',
         'category': 'research',
         'entities': 1,
-        'expected_types': ['TechnicalConcept'],
         'source_bias': 'paper',
-        'expected_mode': 'semantic',
         'description': 'Technical concept from papers'
     },
     {
@@ -347,93 +233,146 @@ FULL_QUERIES = [
         'query': 'What is the academic perspective on AI governance?',
         'category': 'research',
         'entities': 2,
-        'expected_types': ['Technology', 'RegulatoryConcept'],
         'source_bias': 'paper',
-        'expected_mode': 'semantic',
         'description': 'Governance from academic lens'
+    },
+    {
+        'id': 'ra5',
+        'query': 'What methodologies are used to evaluate AI fairness?',
+        'category': 'research',
+        'entities': 2,
+        'source_bias': 'paper',
+        'description': 'Methods/evaluation focus'
     },
     
     # -------------------------------------------------------------------------
-    # CATEGORY 6: EDGE CASES - 6 queries
-    # Tests: Out-of-domain, ambiguous, very specific, alias resolution
+    # CATEGORY 6: EDGE CASES - 5 queries
+    # Tests: Out-of-domain, ambiguous, temporal boundary, alias resolution
     # -------------------------------------------------------------------------
     {
         'id': 'ec1',
         'query': "What is Snoopy's arch enemy?",
-        'category': 'out_of_domain',
+        'category': 'edge_cases',
+        'subcategory': 'out_of_domain',
         'entities': 0,
-        'expected_mode': 'semantic',
         'description': 'Out-of-domain (graceful failure)'
     },
     {
         'id': 'ec2',
         'query': 'What is AI?',
-        'category': 'ambiguous',
+        'category': 'edge_cases',
+        'subcategory': 'ambiguous',
         'entities': 1,
-        'target_entity': 'AI',
-        'target_degree': 3706,
-        'expected_mode': 'semantic',
         'description': 'Highest-degree entity, very broad'
     },
     {
         'id': 'ec3',
-        'query': 'Explain GDPR implications for machine learning',
-        'category': 'specific',
-        'entities': 2,
-        'expected_mode': 'graph',
-        'description': 'Specific regulation + technology'
+        'query': 'What is the AI Act?',
+        'category': 'edge_cases',
+        'subcategory': 'alias_resolution',
+        'entities': 1,
+        'description': 'Alias test (AI Act → EU AI Act)'
     },
     {
         'id': 'ec4',
-        'query': 'What is the AI Act?',
-        'category': 'alias_resolution',
-        'entities': 1,
-        'target_entity': 'EU AI Act',
-        'resolution_type': 'alias',
-        'expected_mode': 'graph',
-        'description': 'Alias test (AI Act → EU AI Act)'
+        'query': 'What are the implications of the Infopak ruling for AI liability?',
+        'category': 'edge_cases',
+        'subcategory': 'temporal_boundary',
+        'entities': 2,
+        'description': 'Post-cutoff (2024 Belgian case)'
     },
     {
         'id': 'ec5',
         'query': 'How does ML affect data protection?',
-        'category': 'alias_resolution',
+        'category': 'edge_cases',
+        'subcategory': 'alias_resolution',
         'entities': 2,
-        'resolution_type': 'alias',
-        'expected_mode': 'dual',
         'description': 'Abbreviation test (ML → machine learning)'
     },
+    
+    # -------------------------------------------------------------------------
+    # CATEGORY 7: EXPERT SPECIFIC - 5 queries
+    # Tests: Deep provision knowledge, specific articles, enforcement cases
+    # -------------------------------------------------------------------------
     {
-        'id': 'ec6',
-        'query': 'What regulations mention neural networks in Austria?',
-        'category': 'specific_jurisdiction',
+        'id': 'es1',
+        'query': 'What practices are explicitly prohibited under Article 5 of the EU AI Act?',
+        'category': 'expert_specific',
         'entities': 2,
-        'jurisdictions': ['AT'],
-        'expected_mode': 'graph',
-        'description': 'Very specific (Austria = high entity count)'
+        'description': 'Specific provision traversal'
+    },
+    {
+        'id': 'es2',
+        'query': 'How does GDPR Article 22 interact with AI automated decision-making?',
+        'category': 'expert_specific',
+        'entities': 3,
+        'description': 'Cross-regulation linking'
+    },
+    {
+        'id': 'es3',
+        'query': 'What conformity assessment requirements apply to high-risk AI systems under the EU AI Act?',
+        'category': 'expert_specific',
+        'entities': 3,
+        'description': 'Annex-level detail'
+    },
+    {
+        'id': 'es4',
+        'query': "How did Italy's Garante address algorithmic management in gig economy cases?",
+        'category': 'expert_specific',
+        'entities': 3,
+        'description': 'Enforcement action (Deliveroo ~2021)'
+    },
+    {
+        'id': 'es5',
+        'query': "What is China's approach to regulating recommendation algorithms?",
+        'category': 'expert_specific',
+        'entities': 2,
+        'description': '2021 provisions, DLA Piper coverage'
     }
 ]
 
 
 # =============================================================================
-# COMBINED for backward compatibility
+# DETAILED TEST SET (8 queries) - for qualitative analysis with full outputs
+# One representative per category + 1 extra expert query
 # =============================================================================
 
-TEST_QUERIES = QUICK_QUERIES  # Default to quick set
+DETAILED_QUERIES = [
+    FULL_QUERIES[0],   # sf1: simple_factual - "What is the EU AI Act?"
+    FULL_QUERIES[5],   # mf1: multi_entity - "What are high-risk AI systems?"
+    FULL_QUERIES[10],  # cj1: cross_jurisdictional - "Which jurisdictions regulate facial recognition?"
+    FULL_QUERIES[15],  # rs1: relation_specific - "What requirements apply to AI in healthcare?"
+    FULL_QUERIES[20],  # ra1: research - "What academic research discusses algorithmic bias?"
+    FULL_QUERIES[25],  # ec1: edge_cases - "What is Snoopy's arch enemy?"
+    FULL_QUERIES[30],  # es1: expert_specific - "What practices are prohibited under Article 5?"
+    FULL_QUERIES[31],  # es2: expert_specific - "How does GDPR Article 22 interact with AI?"
+]
 
 
-def get_queries(mode='quick'):
+# =============================================================================
+# BACKWARD COMPATIBILITY
+# =============================================================================
+
+# Legacy alias
+QUICK_QUERIES = DETAILED_QUERIES
+TEST_QUERIES = DETAILED_QUERIES
+
+
+def get_queries(mode='detailed'):
     """
     Get test queries by mode.
     
     Args:
-        mode: 'quick' (6 queries) or 'full' (30 queries)
+        mode: 'detailed' (8 queries), 'full' (35 queries), or 'quick' (2 queries)
     
     Returns:
         List of query dictionaries
     """
     if mode == 'full':
         return FULL_QUERIES
-    return QUICK_QUERIES
+    elif mode == 'quick':
+        return FULL_QUERIES[:2]
+    return DETAILED_QUERIES
 
 
 def print_coverage_report():
@@ -448,9 +387,19 @@ def print_coverage_report():
         cat = q['category']
         categories[cat] = categories.get(cat, 0) + 1
     
+    print(f"\nTotal queries: {len(FULL_QUERIES)}")
+    print(f"Detailed queries: {len(DETAILED_QUERIES)}")
+    print(f"Categories: {len(categories)}")
+    
     print("\nBy Category:")
     for cat, count in sorted(categories.items(), key=lambda x: -x[1]):
         print(f"  {count:2d} | {cat}")
+    
+    # Subcategory distribution (for edge_cases)
+    print("\nEdge Cases Breakdown:")
+    for q in FULL_QUERIES:
+        if q['category'] == 'edge_cases':
+            print(f"  - {q.get('subcategory', 'unknown')}: {q['query'][:50]}...")
     
     # Entity count distribution
     entity_counts = {}
@@ -461,16 +410,6 @@ def print_coverage_report():
     print("\nBy Entity Count:")
     for ec, count in sorted(entity_counts.items()):
         print(f"  {count:2d} | {ec} entities")
-    
-    # Expected mode distribution
-    modes = {}
-    for q in FULL_QUERIES:
-        mode = q.get('expected_mode', 'unknown')
-        modes[mode] = modes.get(mode, 0) + 1
-    
-    print("\nBy Expected Mode:")
-    for mode, count in sorted(modes.items(), key=lambda x: -x[1]):
-        print(f"  {count:2d} | {mode}")
     
     print("\n" + "=" * 60)
 

@@ -6,9 +6,9 @@ Unified ablation study with comprehensive evaluation metrics.
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Modes:
-    --detailed    6 queries, full answers printed, verbose per-query analysis
-    --full        30 queries, compact output, aggregate stats for charts
-    (default)     6 queries, compact output
+    --detailed    8 queries, full answers printed, verbose per-query analysis
+    --full        35 queries, compact output, aggregate stats for charts
+    (default)     8 queries, compact output
 
 Example:
     python src/analysis/ablation_study.py --detailed        # Full analysis
@@ -260,10 +260,11 @@ Return ONLY the JSON object, no other text."""
 # TEST QUERIES
 # ============================================================================
 
-from src.analysis.test_queries import QUICK_QUERIES, FULL_QUERIES, get_queries
+from src.analysis.test_queries import DETAILED_QUERIES, FULL_QUERIES, get_queries
 
-# Default to quick queries for backward compatibility
-TEST_QUERIES = QUICK_QUERIES
+# Legacy alias for backward compatibility
+QUICK_QUERIES = DETAILED_QUERIES
+TEST_QUERIES = DETAILED_QUERIES
 
 
 # ============================================================================
@@ -474,6 +475,42 @@ class AblationTestSuite:
                 cost_usd=answer_result.cost_usd
             )
             
+            # ============================================================
+            # PATCH: Extract citations and build detailed data
+            # ============================================================
+            
+            # Extract citations from answer text
+            citations = re.findall(r'\[(\d+)\]', answer_result.answer)
+            cited_indices = sorted(set(int(c) for c in citations))
+            
+            # Build detailed data (only in detailed mode to save memory)
+            chunks_detail = None
+            relations_detail = None
+            if self.detailed:
+                chunks_detail = [
+                    {
+                        'index': i + 1,
+                        'chunk_id': c.chunk_id,
+                        'doc_id': c.doc_id,
+                        'doc_type': c.doc_type,
+                        'score': c.score,
+                        'method': c.retrieval_method,
+                        'text': c.text,  # Full text for detailed mode
+                        'cited': (i + 1) in cited_indices,
+                        'jurisdiction': c.jurisdiction if hasattr(c, 'jurisdiction') else None
+                    }
+                    for i, c in enumerate(retrieval_result.chunks)
+                ]
+                relations_detail = [
+                    {
+                        'source': rel.source_name,
+                        'predicate': rel.predicate,
+                        'target': rel.target_name,
+                        'confidence': rel.confidence
+                    }
+                    for rel in retrieval_result.subgraph.relations[:20]  # Top 20
+                ]
+            
             test_result = TestResult(
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
@@ -488,7 +525,10 @@ class AblationTestSuite:
                 performance=performance_metrics,
                 answer_text=answer_result.answer,
                 success=True,
-                error=None
+                error=None,
+                chunks_detail=chunks_detail,
+                cited_chunks=cited_indices,
+                relations_detail=relations_detail
             )
             
             if self.detailed:
@@ -515,7 +555,10 @@ class AblationTestSuite:
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
                 answer_text="",
                 success=False,
-                error=str(e)
+                error=str(e),
+                chunks_detail=None,
+                cited_chunks=[],
+                relations_detail=None
             )
     
     def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
@@ -783,52 +826,6 @@ class AblationTestSuite:
                     print(f"    High relation context: {high_faith:.2f} avg faithfulness (n={len(high_rel)})")
                     print(f"    Low relation context:  {low_faith:.2f} avg faithfulness (n={len(low_rel)})")
         
-        # ─────────────────────────────────────────────────────────────────────
-        # 5. EXPECTATION VALIDATION
-        # ─────────────────────────────────────────────────────────────────────
-        print(f"\n  {'─'*76}")
-        print(f"  5. EXPECTATION VALIDATION")
-        print(f"  {'─'*76}")
-        
-        # Check if expected_mode predictions held
-        if self.enable_ragas:
-            correct = 0
-            total_expected = 0
-            
-            for query, scores in queries.items():
-                # Find the query definition to get expected_mode
-                # We need to match query text to QUICK_QUERIES or FULL_QUERIES
-                expected = None
-                for qdef in QUICK_QUERIES + FULL_QUERIES:
-                    if qdef['query'] == query:
-                        expected = qdef.get('expected_mode')
-                        break
-                
-                if not expected:
-                    continue
-                
-                total_expected += 1
-                
-                # Determine actual winner
-                max_score = max(scores.values())
-                if max_score == 0:
-                    continue
-                    
-                actual_winners = [m for m, s in scores.items() if s == max_score]
-                
-                if expected in actual_winners:
-                    correct += 1
-                    status = "✓"
-                else:
-                    status = "✗"
-                
-                q_short = query[:40] + '...' if len(query) > 40 else query
-                actual_str = '/'.join(actual_winners)
-                print(f"  {status} {q_short:<42} expected={expected:<8} actual={actual_str}")
-            
-            if total_expected > 0:
-                print(f"\n  Prediction accuracy: {correct}/{total_expected} ({correct/total_expected:.0%})")
-        
         print(f"\n{'━'*80}\n")
     
     def save_results(self, output_dir: Path, detailed: bool = False):
@@ -891,8 +888,20 @@ class AblationTestSuite:
                     'total_time': r.performance.total_time,
                     'answer_tokens': r.performance.answer_tokens,
                     'cost_usd': r.performance.cost_usd
-                }
+                },
+                # ============================================================
+                # PATCH: Add answer_text and detailed data to JSON
+                # ============================================================
+                'answer_text': r.answer_text,
+                'cited_chunks': r.cited_chunks if r.cited_chunks else []
             }
+            
+            # Only include heavy data in detailed mode (saves space in full runs)
+            if r.chunks_detail:
+                result_dict['chunks_detail'] = r.chunks_detail
+            if r.relations_detail:
+                result_dict['relations_detail'] = r.relations_detail
+            
             results_dicts.append(result_dict)
         
         json_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.json'
@@ -1241,7 +1250,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 
 ---
 
-*Generated by src/analysis/ablation_study.py v1.1*
+*Generated by src/analysis/ablation_study.py v1.2*
 """
         
         report_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.md'
@@ -1261,13 +1270,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Detailed analysis (6 queries, full answers printed)
+  # Detailed analysis (8 queries, full answers printed)
   python src/analysis/ablation_study.py --detailed
 
-  # Stats mode (30 queries, aggregate metrics for charts)
+  # Stats mode (35 queries, aggregate metrics for charts)
   python src/analysis/ablation_study.py --full
   
-  # Quick debug (2 queries, no RAGAS)
+  # Quick debug (2 queries, no RAGAS, no LaTeX)
   python src/analysis/ablation_study.py --quick --no-ragas
   
   # Export to LaTeX after running
@@ -1275,9 +1284,9 @@ Examples:
         """
     )
     parser.add_argument('--detailed', action='store_true', 
-                        help='Detailed mode: 6 queries, full answers, verbose metrics')
+                        help='Detailed mode: 8 queries, full answers, verbose metrics')
     parser.add_argument('--full', action='store_true', 
-                        help='Stats mode: 30 queries, aggregate metrics for charts')
+                        help='Stats mode: 35 queries, aggregate metrics for charts')
     parser.add_argument('--quick', action='store_true', 
                         help='Quick test with 2 queries (debug)')
     parser.add_argument('--parallel', action='store_true',
@@ -1298,31 +1307,34 @@ Examples:
     try:
         # Determine mode
         if args.detailed:
-            queries = QUICK_QUERIES  # 6 diverse queries
+            queries = DETAILED_QUERIES  # 8 diverse queries
             detailed = True
             print("=" * 80)
-            print("  DETAILED MODE: 6 queries × 3 modes = 18 tests")
+            print("  DETAILED MODE: 8 queries × 3 modes = 24 tests")
             print("  Full answers and per-query analysis will be printed")
             print("=" * 80)
         elif args.full:
-            queries = FULL_QUERIES  # 30 queries
+            queries = FULL_QUERIES  # 35 queries
             detailed = False
             print("=" * 80)
-            print("  STATS MODE: 30 queries × 3 modes = 90 tests")
+            print("  STATS MODE: 35 queries × 3 modes = 105 tests")
             print("  Compact output, aggregate statistics for charts")
             print("=" * 80)
         else:
-            queries = QUICK_QUERIES
+            queries = DETAILED_QUERIES
             detailed = False
             print("=" * 80)
-            print("  DEFAULT MODE: 6 queries × 3 modes = 18 tests")
-            print("  Use --detailed for full answers, --full for 30 queries")
+            print("  DEFAULT MODE: 8 queries × 3 modes = 24 tests")
+            print("  Use --detailed for full answers, --full for 35 queries")
             print("=" * 80)
         
         # Apply overrides
         if args.quick:
             queries = queries[:2]
             print(f"  Quick mode: limited to 2 queries")
+            if args.latex:
+                print("  Warning: --latex ignored in --quick mode")
+                args.latex = False
         elif args.queries:
             queries = queries[:args.queries]
             print(f"  Limited to {args.queries} queries")
@@ -1359,7 +1371,8 @@ Examples:
             print("  LATEX EXPORT")
             print("=" * 80)
             from src.analysis.ablation_latex_export import LaTeXExporter
-            exporter = LaTeXExporter(json_path)
+            # PATCH: Pass is_detailed flag to LaTeX exporter
+            exporter = LaTeXExporter(json_path, is_detailed=detailed)
             latex_dir = Path(args.output) / 'latex'
             exporter.export_all(latex_dir)
         
