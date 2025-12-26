@@ -406,7 +406,7 @@ class AblationTestSuite:
             )
             
             if self.detailed:
-                print(f"     Entity coverage: {coverage_metrics.entity_coverage_rate:.1%}")
+                print(f"     Terminal coverage: {coverage_metrics.terminal_coverage_rate:.1%} ({coverage_metrics.terminals_in_answer}/{coverage_metrics.query_terminals})")
                 print(f"     Relation coverage: {coverage_metrics.relation_coverage_rate:.1%}")
                 if coverage_metrics.covered_entities:
                     print(f"     Covered: {', '.join(coverage_metrics.covered_entities[:5])}")
@@ -549,7 +549,7 @@ class AblationTestSuite:
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
-                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
+                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, 0, 0, 0.0, [], []),
                 retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
                 ragas=RAGASMetrics(0.0, {}, 0.0, ""),
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
@@ -870,6 +870,9 @@ class AblationTestSuite:
                     'entities_in_subgraph': r.coverage.entities_in_subgraph,
                     'entities_in_answer': r.coverage.entities_in_answer,
                     'entity_coverage_rate': r.coverage.entity_coverage_rate,
+                    'query_terminals': r.coverage.query_terminals,
+                    'terminals_in_answer': r.coverage.terminals_in_answer,
+                    'terminal_coverage_rate': r.coverage.terminal_coverage_rate,
                     'relations_in_subgraph': r.coverage.relations_in_subgraph,
                     'relations_mentioned': r.coverage.relations_mentioned,
                     'relation_coverage_rate': r.coverage.relation_coverage_rate,
@@ -934,7 +937,7 @@ class AblationTestSuite:
                     'entities_avg': sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results),
                     'relations_avg': sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results),
                     'resolution_avg': sum(r.entity_resolution.resolution_rate for r in mode_results) / len(mode_results),
-                    'e_cov_avg': sum(r.coverage.entity_coverage_rate for r in mode_results) / len(mode_results),
+                    'e_cov_avg': sum(r.coverage.terminal_coverage_rate for r in mode_results) / len(mode_results),
                     'r_cov_avg': sum(r.coverage.relation_coverage_rate for r in mode_results) / len(mode_results),
                 }
         
@@ -1029,7 +1032,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
                 jur = rd['retrieval'].get('jurisdiction_diversity', [])
                 jur_count = len(jur) if jur else 0
                 
-                e_cov = rd['coverage'].get('entity_coverage_rate', 0) * 100
+                e_cov = rd['coverage'].get('terminal_coverage_rate', 0) * 100
                 sim = rd['retrieval'].get('avg_query_similarity', 0)
                 
                 subgraph = f"{rd['graph_utilization']['entities_in_subgraph']}/{rd['graph_utilization']['relations_in_subgraph']}"

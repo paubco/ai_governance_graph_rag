@@ -243,7 +243,7 @@ class LaTeXExporter:
                 sim = r['retrieval'].get('avg_query_similarity', 0)
                 
                 # Coverage
-                e_cov = r['coverage'].get('entity_coverage_rate', 0) * 100
+                e_cov = r['coverage'].get('terminal_coverage_rate', 0) * 100
                 
                 # Source diversity
                 src_div = r['retrieval'].get('source_diversity', {})
@@ -335,7 +335,7 @@ class LaTeXExporter:
                 ('Subgraph Relations', lambda r: str(r['graph_utilization']['relations_in_subgraph'])),
                 ('Total Chunks', lambda r: str(r['retrieval']['total_chunks'])),
                 ('Avg Similarity', lambda r: f"{r['retrieval'].get('avg_query_similarity', 0):.2f}"),
-                ('Entity Coverage', lambda r: f"{r['coverage'].get('entity_coverage_rate', 0)*100:.0f}\\%"),
+                ('Terminal Coverage', lambda r: f"{r['coverage'].get('terminal_coverage_rate', 0)*100:.0f}\\%"),
             ]
             
             for metric_name, metric_fn in metrics:

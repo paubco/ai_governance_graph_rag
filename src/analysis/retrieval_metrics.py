@@ -76,10 +76,18 @@ class CoverageMetrics:
     - Did answer use entities from the subgraph?
     - Were graph relations reflected in answer?
     - How much of retrieved context was utilized?
+    
+    Note: entity_coverage_rate (in_answer/in_subgraph) penalizes expansion.
+    terminal_coverage_rate (terminals_in_answer/query_terminals) is more meaningful.
     """
     entities_in_subgraph: int
     entities_in_answer: int
-    entity_coverage_rate: float       # in_answer / in_subgraph
+    entity_coverage_rate: float       # in_answer / in_subgraph (penalizes expansion)
+    
+    # Terminal coverage: did we answer about query entities?
+    query_terminals: int              # entities resolved from query
+    terminals_in_answer: int          # query entities mentioned in answer
+    terminal_coverage_rate: float     # terminals_in_answer / query_terminals
     
     relations_in_subgraph: int
     relations_mentioned: int
@@ -348,7 +356,7 @@ def compute_coverage_metrics(
     Args:
         subgraph: Subgraph object with entities and relations
         answer_text: Generated answer text
-        resolved_entities: List of ResolvedEntity objects with actual names
+        resolved_entities: List of ResolvedEntity objects (query terminals)
         
     Returns:
         CoverageMetrics
@@ -357,11 +365,13 @@ def compute_coverage_metrics(
     entities_in_subgraph = len(subgraph.entity_ids) if subgraph.entity_ids else 0
     relations_in_subgraph = len(subgraph.relations) if subgraph.relations else 0
     
-    # Build entity name lookup from resolved_entities
+    # Build entity name lookup from resolved_entities (query terminals)
     entity_names_map = {}
+    terminal_names = set()
     if resolved_entities:
         for entity in resolved_entities:
             entity_names_map[entity.entity_id] = entity.name
+            terminal_names.add(entity.name.lower())
     
     # Extract entity names from subgraph for matching
     subgraph_entity_names = set()
@@ -388,6 +398,11 @@ def compute_coverage_metrics(
     entities_in_answer = len(covered_entities)
     entity_coverage_rate = entities_in_answer / entities_in_subgraph if entities_in_subgraph > 0 else 0.0
     
+    # Terminal coverage: query entities mentioned in answer (more meaningful!)
+    terminals_in_answer = sum(1 for name in terminal_names if name in answer_lower)
+    query_terminals = len(terminal_names)
+    terminal_coverage_rate = terminals_in_answer / query_terminals if query_terminals > 0 else 0.0
+    
     # Relation coverage: check if relation predicates appear in answer
     relations_mentioned = 0
     if subgraph.relations:
@@ -403,6 +418,9 @@ def compute_coverage_metrics(
         entities_in_subgraph=entities_in_subgraph,
         entities_in_answer=entities_in_answer,
         entity_coverage_rate=entity_coverage_rate,
+        query_terminals=query_terminals,
+        terminals_in_answer=terminals_in_answer,
+        terminal_coverage_rate=terminal_coverage_rate,
         relations_in_subgraph=relations_in_subgraph,
         relations_mentioned=relations_mentioned,
         relation_coverage_rate=relation_coverage_rate,
