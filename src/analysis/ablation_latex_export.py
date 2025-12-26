@@ -451,7 +451,7 @@ class LaTeXExporter:
             "\\chapter{Complete Ablation Results}",
             "\\label{app:full_results}",
             "",
-            "This appendix contains the complete results for all 30 queries across 3 modes.",
+            "This appendix contains the complete results for all 36 queries across 3 modes.",
             "For detailed qualitative analysis including full answer text and retrieved chunks,",
             "run the ablation study with the \\texttt{--detailed} flag.",
             "",

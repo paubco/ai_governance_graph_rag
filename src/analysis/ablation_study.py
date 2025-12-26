@@ -6,9 +6,9 @@ Unified ablation study with comprehensive evaluation metrics.
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Modes:
-    --detailed    8 queries, full answers printed, verbose per-query analysis
-    --full        35 queries, compact output, aggregate stats for charts
-    (default)     8 queries, compact output
+    --detailed    6 queries, full answers printed, verbose per-query analysis
+    --full        36 queries, compact output, aggregate stats for charts
+    (default)     6 queries, compact output
 
 Example:
     python src/analysis/ablation_study.py --detailed        # Full analysis
@@ -327,7 +327,7 @@ class AblationTestSuite:
             print(f"  TEST {test_num}/{total_tests}: {mode.value.upper()}")
             print(f"{'━'*80}")
             print(f"  Query: {query_def['query']}")
-            print(f"  Category: {query_def['category']}")
+            print(f"  Category: {query_def['primary_category']}")
             if query_def.get('expected_mode'):
                 print(f"  Expected winner: {query_def['expected_mode']}")
             print()
@@ -515,7 +515,7 @@ class AblationTestSuite:
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['category'],
+                category=query_def['primary_category'],
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=entity_metrics,
                 graph_utilization=graph_metrics,
@@ -545,7 +545,7 @@ class AblationTestSuite:
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['category'],
+                category=query_def['primary_category'],
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
@@ -1270,10 +1270,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Detailed analysis (8 queries, full answers printed)
+  # Detailed analysis (6 queries, full answers printed)
   python src/analysis/ablation_study.py --detailed
 
-  # Stats mode (35 queries, aggregate metrics for charts)
+  # Stats mode (36 queries, aggregate metrics for charts)
   python src/analysis/ablation_study.py --full
   
   # Quick debug (2 queries, no RAGAS, no LaTeX)
@@ -1284,9 +1284,9 @@ Examples:
         """
     )
     parser.add_argument('--detailed', action='store_true', 
-                        help='Detailed mode: 8 queries, full answers, verbose metrics')
+                        help='Detailed mode: 6 queries, full answers, verbose metrics')
     parser.add_argument('--full', action='store_true', 
-                        help='Stats mode: 35 queries, aggregate metrics for charts')
+                        help='Stats mode: 36 queries, aggregate metrics for charts')
     parser.add_argument('--quick', action='store_true', 
                         help='Quick test with 2 queries (debug)')
     parser.add_argument('--parallel', action='store_true',
@@ -1307,25 +1307,25 @@ Examples:
     try:
         # Determine mode
         if args.detailed:
-            queries = DETAILED_QUERIES  # 8 diverse queries
+            queries = DETAILED_QUERIES  # 6 diverse queries
             detailed = True
             print("=" * 80)
-            print("  DETAILED MODE: 8 queries × 3 modes = 24 tests")
+            print("  DETAILED MODE: 6 queries × 3 modes = 18 tests")
             print("  Full answers and per-query analysis will be printed")
             print("=" * 80)
         elif args.full:
-            queries = FULL_QUERIES  # 35 queries
+            queries = FULL_QUERIES  # 36 queries
             detailed = False
             print("=" * 80)
-            print("  STATS MODE: 35 queries × 3 modes = 105 tests")
+            print("  STATS MODE: 36 queries × 3 modes = 108 tests")
             print("  Compact output, aggregate statistics for charts")
             print("=" * 80)
         else:
             queries = DETAILED_QUERIES
             detailed = False
             print("=" * 80)
-            print("  DEFAULT MODE: 8 queries × 3 modes = 24 tests")
-            print("  Use --detailed for full answers, --full for 35 queries")
+            print("  DEFAULT MODE: 6 queries × 3 modes = 18 tests")
+            print("  Use --detailed for full answers, --full for 36 queries")
             print("=" * 80)
         
         # Apply overrides
