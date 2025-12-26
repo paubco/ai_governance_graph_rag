@@ -423,14 +423,14 @@ class LaTeXExporter:
                         "\\subsection*{Subgraph Relations (Graph Mode, top 10)}",
                         "\\begin{tabular}{lll}",
                         "\\toprule",
-                        "Source & Predicate & Target \\\\",
+                        "Subject & Predicate & Object \\\\",
                         "\\midrule",
                     ])
                     
                     for rel in relations[:10]:
-                        source = escape_latex(truncate_text(rel['source'], 25))
-                        predicate = escape_latex(rel['predicate'])
-                        target = escape_latex(truncate_text(rel['target'], 25))
+                        source = escape_latex(truncate_text(rel.get('subject_id', ''), 25))
+                        predicate = escape_latex(rel.get('predicate', ''))
+                        target = escape_latex(truncate_text(rel.get('object_id', ''), 25))
                         lines.append(f"{source} & {predicate} & {target} \\\\")
                     
                     lines.extend([
