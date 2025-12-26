@@ -503,10 +503,10 @@ class AblationTestSuite:
                 ]
                 relations_detail = [
                     {
-                        'source': rel.source_name,
+                        'subject_id': rel.subject_id,
                         'predicate': rel.predicate,
-                        'target': rel.target_name,
-                        'confidence': rel.confidence
+                        'object_id': rel.object_id,
+                        'chunk_ids': rel.chunk_ids[:3] if rel.chunk_ids else []  # First 3 for brevity
                     }
                     for rel in retrieval_result.subgraph.relations[:20]  # Top 20
                 ]

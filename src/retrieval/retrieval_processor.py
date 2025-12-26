@@ -162,7 +162,7 @@ class RetrievalProcessor:
         
         if not understanding.resolved_entities:
             print("Warning: No entities resolved")
-            subgraph = Subgraph(entities=[], relations=[])
+            subgraph = Subgraph(entity_ids=[], relations=[])
             graph_chunks = []
             
             if mode in [RetrievalMode.SEMANTIC, RetrievalMode.DUAL]:
@@ -175,7 +175,7 @@ class RetrievalProcessor:
             # Phase 3.3.2a: Graph Expansion (only for GRAPH and DUAL modes)
             if mode == RetrievalMode.SEMANTIC:
                 # SEMANTIC mode: skip graph expansion entirely
-                subgraph = Subgraph(entities=[], relations=[])
+                subgraph = Subgraph(entity_ids=[], relations=[])
                 graph_chunks = []
                 semantic_chunks = self.chunk_retriever._retrieve_semantic(
                     understanding.parsed_query.embedding
@@ -205,6 +205,7 @@ class RetrievalProcessor:
         
         # Attach metadata for evaluation
         result.parsed_query = understanding.parsed_query
+        result.resolved_entities = understanding.resolved_entities
         
         return result
     
