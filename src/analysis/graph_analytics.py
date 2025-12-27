@@ -1,10 +1,73 @@
 # -*- coding: utf-8 -*-
 """
-Graph
+Knowledge graph analytics and network science metrics for GraphRAG.
 
-Runs analytical queries on Neo4j to compute network statistics,
-coverage metrics, and entity centrality measures.
+Comprehensive analysis toolkit for evaluating GraphRAG knowledge graph quality,
+structure, and integration. Computes network science metrics (degree distribution,
+connectivity, homophily), entity-type distributions, predicate concentration,
+document coverage, chunk extraction statistics, and co-occurrence patterns. Provides
+both high-level summaries for quick health checks and detailed breakdowns with
+distributions and top-N lists for in-depth analysis.
 
+The analyzer runs Cypher queries against Neo4j to extract graph statistics, calculates
+network properties (connected components, clustering, assortativity), analyzes entity-
+document linkages, and evaluates extraction quality. Supports verbose mode for detailed
+output and exports JSON reports with timestamps. Key metrics include predicate
+concentration (semantic diversity), entity coverage per document, and chunk-entity
+provenance ratios.
+
+Modes:
+    --verbose    Show detailed metrics, distributions, and top-N lists
+    (default)    Compact summary report with key findings
+
+Examples:
+    # Run basic analytics (compact summary)
+    python -m src.analysis.graph_analytics
+
+    # Detailed analytics with distributions
+    python -m src.analysis.graph_analytics --verbose
+
+    # Python API usage
+    from src.analysis.graph_analytics import GraphAnalyzer
+
+    analyzer = GraphAnalyzer(
+        uri="bolt://localhost:7687",
+        user="neo4j",
+        password="password",
+        verbose=True
+    )
+
+    # Get node and relationship counts
+    nodes = analyzer.get_node_counts()
+    rels = analyzer.get_relationship_counts()
+
+    # Coverage statistics
+    coverage = analyzer.get_coverage_stats()
+    print(f"Entities: {coverage['entities']}, Chunks: {coverage['chunks']}")
+
+    # Network metrics
+    network = analyzer.get_network_metrics()
+    print(f"Connected components: {network['components']}")
+    print(f"Clustering coefficient: {network['clustering']:.3f}")
+
+    # Entity centrality
+    top_entities = analyzer.get_top_connected_entities(limit=20)
+    for entity in top_entities:
+        print(f"{entity['entity']}: degree={entity['degree']}")
+
+    # Predicate concentration (semantic diversity)
+    concentration = analyzer.get_predicate_concentration()
+    for pred in concentration[:10]:
+        print(f"{pred['predicate']}: {pred['pct']}% (cumulative: {pred['cumulative_pct']}%)")
+
+    # Clean up
+    analyzer.close()
+
+References:
+    Neo4j: Graph database with Cypher query language for analytics
+    NetworkX: Network science metrics (clustering, assortativity, components)
+    RAGAS: Evaluation framework for retrieval-augmented generation
+    config.extraction_config: Entity types and extraction parameters
 """
 import os
 import sys
@@ -129,6 +192,48 @@ class GraphAnalyzer:
         """
         return self.run_query(query, f"Top {limit} predicates")
     
+    def get_predicate_concentration(self) -> Dict:
+        """
+        Calculate predicate concentration (top-N coverage).
+        
+        Returns cumulative coverage: e.g., "top 4 predicates cover 92.3%"
+        Important for understanding semantic diversity vs. concentration.
+        """
+        query = """
+        MATCH ()-[r:RELATION]->()
+        WITH r.predicate as predicate, count(*) as cnt
+        ORDER BY cnt DESC
+        WITH collect({predicate: predicate, count: cnt}) as all_preds, sum(cnt) as total
+        UNWIND range(0, size(all_preds)-1) as idx
+        WITH all_preds[idx] as p, total, idx,
+             reduce(s = 0, i IN range(0, idx) | s + all_preds[i].count) as cumulative
+        RETURN 
+            p.predicate as predicate, 
+            p.count as count,
+            round(100.0 * p.count / total, 2) as pct,
+            round(100.0 * cumulative / total, 2) as cumulative_pct,
+            total
+        LIMIT 10
+        """
+        results = self.run_query(query, "Predicate concentration (cumulative coverage)")
+        
+        if not results:
+            return {}
+        
+        total = results[0]['total'] if results else 0
+        
+        # Find top-4 cumulative coverage
+        top_4_pct = results[3]['cumulative_pct'] if len(results) >= 4 else None
+        top_10_pct = results[9]['cumulative_pct'] if len(results) >= 10 else None
+        
+        return {
+            'predicates': results,
+            'total_relations': total,
+            'unique_predicates': len(results),  # approximation from limit
+            'top_4_cumulative_pct': top_4_pct,
+            'top_10_cumulative_pct': top_10_pct
+        }
+    
     def get_predicate_diversity(self) -> Dict:
         """Calculate predicate diversity (unique predicates per entity)."""
         query = """
@@ -172,6 +277,177 @@ class GraphAnalyzer:
         
         return result
     
+    def get_average_degree(self) -> Dict:
+        """
+        Calculate average node degree across ALL relationship types.
+        
+        This counts all edges (RELATION, EXTRACTED_FROM, etc.) per entity.
+        Thesis metric: average degree of 14.9
+        """
+        query = """
+        MATCH (e:Entity)
+        WITH e, size((e)-[]-()) as degree
+        RETURN 
+            round(avg(degree), 2) as avg_degree,
+            max(degree) as max_degree,
+            min(degree) as min_degree,
+            round(percentileCont(degree, 0.5), 1) as median_degree,
+            count(e) as total_entities
+        """
+        results = self.run_query(query, "Average degree (all edge types)")
+        return results[0] if results else {}
+    
+    def get_semantic_degree(self) -> Dict:
+        """
+        Calculate average degree using only RELATION edges.
+        
+        This is the "semantic connectivity" - how many other entities
+        each entity is connected to through semantic relations.
+        """
+        query = """
+        MATCH (e:Entity)
+        OPTIONAL MATCH (e)-[r:RELATION]-()
+        WITH e, count(r) as degree
+        RETURN 
+            round(avg(degree), 2) as avg_semantic_degree,
+            max(degree) as max_semantic_degree,
+            round(percentileCont(degree, 0.5), 1) as median_semantic_degree,
+            count(CASE WHEN degree = 0 THEN 1 END) as zero_degree_entities,
+            count(e) as total_entities
+        """
+        results = self.run_query(query, "Semantic degree (RELATION edges only)")
+        return results[0] if results else {}
+    
+    def get_local_clustering(self) -> Dict:
+        """
+        Calculate local clustering coefficient for semantic relations.
+        
+        Measures how tightly connected neighborhoods are:
+        - High (>0.3): Tight communities, entities form cliques
+        - Low (<0.1): Hub-spoke structure, sparse local connections
+        """
+        query = """
+        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)-[:RELATION]-(a)
+        WITH count(*) as triangles
+        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)
+        WHERE a <> c
+        WITH triangles, count(*) as triplets
+        RETURN 
+            triangles,
+            triplets,
+            CASE WHEN triplets > 0 
+                 THEN round(3.0 * triangles / triplets, 4) 
+                 ELSE 0 
+            END as clustering_coef
+        """
+        results = self.run_query(query, "Local clustering coefficient")
+        result = results[0] if results else {}
+        
+        if result:
+            cc = result.get('clustering_coef', 0)
+            if cc > 0.3:
+                result['interpretation'] = 'High clustering - tight communities'
+            elif cc > 0.1:
+                result['interpretation'] = 'Moderate clustering'
+            else:
+                result['interpretation'] = 'Low clustering - hub-spoke structure'
+        
+        return result
+    
+    def get_type_affinity_matrix(self, limit: int = 20) -> List[Dict]:
+        """
+        Cross-tabulation of source_type × target_type for RELATION edges.
+        
+        Reveals extraction patterns: which entity types connect to which?
+        """
+        query = f"""
+        MATCH (a:Entity)-[r:RELATION]->(b:Entity)
+        RETURN a.type as source_type, b.type as target_type, count(*) as count
+        ORDER BY count DESC
+        LIMIT {limit}
+        """
+        return self.run_query(query, "Type affinity matrix")
+    
+    def get_path_length_sample(self, sample_size: int = 100) -> Dict:
+        """
+        Sample shortest paths between random entity pairs.
+        
+        Critical for Steiner tree performance - longer paths = more expensive.
+        Uses sampling because full APSP is O(n²).
+        """
+        query = f"""
+        MATCH (a:Entity)-[:RELATION]-()
+        WITH a, rand() as r ORDER BY r LIMIT {sample_size}
+        WITH collect(a) as sources
+        MATCH (b:Entity)-[:RELATION]-()
+        WITH sources, b, rand() as r ORDER BY r LIMIT {sample_size}
+        WITH sources, collect(b) as targets
+        UNWIND sources as src
+        UNWIND targets as tgt
+        WITH src, tgt WHERE src <> tgt
+        WITH src, tgt LIMIT {sample_size}
+        MATCH p = shortestPath((src)-[:RELATION*..10]-(tgt))
+        WITH length(p) as path_len
+        RETURN 
+            round(avg(path_len), 2) as avg_path_length,
+            max(path_len) as max_path_length,
+            min(path_len) as min_path_length,
+            count(*) as paths_found
+        """
+        results = self.run_query(query, f"Path length sample (n={sample_size})")
+        result = results[0] if results else {}
+        
+        if result:
+            avg_len = result.get('avg_path_length', 0)
+            if avg_len <= 3:
+                result['interpretation'] = 'Short paths - efficient Steiner tree'
+            elif avg_len <= 5:
+                result['interpretation'] = 'Medium paths - reasonable traversal'
+            else:
+                result['interpretation'] = 'Long paths - expensive graph expansion'
+        
+        return result
+    
+    def get_entity_quality_flags(self) -> Dict:
+        """
+        Flag potentially problematic entities from extraction.
+        
+        Detects:
+        - Very long names (>100 chars) - likely extraction errors
+        - Bracket names - JSON/code artifacts
+        - Very short names (<3 chars) - likely noise
+        """
+        query = """
+        MATCH (e:Entity)
+        RETURN 
+            count(e) as total_entities,
+            sum(CASE WHEN size(e.name) > 100 THEN 1 ELSE 0 END) as very_long_names,
+            sum(CASE WHEN e.name =~ '.*[\\\\[\\\\]{}].*' THEN 1 ELSE 0 END) as bracket_names,
+            sum(CASE WHEN size(e.name) < 3 THEN 1 ELSE 0 END) as very_short_names,
+            sum(CASE WHEN e.name =~ '^[0-9]+$' THEN 1 ELSE 0 END) as numeric_only_names,
+            sum(CASE WHEN e.name IS NULL OR e.name = '' THEN 1 ELSE 0 END) as empty_names
+        """
+        results = self.run_query(query, "Entity quality flags")
+        result = results[0] if results else {}
+        
+        if result:
+            total = result.get('total_entities', 1)
+            issues = (result.get('very_long_names', 0) + 
+                     result.get('bracket_names', 0) + 
+                     result.get('very_short_names', 0) +
+                     result.get('numeric_only_names', 0) +
+                     result.get('empty_names', 0))
+            result['issue_rate_pct'] = round(100.0 * issues / max(1, total), 2)
+            
+            if result['issue_rate_pct'] < 1:
+                result['interpretation'] = 'Clean - minimal quality issues'
+            elif result['issue_rate_pct'] < 5:
+                result['interpretation'] = 'Good - some quality issues'
+            else:
+                result['interpretation'] = 'Review needed - significant quality issues'
+        
+        return result
+
     def get_degree_distribution_buckets(self) -> List[Dict]:
         """Analyze degree distribution to detect power-law patterns."""
         query = """
@@ -260,24 +536,16 @@ class GraphAnalyzer:
     
     def get_connected_components(self) -> Dict:
         """
-        Analyze connected components in the semantic entity graph.
-        Shows graph fragmentation - ideally one giant component.
+        Analyze connectivity in the semantic entity graph.
         
-        Note: Uses only RELATION edges between entities for semantic cohesion.
+        Reports TWO connectivity metrics:
+        1. "Connected to graph" = has ANY edge (data quality)
+        2. "Has semantic relations" = has RELATION edge (retrieval effectiveness)
+        
+        For GraphRAG retrieval, RELATION edges matter because Steiner tree
+        only traverses RELATION edges between entities.
         """
-        # Count weakly connected components using simple BFS approximation
-        # Full WCC needs GDS plugin, so we approximate with sampling
-        
-        # 1. Get total entities and isolated entities
-        isolation_query = """
-        MATCH (e:Entity)
-        WHERE NOT (e)-[:RELATION]-()
-        RETURN count(e) as isolated_entities
-        """
-        isolated = self.run_query(isolation_query, "Isolated entities")
-        isolated_count = isolated[0]['isolated_entities'] if isolated else 0
-        
-        # 2. Get total entities
+        # 1. Total entities
         total_query = """
         MATCH (e:Entity)
         RETURN count(e) as total_entities
@@ -285,34 +553,84 @@ class GraphAnalyzer:
         total = self.run_query(total_query, "Total entities")
         total_count = total[0]['total_entities'] if total else 0
         
-        # 3. Sample reachability from top hubs to estimate giant component
-        # Note: Full reachability requires GDS plugin, using simple connected count
-        # Simpler query for approximation
-        giant_query = """
-        MATCH (e:Entity)-[:RELATION]-()
-        WITH DISTINCT e
-        RETURN count(e) as connected_entities
+        # 2. Entities connected via ANY edge (data quality metric)
+        any_edge_query = """
+        MATCH (e:Entity)
+        WHERE (e)-[]-()
+        RETURN count(e) as connected_any
         """
-        connected = self.run_query(giant_query, "Connected entities (in giant component)")
-        connected_count = connected[0]['connected_entities'] if connected else 0
+        any_edge = self.run_query(any_edge_query, "Entities with any edge")
+        connected_any = any_edge[0]['connected_any'] if any_edge else 0
+        
+        # 3. Entities with RELATION edges (retrieval effectiveness)
+        relation_query = """
+        MATCH (e:Entity)-[:RELATION]-()
+        RETURN count(DISTINCT e) as connected_relation
+        """
+        relation = self.run_query(relation_query, "Entities with RELATION edges")
+        connected_relation = relation[0]['connected_relation'] if relation else 0
+        
+        # 4. Truly isolated (no edges at all)
+        truly_isolated_query = """
+        MATCH (e:Entity)
+        WHERE NOT (e)-[]-()
+        RETURN count(e) as truly_isolated
+        """
+        truly_isolated = self.run_query(truly_isolated_query, "Truly isolated entities")
+        truly_isolated_count = truly_isolated[0]['truly_isolated'] if truly_isolated else 0
+        
+        # 5. Has provenance but no relations (extraction worked, relation extraction missed)
+        provenance_only_query = """
+        MATCH (e:Entity)-[:EXTRACTED_FROM]->()
+        WHERE NOT (e)-[:RELATION]-()
+        RETURN count(e) as provenance_only
+        """
+        prov_only = self.run_query(provenance_only_query, "Entities with provenance but no relations")
+        provenance_only_count = prov_only[0]['provenance_only'] if prov_only else 0
+        
+        # 6. Get isolated-from-relations by type (for diagnosis)
+        isolated_by_type_query = """
+        MATCH (e:Entity)
+        WHERE NOT (e)-[:RELATION]-()
+        RETURN e.type as entity_type, count(e) as count
+        ORDER BY count DESC
+        LIMIT 10
+        """
+        isolated_by_type = self.run_query(isolated_by_type_query, "Relation-isolated entities by type")
+        
+        no_relation_count = total_count - connected_relation
         
         result = {
             'total_entities': total_count,
-            'isolated_entities': isolated_count,
-            'connected_entities': connected_count,
-            'isolation_rate_pct': round(100.0 * isolated_count / max(1, total_count), 2),
-            'connectivity_rate_pct': round(100.0 * connected_count / max(1, total_count), 2)
+            # Data quality metric
+            'connected_any_edge': connected_any,
+            'connected_any_pct': round(100.0 * connected_any / max(1, total_count), 1),
+            'truly_isolated': truly_isolated_count,
+            # Retrieval effectiveness metric  
+            'has_semantic_relations': connected_relation,
+            'has_relations_pct': round(100.0 * connected_relation / max(1, total_count), 1),
+            'no_semantic_relations': no_relation_count,
+            'no_relations_pct': round(100.0 * no_relation_count / max(1, total_count), 1),
+            # Diagnosis
+            'provenance_only': provenance_only_count,
+            'isolated_by_type': isolated_by_type
         }
         
-        # Interpretation
-        if result['connectivity_rate_pct'] > 90:
-            result['interpretation'] = 'Highly connected graph (single giant component)'
-        elif result['connectivity_rate_pct'] > 70:
-            result['interpretation'] = 'Well connected with some isolated clusters'
-        elif result['connectivity_rate_pct'] > 50:
-            result['interpretation'] = 'Moderately fragmented graph'
+        # Interpretation for retrieval
+        pct = result['has_relations_pct']
+        if pct > 90:
+            result['interpretation'] = 'Excellent - most entities reachable via graph traversal'
+        elif pct > 70:
+            result['interpretation'] = 'Good - majority reachable, some isolated'
+        elif pct > 50:
+            result['interpretation'] = 'Moderate - significant portion unreachable via graph'
         else:
-            result['interpretation'] = 'Highly fragmented - many disconnected components'
+            result['interpretation'] = 'Poor - most entities unreachable via graph traversal'
+        
+        # Note about provenance
+        if provenance_only_count > 0:
+            prov_pct = round(100.0 * provenance_only_count / max(1, no_relation_count), 1)
+            result['provenance_note'] = f'{prov_pct}% of relation-isolated entities have chunk provenance (entity extraction OK, relation extraction missed them)'
         
         return result
     
@@ -848,6 +1166,7 @@ class GraphAnalyzer:
             'coverage_stats': self.get_coverage_stats(),
             'top_connected_entities': self.get_top_connected_entities(20),
             'predicate_distribution': self.get_predicate_distribution(30),
+            'predicate_concentration': self.get_predicate_concentration(),  # NEW
             'cross_jurisdictional_entities': self.get_cross_jurisdictional_entities(2),
             'academic_regulation_bridge': self.get_academic_regulation_bridge(),
             'citation_enrichment': self.get_citation_enrichment_stats(),
@@ -857,10 +1176,16 @@ class GraphAnalyzer:
             # KG-specific metrics
             'predicate_diversity': self.get_predicate_diversity(),
             'relation_density': self.get_relation_density(),
+            'average_degree': self.get_average_degree(),  # NEW - thesis claims 14.9
+            'semantic_degree': self.get_semantic_degree(),  # NEW - RELATION edges only
+            'local_clustering': self.get_local_clustering(),  # NEW - community structure
+            'type_affinity': self.get_type_affinity_matrix(),  # NEW - type connections
+            'path_length_sample': self.get_path_length_sample(100),  # NEW - Steiner tree cost
+            'entity_quality': self.get_entity_quality_flags(),  # NEW - extraction quality
             'degree_distribution': self.get_degree_distribution_buckets(),
             'property_completeness': self.get_property_completeness(),
             'cross_type_connectivity': self.get_cross_type_connectivity(),
-            # Graph cohesion metrics (NEW)
+            # Graph cohesion metrics
             'connected_components': self.get_connected_components(),
             'type_homophily': self.get_type_homophily(),
             'type_homophily_breakdown': self.get_type_homophily_breakdown(),
@@ -907,9 +1232,50 @@ class GraphAnalyzer:
         print(f"{'─'*75}")
         print(f"  Entities: {cov.get('entities', 0):,}")
         print(f"  Relations: {cov.get('semantic_relations', 0):,}")
+        
+        # Degree metrics
+        avg_deg = results.get('average_degree', {})
+        sem_deg = results.get('semantic_degree', {})
+        print(f"  Average degree (all edges): {avg_deg.get('avg_degree', 0):.1f}")
+        print(f"  Average semantic degree (RELATION only): {sem_deg.get('avg_semantic_degree', 0):.1f}")
         print(f"  Relation density: {density.get('relations_per_entity', 0):.1f} per entity  [{density.get('interpretation', '')}]")
-        print(f"  Connectivity: {cc.get('connectivity_rate_pct', 0):.1f}% in giant component, {cc.get('isolated_entities', 0)} isolated")
-        print(f"  Type homophily: {homophily.get('homophily_pct', 0):.1f}% intra-type  [<30% = rich cross-type connections]")
+        
+        # Connectivity - two metrics
+        print(f"\n  Connectivity:")
+        print(f"    Connected (any edge): {cc.get('connected_any_pct', 0):.1f}%  [data quality]")
+        print(f"    Has RELATION edges: {cc.get('has_relations_pct', 0):.1f}%  [retrieval effectiveness]")
+        print(f"    Truly isolated: {cc.get('truly_isolated', 0):,}")
+        print(f"    → {cc.get('interpretation', '')}")
+        if cc.get('provenance_note'):
+            print(f"    → {cc.get('provenance_note')}")
+        
+        # Predicate concentration
+        pred_conc = results.get('predicate_concentration', {})
+        if pred_conc.get('top_4_cumulative_pct'):
+            print(f"\n  Predicate concentration:")
+            print(f"    Top 4 predicates cover: {pred_conc.get('top_4_cumulative_pct')}%")
+            if pred_conc.get('predicates'):
+                for p in pred_conc['predicates'][:4]:
+                    print(f"      {p['predicate']:<20} {p['count']:>6,} ({p['pct']}%)")
+        
+        print(f"\n  Type homophily: {homophily.get('homophily_pct', 0):.1f}% intra-type  [<30% = rich cross-type connections]")
+        
+        # Clustering and path length
+        clustering = results.get('local_clustering', {})
+        paths = results.get('path_length_sample', {})
+        print(f"  Clustering coefficient: {clustering.get('clustering_coef', 0):.4f}  [{clustering.get('interpretation', '')}]")
+        print(f"  Avg path length: {paths.get('avg_path_length', 'N/A')}  [{paths.get('interpretation', '')}]")
+        
+        # Entity quality
+        quality = results.get('entity_quality', {})
+        if quality.get('issue_rate_pct', 0) > 1:
+            print(f"  Entity quality issues: {quality.get('issue_rate_pct', 0):.1f}%  [{quality.get('interpretation', '')}]")
+        
+        # Show isolated entities by type if significant isolation
+        if cc.get('no_relations_pct', 0) > 20 and cc.get('isolated_by_type'):
+            print(f"\n  Entities without RELATION edges by type:")
+            for item in cc.get('isolated_by_type', [])[:5]:
+                print(f"    {item['entity_type']:<20} {item['count']:>6,}")
         
         print(f"\n  Top Connected Entities:")
         for i, entity in enumerate(results['top_connected_entities'][:5], 1):
@@ -1065,17 +1431,62 @@ class GraphAnalyzer:
         for bucket in deg_dist:
             print(f"        {bucket['bucket']:15} {bucket['entity_count']:>6,} entities")
         
+        # Average Degree
+        avg_deg = results.get('average_degree', {})
+        sem_deg = results.get('semantic_degree', {})
+        print(f"\n  2.4 Average Degree")
+        print(f"      All edges: {avg_deg.get('avg_degree', 0):.2f} (max: {avg_deg.get('max_degree', 0)}, median: {avg_deg.get('median_degree', 0)})")
+        print(f"      RELATION only: {sem_deg.get('avg_semantic_degree', 0):.2f} (max: {sem_deg.get('max_semantic_degree', 0)}, median: {sem_deg.get('median_semantic_degree', 0)})")
+        print(f"      Zero semantic degree: {sem_deg.get('zero_degree_entities', 0):,} entities")
+        
         # Connectivity
         cc = results.get('connected_components', {})
-        print(f"\n  2.4 Graph Connectivity")
+        print(f"\n  2.5 Connectivity Analysis")
         print(f"      Total entities: {cc.get('total_entities', 0):,}")
-        print(f"      In giant component: {cc.get('connected_entities', 0):,} ({cc.get('connectivity_rate_pct', 0):.1f}%)")
-        print(f"      Isolated (no relations): {cc.get('isolated_entities', 0):,} ({cc.get('isolation_rate_pct', 0):.1f}%)")
+        print(f"      Connected (any edge): {cc.get('connected_any', 0):,} ({cc.get('connected_any_pct', 0):.1f}%)")
+        print(f"      Has RELATION edges: {cc.get('has_semantic_relations', 0):,} ({cc.get('has_relations_pct', 0):.1f}%)")
+        print(f"      No RELATION edges: {cc.get('no_semantic_relations', 0):,} ({cc.get('no_relations_pct', 0):.1f}%)")
+        print(f"      Truly isolated (no edges): {cc.get('truly_isolated', 0):,}")
+        if cc.get('provenance_note'):
+            print(f"      Note: {cc.get('provenance_note')}")
         print(f"      Interpretation: {cc.get('interpretation', 'N/A')}")
+        
+        # Show isolated by type if significant
+        if cc.get('isolated_by_type'):
+            print(f"\n      Entities without RELATION edges by type:")
+            for item in cc.get('isolated_by_type', [])[:7]:
+                print(f"        {item['entity_type']:<25} {item['count']:>6,}")
+        
+        # Predicate Concentration
+        pred_conc = results.get('predicate_concentration', {})
+        if pred_conc.get('predicates'):
+            print(f"\n  2.6 Predicate Concentration")
+            print(f"      Top 4 predicates cover: {pred_conc.get('top_4_cumulative_pct', 'N/A')}%")
+            print(f"      Top 10 predicates cover: {pred_conc.get('top_10_cumulative_pct', 'N/A')}%")
+            print(f"\n      {'Predicate':<25} {'Count':>8} {'%':>6} {'Cumul%':>8}")
+            print(f"      {'-'*25} {'-'*8} {'-'*6} {'-'*8}")
+            for p in pred_conc['predicates'][:10]:
+                print(f"      {p['predicate']:<25} {p['count']:>8,} {p['pct']:>6.1f} {p['cumulative_pct']:>8.1f}")
+        
+        # Clustering Coefficient
+        clustering = results.get('local_clustering', {})
+        print(f"\n  2.7 Local Clustering Coefficient")
+        print(f"      Triangles: {clustering.get('triangles', 0):,}")
+        print(f"      Triplets: {clustering.get('triplets', 0):,}")
+        print(f"      Clustering: {clustering.get('clustering_coef', 0):.4f}")
+        print(f"      Interpretation: {clustering.get('interpretation', 'N/A')}")
+        
+        # Path Length
+        paths = results.get('path_length_sample', {})
+        print(f"\n  2.8 Path Length Analysis (Steiner tree cost)")
+        print(f"      Sample size: {paths.get('paths_found', 0)} paths")
+        print(f"      Avg path length: {paths.get('avg_path_length', 'N/A')}")
+        print(f"      Max path length: {paths.get('max_path_length', 'N/A')}")
+        print(f"      Interpretation: {paths.get('interpretation', 'N/A')}")
         
         # Type Homophily
         homophily = results.get('type_homophily', {})
-        print(f"\n  2.5 Type Homophily (do same-type entities cluster together?)")
+        print(f"\n  2.9 Type Homophily (do same-type entities cluster together?)")
         print(f"      Total relations: {homophily.get('total_relations', 0):,}")
         print(f"      Intra-type (A→A): {homophily.get('intra_type_relations', 0):,} ({homophily.get('homophily_pct', 0):.1f}%)")
         print(f"      Inter-type (A→B): {homophily.get('inter_type_relations', 0):,}")
@@ -1088,21 +1499,41 @@ class GraphAnalyzer:
             for h in homophily_breakdown[:5]:
                 print(f"        {h['source_type']:20} {h['homophily_pct']:5.1f}% intra-type ({h['total']:,} relations)")
         
+        # Type Affinity Matrix
+        type_affinity = results.get('type_affinity', [])
+        if type_affinity:
+            print(f"\n  2.10 Type Affinity Matrix (which types connect?)")
+            print(f"      {'Source':<20} {'Target':<20} {'Count':>8}")
+            print(f"      {'-'*20} {'-'*20} {'-'*8}")
+            for ta in type_affinity[:10]:
+                print(f"      {ta['source_type']:<20} {ta['target_type']:<20} {ta['count']:>8,}")
+        
         # Hub Analysis
         hub_types = results.get('hub_centrality_by_type', [])
         if hub_types:
-            print(f"\n  2.6 Hub Centrality by Type")
+            print(f"\n  2.11 Hub Centrality by Type")
             print(f"      Hub = highly connected entity. Categories: mega(≥100), major(≥50), minor(≥20)")
             for h in hub_types[:10]:
                 print(f"        {h['entity_type']:20} {h['total_hubs']:>4} hubs ({h['hub_rate_pct']:>5.1f}%)  [mega:{h['mega_hubs']:>2}, major:{h['major_hubs']:>3}, minor:{h['minor_hubs']:>4}]")
         
+        # Entity Quality
+        quality = results.get('entity_quality', {})
+        print(f"\n  2.12 Entity Quality Flags")
+        print(f"      Total entities: {quality.get('total_entities', 0):,}")
+        print(f"      Very long names (>100 chars): {quality.get('very_long_names', 0):,}")
+        print(f"      Bracket names: {quality.get('bracket_names', 0):,}")
+        print(f"      Very short names (<3 chars): {quality.get('very_short_names', 0):,}")
+        print(f"      Numeric only: {quality.get('numeric_only_names', 0):,}")
+        print(f"      Issue rate: {quality.get('issue_rate_pct', 0):.1f}%")
+        print(f"      Interpretation: {quality.get('interpretation', 'N/A')}")
+        
         # Top Connected Entities
-        print(f"\n  2.7 Top 10 Connected Entities")
+        print(f"\n  2.13 Top 10 Connected Entities")
         for i, entity in enumerate(results['top_connected_entities'][:10], 1):
             print(f"      {i:2}. {entity['entity'][:45]:<45} ({entity['type']:<16}) {entity['degree']:>5,} conn")
         
         # Entity Type Distribution
-        print(f"\n  2.8 Entity Type Distribution (Top 10)")
+        print(f"\n  2.14 Entity Type Distribution (Top 10)")
         entity_types = results['entity_type_distribution'][:10]
         for et in entity_types:
             print(f"        {et['entity_type']:20} {et['count']:>6,}")
@@ -1272,8 +1703,20 @@ class GraphAnalyzer:
                 print(f"  WARNING: {count} orphan {node_type} nodes (no relationships)")
                 issues_found = True
         
-        if integration.get('jurisdiction_coverage_pct', 0) == 0 and integration.get('same_as_coverage_pct', 0) == 0:
-            print(f"  WARNING: No SAME_AS relations imported - entity↔metadata linking broken")
+        # Check for missing SAME_AS relations - use actual counts
+        same_as_total = (integration.get('same_as_jurisdiction', 0) + 
+                        integration.get('same_as_author', 0) + 
+                        integration.get('same_as_journal', 0))
+        if same_as_total == 0:
+            print(f"  WARNING: No SAME_AS relations found - entity↔metadata linking may be broken")
+            issues_found = True
+        
+        # Check for high isolation rate
+        components = results.get('connected_components', {})
+        isolation_rate = components.get('isolation_rate_pct', 0)
+        if isolation_rate > 30:
+            print(f"  WARNING: {isolation_rate:.1f}% of entities have no semantic relations")
+            print(f"           This limits graph traversal effectiveness")
             issues_found = True
         
         cite_net = results['citation_network']

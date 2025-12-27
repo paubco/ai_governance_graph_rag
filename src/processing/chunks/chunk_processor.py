@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-Document chunking pipeline orchestrator with mode-aware output
+Document chunking pipeline orchestrator with mode-aware output.
 
-Orchestrates Phase 1A document chunking pipeline with mode-aware processing. Local
-mode performs chunking and merging using BGE-small, while server mode adds BGE-M3
-embedding with OOM recovery and checkpointing. Supports resume capability to skip
-chunking and jump to embedding phase.
+Orchestrates Phase 1A document chunking pipeline with mode-aware processing for
+local development vs server deployment. Local mode performs chunking and merging
+using BGE-small only, while server mode adds BGE-M3 embedding with OOM recovery
+and checkpointing. Supports resume capability to skip chunking and jump directly
+to embedding phase for faster iteration.
+
+The processor loads cleaned documents, chunks them with SemanticChunker (hierarchical
+boundaries + coherence filtering), deduplicates using BGE-small similarity, merges
+near-duplicates at 0.98 threshold, and optionally embeds with BGE-M3 for server
+deployment. Outputs chunks.jsonl (local) or chunks_embedded.jsonl (server) with
+statistics and discard reports. Resume mode loads existing chunks.jsonl and runs
+only the embedding step.
 
 Modes:
-local     Chunking plus merge only using BGE-small, outputs chunks.jsonl
-    server    Chunking plus merge plus BGE-M3 embedding, outputs chunks_embedded.jsonl
+    local    Chunking plus merge only using BGE-small, outputs chunks.jsonl
+    server   Chunking plus merge plus BGE-M3 embedding, outputs chunks_embedded.jsonl
 
 Examples:
-# Local mode for chunking and merge
+    # Local mode for chunking and merge
     python -m src.processing.chunks.chunk_processor --mode local
 
     # Sample for testing
@@ -25,10 +33,11 @@ Examples:
     python -m src.processing.chunks.chunk_processor --mode server --resume
 
 References:
-ARCHITECTURE.md: Section 3.1.1 for Phase 1A design
-    CONTRIBUTING.md: Section 2 for foundation module usage
-    extraction_config.py: CHUNKING_CONFIG for parameters
-
+    BGE-small: BAAI/bge-small-en-v1.5 for chunking and deduplication (384 dimensions)
+    BGE-M3: BAAI/bge-m3 for final embeddings in server mode (1024 dimensions)
+    config.extraction_config.CHUNKING_CONFIG: All chunking parameters
+    src.processing.chunks.semantic_chunker.SemanticChunker: Hierarchical chunker
+    src.utils.embed_processor.EmbedProcessor: OOM-safe embedding with checkpoints
 """
 # Standard library
 import logging

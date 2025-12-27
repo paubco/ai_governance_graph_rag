@@ -1,16 +1,49 @@
 # -*- coding: utf-8 -*-
 """
-Result
+Result ranking with mode-specific strategies for ablation studies.
 
-- SEMANTIC: Pure FAISS similarity (baseline)
-- GRAPH: Entity coverage scoring (baseline)
-- DUAL: Graph for recall, semantic for precision (two-stage)
+Merges and ranks chunks from dual retrieval channels using three distinct strategies:
+(1) SEMANTIC mode ranks by pure FAISS similarity for baseline vector retrieval,
+(2) GRAPH mode uses entity coverage scoring prioritizing chunks with query entities,
+and (3) DUAL mode applies two-stage ranking with graph recall followed by semantic
+reranking for precision.
 
-Modes:
-    SEMANTIC: Rank by FAISS similarity (already scored)
-    GRAPH: Rank by entity coverage (terminal > path > other)
-    DUAL: Two-stage (graph recall + semantic rerank)
+Entity coverage scoring calculates terminal_coverage (query entities / total terminals)
+weighted at 1.0 and path_coverage (subgraph entities / path entities) weighted at 0.5,
+plus 0.1 provenance bonus for relation-source chunks. Filter penalties apply multiplicatively
+for jurisdiction/doc-type mismatches. DUAL mode merges both channels, deduplicates, then
+reranks using FAISS similarity while preserving entity context.
 
+Examples:
+    # Initialize ranker with FAISS index for DUAL mode
+    from src.retrieval.result_ranker import ResultRanker
+    import faiss
+    
+    chunk_index = faiss.read_index("data/processed/faiss/chunk_embeddings.index")
+    chunk_id_map = {...}  # chunk_id -> index mapping
+    
+    ranker = ResultRanker(chunk_index=chunk_index, chunk_id_map=chunk_id_map)
+
+    # Rank in DUAL mode (graph + semantic)
+    result = ranker.rank(
+        graph_chunks=graph_chunks,
+        semantic_chunks=semantic_chunks,
+        subgraph=subgraph,
+        filters=query_filters,
+        query=query_text,
+        query_embedding=query_emb,
+        terminal_entity_ids=terminal_ids,
+        mode="dual"
+    )
+
+    # Inspect top chunks
+    for chunk in result.chunks[:5]:
+        print(f"[{chunk.score:.3f}] {chunk.source_path}: {chunk.text[:100]}...")
+
+References:
+    Entity coverage scoring: PHASE_3_DESIGN.md § 3.3.2c
+    config.retrieval_config.RANKING_CONFIG: penalties and final_top_k
+    Multiplicative scoring: All components bounded [0,1] for fair comparison
 """
 # Standard library
 from typing import List, Set, Dict, Optional

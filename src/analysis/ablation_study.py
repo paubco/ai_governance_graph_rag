@@ -1,19 +1,42 @@
 # -*- coding: utf-8 -*-
 """
-Unified
+Unified ablation study comparing retrieval modes with comprehensive evaluation metrics.
 
-Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
+Systematic comparison of three retrieval strategies (SEMANTIC, GRAPH, DUAL) using RAGAS
+metrics, entity coverage analysis, and cost/latency measurements. Executes test queries
+across all modes, generates answers via Claude Haiku, and evaluates with answer relevancy,
+faithfulness, context precision, context recall, and custom entity coverage metrics.
+
+Supports three output modes: (1) detailed - 8 queries with full answers and per-query
+verbose analysis, (2) full - 36 queries with compact output and aggregate statistics
+for visualization, (3) quick (default) - 8 queries compact output for rapid iteration.
+Results saved to JSON with mode-specific statistics and per-query breakdowns for LaTeX
+export and chart generation.
 
 Modes:
-    -detailed    8 queries, full answers printed, verbose per-query analysis
-    -full        36 queries, compact output, aggregate stats for charts
-    (default)     8 queries, compact output
+    --detailed      8 queries, full answers printed, verbose per-query analysis
+    --full          36 queries, compact output, aggregate stats for charts
+    --quick         8 queries, compact output (default)
+    --no-ragas      Skip RAGAS evaluation for faster debugging
 
 Examples:
-python src/analysis/ablation_study.py --detailed        # Full analysis
-    python src/analysis/ablation_study.py --full            # Stats for charts
-    python src/analysis/ablation_study.py --quick --no-ragas  # Quick debug
+    # Detailed analysis with full RAGAS metrics
+    python src/analysis/ablation_study.py --detailed
 
+    # Generate aggregate statistics for visualization
+    python src/analysis/ablation_study.py --full
+
+    # Quick debugging without expensive metrics
+    python src/analysis/ablation_study.py --quick --no-ragas
+
+    # Custom query set with detailed output
+    python src/analysis/ablation_study.py --detailed --queries custom_queries.json
+
+References:
+    RAGAS framework: https://docs.ragas.io/en/latest/
+    Test queries: src/analysis/test_queries.py
+    Retrieval modes: config.retrieval_config.RetrievalMode
+    LaTeX export: src/analysis/ablation_latex_export.py
 """
 # Standard library
 import argparse

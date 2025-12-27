@@ -1,10 +1,48 @@
 # -*- coding: utf-8 -*-
 """
-LLM
+LLM prompts for GraphRAG entity extraction, relation extraction, and query understanding.
 
-- RELATION_EXTRACTION_PROMPT now uses entity_ids for constrained output
-- METADATA_RELATION_EXTRACTION_PROMPT updated for Track 2 (discusses only)
+Centralized prompt templates for all LLM-based pipeline stages: (1) Phase 1B semantic
+entity extraction with Mistral-7B for compound splitting and type enforcement, (2) Phase
+1B metadata entity extraction for authors/journals/citations, (3) Phase 1D semantic
+relation extraction with constrained entity_id output, (4) Phase 1D metadata relation
+extraction for citation networks ("discusses" predicate), (5) Phase 3 query entity
+extraction for retrieval.
 
+Prompts use few-shot examples, explicit type lists, and structured JSON output format
+for reliable parsing. Entity extraction enforces compound splitting ("AI and ML" → two
+entities) and clear type boundaries (semantic vs metadata). Relation extraction uses
+entity_id constraints to prevent hallucination and maintain graph integrity.
+
+Examples:
+    # Use semantic entity extraction prompt
+    from src.prompts.prompts import SEMANTIC_EXTRACTION_PROMPT
+    
+    prompt = SEMANTIC_EXTRACTION_PROMPT.format(chunk_text="The EU AI Act regulates AI systems.")
+    response = llm.generate(prompt)
+
+    # Use relation extraction with entity IDs
+    from src.prompts.prompts import RELATION_EXTRACTION_PROMPT
+    
+    prompt = RELATION_EXTRACTION_PROMPT.format(
+        chunk_text="GDPR influenced the EU AI Act's privacy provisions.",
+        extracted_entities_json='[{"entity_id": "ent_001", "name": "GDPR"}, {"entity_id": "ent_002", "name": "EU AI Act"}]'
+    )
+
+    # Query entity extraction
+    from src.prompts.prompts import QUERY_ENTITY_EXTRACTION_PROMPT
+    
+    prompt = QUERY_ENTITY_EXTRACTION_PROMPT.format(
+        query="What is the GDPR?",
+        entity_types="Regulation, RegulatoryConc
+
+ept, Technology, Risk"
+    )
+
+References:
+    Mistral-7B: mistralai/Mistral-7B-Instruct-v0.3 for entity/relation extraction
+    Prompt engineering: Few-shot examples, type constraints, JSON mode
+    config.extraction_config: SEMANTIC_ENTITY_TYPES, METADATA_ENTITY_TYPES
 """
 from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,

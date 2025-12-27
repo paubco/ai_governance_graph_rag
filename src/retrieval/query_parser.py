@@ -1,10 +1,44 @@
 # -*- coding: utf-8 -*-
 """
-Query
+Query understanding for extracting entities, metadata hints, and embeddings.
 
-Parses user queries into structured format with LLM-based entity extraction,
-rule-based metadata filter extraction, and query embedding.
+Parses natural language queries into structured ParsedQuery objects combining three
+extraction strategies: (1) LLM-based entity extraction using Mistral-7B with JSON mode
+to identify query entities with types, (2) rule-based regex patterns to detect jurisdiction
+hints ("EU", "California") and document type preferences ("regulations", "papers"), and
+(3) query embedding via BGE-M3 for semantic chunk retrieval.
 
+The parser calls Mistral-7B with a structured prompt listing all valid entity types,
+enforcing JSON output format for reliable parsing. Regex patterns match jurisdiction
+codes and document type keywords from config. Embeddings use the same BGE-M3 model as
+corpus chunks for semantic similarity. Results guide entity resolution, graph expansion,
+and chunk ranking.
+
+Examples:
+    # Initialize parser with embedding model
+    from src.retrieval.query_parser import QueryParser
+    from src.utils.embedder import BGEEmbedder
+    
+    embedder = BGEEmbedder()
+    parser = QueryParser(embedding_model=embedder)
+
+    # Parse comparative regulatory query
+    result = parser.parse("Compare EU and US AI regulations")
+    print(f"Entities: {[e.name for e in result.extracted_entities]}")
+    print(f"Jurisdictions: {result.filters.jurisdiction_hints}")  # ["EU", "US"]
+    print(f"Doc types: {result.filters.doc_type_hints}")  # ["regulation"]
+
+    # Parse factual query
+    result = parser.parse("What is GDPR?")
+    print(f"Entities: {[e.name for e in result.extracted_entities]}")  # ["GDPR"]
+    print(f"Embedding shape: {result.embedding.shape}")  # (1024,)
+
+References:
+    Mistral-7B: mistralai/Mistral-7B-Instruct-v0.3 for entity extraction
+    BGE-M3: BAAI/bge-m3 for query embeddings (1024 dimensions)
+    Jurisdiction patterns: config.retrieval_config.JURISDICTION_PATTERNS
+    Doc type patterns: config.retrieval_config.DOC_TYPE_PATTERNS
+    Together.ai API: For LLM inference with JSON mode
 """
 # Standard library
 import json

@@ -1,13 +1,49 @@
 # -*- coding: utf-8 -*-
 """
-Entity
+Entity resolution for mapping query mentions to canonical knowledge graph entities.
 
-Resolves entity mentions from queries to canonical entity IDs in the knowledge
-graph. Uses three-stage matching:
-    1. Exact match on entity name
-    2. Alias match using aliases.json lookup
-    3. FAISS semantic similarity for fuzzy matching
+Implements three-stage matching to resolve entity mentions from queries to canonical
+entity IDs in the knowledge graph: (1) exact name matching via hash lookup for perfect
+string matches, (2) alias matching using aliases.json to handle alternative names and
+abbreviations (e.g., "EU AI Act" → "European Union AI Act"), and (3) FAISS semantic
+similarity for fuzzy matching with configurable confidence thresholds.
 
+The resolver prioritizes exact matches (confidence=1.0) and alias matches (confidence=0.95)
+before falling back to semantic similarity. FAISS fuzzy matching embeds the mention using
+BGE-M3 and retrieves top-K candidates, filtering by cosine similarity threshold (default
+0.75). Results include entity metadata (ID, name, type, confidence) for graph expansion.
+
+Examples:
+    # Initialize with FAISS entity index and normalized entities
+    from src.retrieval.entity_resolver import EntityResolver
+    from src.utils.embedder import BGEEmbedder
+    
+    embedder = BGEEmbedder()
+    resolver = EntityResolver(
+        faiss_index_path="data/processed/faiss/entity_embeddings.index",
+        entity_ids_path="data/processed/faiss/entity_id_map.json",
+        normalized_entities_path="data/processed/entities/entities_semantic_embedded.jsonl",
+        embedding_model=embedder,
+        aliases_path="data/processed/entities/aliases.json",
+        threshold=0.75,
+        top_k=3
+    )
+
+    # Resolve extracted query entities
+    from src.utils.dataclasses import ExtractedQueryEntity
+    query_entities = [
+        ExtractedQueryEntity(name="GDPR", type="Regulation"),
+        ExtractedQueryEntity(name="EU AI Act", type="Regulation")
+    ]
+    
+    resolved = resolver.resolve(query_entities)
+    for entity in resolved:
+        print(f"{entity.query_mention} -> {entity.name} (ID: {entity.entity_id}, confidence: {entity.confidence:.2f})")
+
+References:
+    FAISS: HNSW index for fast similarity search with cosine similarity
+    BGE-M3: BAAI/bge-m3 embedding model (1024 dimensions)
+    config.retrieval_config.ENTITY_RESOLUTION_CONFIG: fuzzy_threshold parameter
 """
 # Standard library
 import json

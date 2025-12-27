@@ -1,9 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-Test
+Test query sets for GraphRAG ablation study and evaluation.
 
-Design: 6 categories × 6 queries = 36 total
+Curated collection of 36 test queries across 6 categories designed to evaluate retrieval
+system performance on diverse query types: (1) Regulation-only - single jurisdiction
+regulatory questions, (2) Cross-jurisdictional - comparative regulatory analysis,
+(3) Academic-only - research paper questions, (4) Bridging - queries requiring both
+regulatory and academic sources, (5) Multi-hop - complex reasoning chains, (6) Factual -
+simple entity lookups.
 
+Each query includes metadata tags for complexity (single_entity, multi_hop), style
+(keyword, wh_question, imperative), expected source type (regulation, academic, both),
+and jurisdictions. Queries test different retrieval challenges: entity resolution,
+graph traversal depth, cross-source integration, and semantic vs structured retrieval.
+
+Provides FULL_QUERIES (all 36), DETAILED_QUERIES (8 representative), and QUICK_QUERIES
+(5 fast debugging) subsets for different evaluation modes.
+
+Examples:
+    # Use full query set for comprehensive evaluation
+    from src.analysis.test_queries import FULL_QUERIES
+    
+    for query_dict in FULL_QUERIES:
+        result = retrieval_system.retrieve(query_dict['query'])
+        evaluate(result, expected_category=query_dict['primary_category'])
+
+    # Use detailed queries for in-depth analysis
+    from src.analysis.test_queries import DETAILED_QUERIES
+    
+    for query_dict in DETAILED_QUERIES:
+        print(f"[{query_dict['id']}] {query_dict['query']}")
+        print(f"Category: {query_dict['primary_category']}, Tags: {query_dict['tags']}")
+
+    # Quick debugging with 5 queries
+    from src.analysis.test_queries import QUICK_QUERIES
+
+References:
+    Query design aligned with ablation study categories
+    Used by src/analysis/ablation_study.py for mode comparison
 """
 # =============================================================================
 # FULL TEST SET (36 queries)

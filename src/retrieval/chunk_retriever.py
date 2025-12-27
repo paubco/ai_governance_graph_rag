@@ -1,9 +1,42 @@
 # -*- coding: utf-8 -*-
 """
-Dual-channel
+Dual-channel chunk retrieval combining graph-based and semantic approaches.
 
-Implements combined graph-based and semantic retrieval for context gathering.
+Implements two parallel retrieval strategies for comprehensive context gathering:
+(1) Graph retrieval fetches chunks connected to PCST-expanded entities via EXTRACTED_FROM
+edges in Neo4j, tracking which chunks are relation provenance vs entity mentions.
+(2) Semantic retrieval performs FAISS similarity search over the full chunk corpus using
+query embeddings.
 
+Graph retrieval provides entity-centric context by finding all chunks that mention
+entities in the expanded subgraph, with base scores proportional to entity count and
+provenance bonuses for chunks that contain relations. Semantic retrieval ensures
+coverage of relevant chunks that may not be entity-connected. Results include metadata
+(doc_id, doc_type, jurisdiction, scores) for downstream ranking.
+
+Examples:
+    # Initialize with Neo4j and FAISS
+    from src.retrieval.chunk_retriever import ChunkRetriever
+    
+    retriever = ChunkRetriever(
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_user="neo4j",
+        neo4j_password="password",
+        chunk_index_path="data/processed/faiss/chunk_embeddings.index",
+        chunk_id_map_path="data/processed/faiss/chunk_id_map.json"
+    )
+
+    # Dual retrieval (both channels)
+    graph_chunks, semantic_chunks = retriever.retrieve_dual(subgraph, query_embedding)
+    print(f"Graph: {len(graph_chunks)}, Semantic: {len(semantic_chunks)}")
+
+    # Clean up
+    retriever.close()
+
+References:
+    FAISS: Facebook AI Similarity Search for semantic retrieval
+    Neo4j: Graph database with EXTRACTED_FROM edges for entity-chunk provenance
+    config.retrieval_config.RETRIEVAL_CONFIG: semantic_top_k parameter
 """
 # Standard library
 from typing import List

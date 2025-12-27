@@ -1,10 +1,59 @@
 # -*- coding: utf-8 -*-
 """
-Retrieval
+Main retrieval pipeline orchestrator coordinating all Phase 3 components.
 
-Orchestrates full retrieval pipeline combining query understanding and context
-retrieval.
+Coordinates the complete question-answering workflow from query to ranked chunks:
+(1) Query understanding - parse query, extract entities, resolve to graph IDs,
+(2) Graph expansion - expand seed entities via Steiner Tree or k-NN,
+(3) Dual-channel retrieval - fetch chunks via graph provenance and semantic search,
+(4) Result ranking - merge channels with mode-specific scoring (semantic/graph/dual).
 
+Supports three retrieval modes for ablation studies: SEMANTIC (vector-only baseline),
+GRAPH (entity-centric expansion), and DUAL (combined approach). The processor initializes
+all components (parser, resolver, expander, retriever, ranker) and executes the pipeline
+sequentially, returning RetrievalResult with ranked chunks, subgraph structure, and
+metadata for answer generation.
+
+Examples:
+    # Initialize complete retrieval pipeline
+    from src.retrieval.retrieval_processor import RetrievalProcessor
+    from src.utils.embedder import BGEEmbedder
+    from config.retrieval_config import RetrievalMode
+    
+    embedder = BGEEmbedder()
+    
+    processor = RetrievalProcessor(
+        embedding_model=embedder,
+        faiss_entity_index_path="data/processed/faiss/entity_embeddings.index",
+        entity_ids_path="data/processed/faiss/entity_id_map.json",
+        normalized_entities_path="data/processed/entities/entities_semantic_embedded.jsonl",
+        aliases_path="data/processed/entities/aliases.json",
+        faiss_chunk_index_path="data/processed/faiss/chunk_embeddings.index",
+        chunk_ids_path="data/processed/faiss/chunk_id_map.json",
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_user="neo4j",
+        neo4j_password="password"
+    )
+
+    # Run dual retrieval
+    result = processor.retrieve(
+        query="What are high-risk AI systems under the EU AI Act?",
+        mode=RetrievalMode.DUAL
+    )
+    
+    print(f"Query: {result.query}")
+    print(f"Retrieved: {len(result.chunks)} chunks")
+    print(f"Subgraph: {len(result.subgraph.entity_ids)} entities, {len(result.subgraph.relations)} relations")
+    
+    # Inspect top chunk
+    top = result.chunks[0]
+    print(f"\n[1] Score: {top.score:.3f}, Source: {top.source_path}")
+    print(f"Text: {top.text[:200]}...")
+
+References:
+    PHASE_3_DESIGN.md: Complete pipeline architecture and evaluation methodology
+    RetrievalMode enum: config.retrieval_config.RetrievalMode
+    Component docs: query_parser, entity_resolver, graph_expander, chunk_retriever, result_ranker
 """
 # Standard library
 from dataclasses import dataclass

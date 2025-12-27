@@ -1,15 +1,47 @@
 # -*- coding: utf-8 -*-
 """
-Chunk deduplication using embedding cosine similarity
+Chunk deduplication using embedding cosine similarity.
 
 Deduplicates chunks using cosine similarity on BGE-M3 embeddings with configurable
-threshold. Processes chunks in batches to avoid memory issues with large matrices,
-marks higher-index chunks as duplicates, and tracks duplicate pairs for reporting
-and analysis.
+threshold. Processes chunks in batches to avoid memory issues with large similarity
+matrices, marks higher-index chunks as duplicates (keeping first occurrence), and
+tracks duplicate pairs for reporting and analysis. Reports top documents with most
+duplicates for quality monitoring.
+
+The deduplicator computes pairwise cosine similarity in batches (default 1000 chunks)
+to manage memory efficiently. When similarity exceeds threshold (default 0.95), the
+higher-index chunk is marked as duplicate and removed. All duplicate pairs are logged
+with similarity scores for inspection. Statistics include dedup ratio and per-document
+duplicate counts to identify problematic sources.
+
+Examples:
+    # Initialize with default threshold
+    from src.processing.chunks.chunk_deduplicator import ChunkDeduplicator
+
+    deduplicator = ChunkDeduplicator()
+
+    # Deduplicate embedded chunks
+    filtered_chunks, stats = deduplicator.deduplicate(embedded_chunks)
+    print(f"Removed: {stats['duplicates_removed']} duplicates")
+    print(f"Dedup ratio: {stats['dedup_ratio']:.3f}")
+
+    # Stricter threshold for more aggressive deduplication
+    deduplicator = ChunkDeduplicator(threshold=0.90)
+    filtered, stats = deduplicator.deduplicate(embedded_chunks)
+
+    # Inspect duplicate pairs
+    for pair in stats['duplicate_pairs_sample']:
+        print(f"{pair['kept']} <-> {pair['removed']} (sim={pair['similarity']:.3f})")
+
+    # Check which documents had most duplicates
+    for doc in stats['top_duplicate_docs']:
+        print(f"{doc['doc_id']}: {doc['duplicates']} duplicates")
 
 References:
-ARCHITECTURE.md: Section 3.1.1 for deduplication design
-
+    BGE-M3: BAAI/bge-m3 embeddings (1024 dimensions) for deduplication
+    scikit-learn: cosine_similarity for pairwise similarity computation
+    config.extraction_config.CHUNKING_CONFIG: dedup_threshold parameter
+    src.utils.dataclasses.EmbeddedChunk: Chunk dataclass with embeddings
 """
 # Standard library
 import logging
@@ -37,65 +69,65 @@ logger = logging.getLogger(__name__)
 class ChunkDeduplicator:
     """
     Deduplicate chunks using cosine similarity on BGE-M3 embeddings.
-    
+
     Strategy:
         - Compute pairwise cosine similarity for all chunks
         - If similarity >= threshold, mark higher-index chunk as duplicate
         - Keep first occurrence, track duplicate pairs for reporting
-    
+
     Args:
         threshold: Cosine similarity threshold (default 0.95)
     """
-    
+
     def __init__(self, threshold: float = 0.95):
         self.threshold = threshold
         logger.info(f"ChunkDeduplicator initialized: threshold={threshold}")
-    
+
     def deduplicate(
         self,
         chunks: List[EmbeddedChunk]
     ) -> Tuple[List[EmbeddedChunk], Dict]:
         """
         Remove duplicate chunks based on embedding similarity.
-        
+
         Args:
             chunks: List of EmbeddedChunk with embeddings
-            
+
         Returns:
             Tuple of (filtered_chunks, stats_dict)
         """
         if not chunks:
             return [], {'duplicates_removed': 0, 'duplicate_pairs': []}
-        
+
         logger.info(f"Deduplicating {len(chunks)} chunks at threshold={self.threshold}")
-        
+
         # Stack embeddings into matrix
         embeddings = np.array([c.embedding for c in chunks])
-        
+
         # Find duplicates using batched similarity computation
         duplicate_indices = set()
         duplicate_pairs = []
         doc_duplicate_counts = defaultdict(int)
-        
+
         # Process in batches to avoid memory issues with large matrices
         batch_size = 1000
         n_chunks = len(chunks)
-        
+
         for i in tqdm(range(0, n_chunks, batch_size), desc="Computing similarities"):
             batch_end = min(i + batch_size, n_chunks)
             batch_embeddings = embeddings[i:batch_end]
-            
+
             # Compare batch against all subsequent chunks
             if batch_end < n_chunks:
                 remaining_embeddings = embeddings[batch_end:]
                 similarities = cosine_similarity(batch_embeddings, remaining_embeddings)
-                
+
                 # Find pairs above threshold
                 for batch_idx in range(similarities.shape[0]):
                     global_idx = i + batch_idx
                     for remaining_idx in range(similarities.shape[1]):
                         other_global_idx = batch_end + remaining_idx
-                        
+
                         if similarities[batch_idx, remaining_idx] >= self.threshold:
                             # Mark higher index as duplicate
                             duplicate_indices.add(other_global_idx)
@@ -106,7 +138,7 @@ class ChunkDeduplicator:
                             })
                             # Track which doc had duplicates
                             doc_duplicate_counts[chunks[other_global_idx].document_id] += 1
-            
+
             # Also check within batch
             if batch_end - i > 1:
                 within_batch_sim = cosine_similarity(batch_embeddings)
@@ -122,20 +154,20 @@ class ChunkDeduplicator:
                                     'similarity': float(within_batch_sim[j, k])
                                 })
                                 doc_duplicate_counts[chunks[global_k].document_id] += 1
-        
+
         # Filter out duplicates
         filtered_chunks = [
             chunk for idx, chunk in enumerate(chunks)
             if idx not in duplicate_indices
         ]
-        
+
         # Build stats
         top_duplicate_docs = sorted(
             doc_duplicate_counts.items(),
             key=lambda x: x[1],
             reverse=True
         )[:10]
-        
+
         stats = {
             'duplicates_removed': len(duplicate_indices),
             'original_count': len(chunks),
@@ -147,10 +179,10 @@ class ChunkDeduplicator:
                 for doc_id, count in top_duplicate_docs
             ]
         }
-        
+
         logger.info(
             f"Deduplication complete: {len(chunks)} -> {len(filtered_chunks)} "
             f"({len(duplicate_indices)} duplicates at threshold={self.threshold})"
         )
-        
+
         return filtered_chunks, stats

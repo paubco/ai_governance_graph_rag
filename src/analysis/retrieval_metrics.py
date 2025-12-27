@@ -1,14 +1,55 @@
 # -*- coding: utf-8 -*-
 """
-Comprehensive
+Comprehensive evaluation metrics for GraphRAG retrieval system.
 
-Provides metrics aligned with thesis objectives for factual accuracy, query relevance,
-and effective use of sources. Includes entity resolution, graph utilization, and
-RAGAS metrics for comprehensive retrieval system evaluation.
+Defines dataclasses and computation functions for measuring retrieval quality across
+multiple dimensions: (1) Entity resolution metrics - extraction accuracy, resolution rate,
+confidence scores; (2) Graph utilization metrics - subgraph size, relation diversity,
+cross-jurisdictional coverage; (3) Coverage metrics - entity usage in answers, relation
+reflection, context utilization; (4) RAGAS metrics - answer relevancy, faithfulness,
+context precision, context recall.
+
+Metrics align with thesis objectives for evaluating factual accuracy (entity pipeline),
+query relevance (RAGAS scores), and effective use of sources (graph utilization, coverage).
+Each metric class provides semantic interpretation methods to translate raw scores into
+actionable insights for ablation studies and system optimization.
 
 Examples:
-metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
+    # Entity resolution metrics
+    from src.analysis.retrieval_metrics import EntityResolutionMetrics
+    
+    metrics = EntityResolutionMetrics(
+        extracted_count=5,
+        resolved_count=4,
+        resolution_rate=0.80,
+        avg_confidence=0.85,
+        entity_names=["GDPR", "EU AI Act", "CCPA", "DMA"],
+        match_types={"exact": 2, "alias": 1, "fuzzy": 1}
+    )
 
+    # Graph utilization metrics
+    from src.analysis.retrieval_metrics import GraphUtilizationMetrics
+    
+    graph_metrics = GraphUtilizationMetrics(
+        entities_in_subgraph=15,
+        relations_in_subgraph=22,
+        relation_types={"regulates": 8, "discusses": 10, "cites": 4},
+        jurisdictions_covered=["EU", "US", "UK"]
+    )
+
+    # Compute RAGAS metrics
+    from src.analysis.retrieval_metrics import compute_ragas_metrics
+    
+    ragas_scores = compute_ragas_metrics(
+        query="What is GDPR?",
+        answer="GDPR is the General Data Protection Regulation...",
+        retrieved_contexts=["Context 1...", "Context 2..."]
+    )
+
+References:
+    RAGAS framework: https://docs.ragas.io/en/latest/
+    Evaluation methodology: Thesis objectives for factual accuracy and relevance
+    Entity coverage scoring: Custom metric for graph-answer alignment
 """
 # Standard library
 from dataclasses import dataclass, field
