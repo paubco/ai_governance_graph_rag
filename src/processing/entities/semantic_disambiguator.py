@@ -1,15 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-Semantic
+Semantic entity disambiguation using FAISS blocking and tiered thresholds.
 
-Handles the SEMANTIC path (9 types):
-    RegulatoryConcept, TechnicalConcept, PoliticalConcept, EconomicConcept,
-    Regulation, Technology, Organization, Location, Risk
+Handles semantic path disambiguation for 11 domain-fused entity types (Concept variants,
+Regulation, Technology, Organization, Location, Risk, GovernanceBody, Event) using
+three-stage process: (1) exact deduplication for identical names, (2) FAISS candidate
+blocking for fuzzy matching, and (3) tiered threshold disambiguation with optional
+LLM-based SameJudge verification. Generates SAME_AS edges for entity merging and
+tracks ambiguity statistics for quality monitoring.
+
+The disambiguator normalizes entity names (unicode, whitespace, case), performs exact
+matching first (fast path), then uses FAISS similarity search to find candidates within
+configurable similarity radius. Tiered thresholds apply stricter matching for high-
+priority types (Regulation, Organization) vs permissive for concepts. SameJudge LLM
+provides final verification for borderline cases. All merge decisions are logged with
+confidence scores and context for thesis analysis.
 
 Examples:
-deduplicator = ExactDeduplicator()
-    entities, aliases = deduplicator.deduplicate(raw_entities)
+    # Initialize with embedding model and SameJudge
+    from src.processing.entities.semantic_disambiguator import SemanticDisambiguator
 
+    disambiguator = SemanticDisambiguator(
+        embedder=bge_embedder,
+        same_judge=same_judge_llm
+    )
+
+    # Disambiguate semantic entities
+    entities, same_as_edges, stats = disambiguator.process(pre_entities)
+    print(f"Merged {stats['merges']} entities")
+    print(f"Ambiguous cases: {stats['ambiguous']}")
+
+    # Inspect merge edges
+    for edge in same_as_edges[:10]:
+        print(f"{edge.subject_id} SAME_AS {edge.object_id} (confidence: {edge.confidence})")
+
+References:
+    FAISS: HNSW index for fast candidate blocking with cosine similarity
+    BGE-M3: BAAI/bge-m3 embeddings (1024 dimensions) for entity similarity
+    Mistral-7B: SameJudge LLM for disambiguation verification
+    config.extraction_config.DISAMBIGUATION_CONFIG: Tiered threshold parameters
+    src.utils.dataclasses: NormalizedEntity, StructuralRelation dataclasses
 """
 # Standard library
 import hashlib

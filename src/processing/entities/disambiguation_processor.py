@@ -1,11 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-Phase
+Entity disambiguation pipeline orchestrator for Phase 1B processing.
 
-Two-path architecture:
-    - Semantic path: FAISS blocking + tiered thresholds + LLM SameJudge
-    - Metadata path: Document/DocumentSection relations, no merge
+Two-path architecture for semantic and metadata entity disambiguation. Semantic path
+uses FAISS blocking with tiered similarity thresholds and LLM-based SameJudge for
+final verification. Metadata path handles academic provenance entities (Citation,
+Author, Journal) with structural PART_OF relationships and no cross-document merging.
+Outputs normalized entities with SAME_AS edges and statistics for quality monitoring.
 
+The processor loads filtered pre-entities, separates semantic from metadata types,
+applies path-specific disambiguation (semantic uses embeddings + LLM, metadata uses
+exact matching), combines results, and exports to entities_normalized.jsonl with
+merge statistics. Tracks merge ratios, ambiguity cases, and SameJudge precision for
+thesis evaluation. Supports sample mode for faster testing.
+
+Examples:
+    # Run full disambiguation pipeline
+    python -m src.processing.entities.disambiguation_processor
+
+    # Sample mode for testing (10 documents)
+    python -m src.processing.entities.disambiguation_processor --sample 10 --seed 42
+
+    # Python API usage
+    from src.processing.entities.disambiguation_processor import DisambiguationProcessor
+
+    processor = DisambiguationProcessor()
+    entities, same_as, part_of, stats = processor.run()
+
+    print(f"Normalized: {len(entities)} entities")
+    print(f"SAME_AS edges: {len(same_as)}")
+    print(f"Merge ratio: {stats['merge_ratio']:.3f}")
+
+References:
+    FAISS: Facebook AI Similarity Search for candidate blocking
+    BGE-M3: BAAI/bge-m3 embeddings (1024 dimensions) for semantic similarity
+    Mistral-7B: LLM-based SameJudge for disambiguation verification
+    config.extraction_config.DISAMBIGUATION_CONFIG: Threshold parameters
+    src.processing.entities.semantic_disambiguator: Semantic path logic
+    src.processing.entities.metadata_disambiguator: Metadata path logic
 """
 import os
 import sys

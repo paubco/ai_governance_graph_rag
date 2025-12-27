@@ -1,19 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Parallel
+Parallel batch orchestrator for Phase 1B entity extraction.
 
-Batch orchestration for Phase 1B entity extraction. Wraps DualPassEntityExtractor
-with threading, checkpointing, rate limiting, and progress tracking.
+Batch orchestration for dual-pass entity extraction with threading, checkpointing,
+rate limiting, and progress tracking. Wraps DualPassEntityExtractor to process chunks
+in parallel with configurable worker threads. Implements checkpointing for resume
+capability, rate limiting to avoid API throttling, and statistics tracking for
+extraction quality monitoring. Supports sample mode for faster testing.
+
+The processor loads chunks, distributes extraction work across worker threads, tracks
+progress with tqdm, handles API errors gracefully with retries, and saves checkpoints
+every N chunks. Final output is pre_entities.jsonl with extraction statistics (pass
+rates, entity type distribution, API costs). Resume mode loads checkpoint and continues
+from last processed batch.
 
 Examples:
-python -m src.processing.entities.pre_entity_processor --workers 4
+    # Run with 4 worker threads
+    python -m src.processing.entities.pre_entity_processor --workers 4
+
+    # Sample mode for testing
     python -m src.processing.entities.pre_entity_processor --sample 50 --seed 42
+
+    # Resume from checkpoint
     python -m src.processing.entities.pre_entity_processor --resume
 
 References:
-    ARCHITECTURE.md Section 3.1.2
-    v1.0 entity_processor.py (parallelism pattern)
-
+    threading: Python threading for parallel extraction
+    Together.ai API: Mistral-7B entity extraction with rate limiting
+    config.extraction_config.ENTITY_EXTRACTION_CONFIG: Model and thread parameters
+    src.processing.entities.pre_entity_extractor: DualPassEntityExtractor wrapper
 """
 # Standard library
 import argparse
