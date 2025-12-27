@@ -133,11 +133,21 @@ class RAGASMetrics:
     Key questions:
     - Are claims supported by context? (faithfulness)
     - Does answer address the query? (relevancy)
+    - Are claims semantically diverse? (CSD)
+    
+    CSD (Claim Semantic Diversity):
+        CSD = 1 - mean(pairwise_cosine_similarities)
+        - CSD → 1: Claims cover diverse aspects (good coverage)
+        - CSD → 0: Claims cluster together (repetitive/narrow)
     """
     faithfulness_score: float
-    faithfulness_details: Dict            # {supported_claims, total_claims, explanation}
+    faithfulness_details: Dict            # {supported_claims, total_claims, explanation, claims}
     relevancy_score: float
     relevancy_explanation: str
+    # Claim Semantic Diversity
+    csd_score: Optional[float] = None     # 1 - mean(pairwise_sim), higher = more diverse
+    csd_mean_similarity: Optional[float] = None  # Mean pairwise similarity of claims
+    csd_n_claims: int = 0                 # Number of claims used for CSD
 
 
 # ============================================================================

@@ -78,9 +78,10 @@ class RAGASEvaluator:
     faithfulness evaluation with full retrieval context.
     
     Includes robust JSON parsing with retry and regex fallback.
+    Includes Claim Semantic Diversity (CSD) for measuring answer coverage.
     """
     
-    def __init__(self, max_retries: int = 2):
+    def __init__(self, max_retries: int = 2, embedder: 'BGEEmbedder' = None):
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment")
@@ -88,6 +89,67 @@ class RAGASEvaluator:
         # Use Haiku for evaluation - 12x cheaper than Sonnet, sufficient for judging
         self.model = "claude-3-5-haiku-20241022"
         self.max_retries = max_retries
+        self.embedder = embedder  # Optional: for CSD computation
+    
+    def compute_csd(self, claims: List[str]) -> Dict:
+        """
+        Compute Claim Semantic Diversity (CSD).
+        
+        Measures how semantically diverse the claims are in an answer.
+        CSD = 1 - mean(pairwise_cosine_similarities)
+        
+        Args:
+            claims: List of claim text strings
+            
+        Returns:
+            Dict with csd_score, n_claims, mean_similarity
+        """
+        import numpy as np
+        
+        if not self.embedder:
+            return {'csd_score': None, 'n_claims': len(claims), 'mean_similarity': None, 
+                    'error': 'No embedder provided'}
+        
+        n = len(claims)
+        if n < 2:
+            return {'csd_score': 1.0, 'n_claims': n, 'mean_similarity': 0.0,
+                    'note': 'CSD=1.0 by definition for n<2'}
+        
+        try:
+            # Embed all claims
+            embeddings = []
+            for claim in claims:
+                emb = self.embedder.embed_query(claim)
+                embeddings.append(emb)
+            
+            embeddings = np.array(embeddings)
+            
+            # Normalize for cosine similarity
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            normalized = embeddings / (norms + 1e-10)
+            
+            # Compute pairwise cosine similarities
+            sim_matrix = np.dot(normalized, normalized.T)
+            
+            # Extract upper triangle (excluding diagonal)
+            upper_tri_indices = np.triu_indices(n, k=1)
+            pairwise_sims = sim_matrix[upper_tri_indices]
+            
+            mean_sim = float(np.mean(pairwise_sims))
+            csd = 1.0 - mean_sim
+            
+            return {
+                'csd_score': float(csd),
+                'n_claims': n,
+                'mean_similarity': mean_sim,
+                'min_similarity': float(np.min(pairwise_sims)),
+                'max_similarity': float(np.max(pairwise_sims))
+            }
+            
+        except Exception as e:
+            logger.error(f"CSD computation failed: {e}")
+            return {'csd_score': None, 'n_claims': n, 'mean_similarity': None,
+                    'error': str(e)}
     
     def _parse_json_response(self, content: str) -> Dict:
         """
@@ -209,12 +271,13 @@ Return ONLY the JSON object, no other text."""
                 'score': float(score),
                 'supported': supported,
                 'total': total,
-                'explanation': result.get('explanation', '')
+                'explanation': result.get('explanation', ''),
+                'claims': [c.get('claim', '') for c in claims if c.get('supported', False)]  # Return supported claim texts for CSD
             }
             
         except Exception as e:
             logger.error(f"Faithfulness evaluation failed: {e}")
-            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}'}
+            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}', 'claims': []}
     
     def answer_relevancy(self, query: str, answer: str) -> Dict:
         """Measure how well answer addresses query."""
@@ -297,12 +360,12 @@ class AblationTestSuite:
         # Load citation formatter
         self.citation_formatter = CitationFormatter(project_root=PROJECT_ROOT)
         
-        # Embedding model
-        embedding_model = BGEEmbedder()
+        # Embedding model (keep reference for CSD computation)
+        self.embedder = BGEEmbedder()
         
         # Retrieval processor (v2.0 paths)
         self.processor = RetrievalProcessor(
-            embedding_model=embedding_model,
+            embedding_model=self.embedder,
             faiss_entity_index_path=data_dir / 'processed' / 'faiss' / 'entity_embeddings.index',
             entity_ids_path=data_dir / 'processed' / 'faiss' / 'entity_id_map.json',
             normalized_entities_path=data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl',
@@ -318,9 +381,10 @@ class AblationTestSuite:
         self.generator = AnswerGenerator()
         
         # RAGAS evaluator (Claude Haiku - cheap but reliable)
+        # Pass embedder for CSD computation
         if self.enable_ragas:
-            print("Initializing RAGAS evaluator (Claude Haiku)...")
-            self.ragas = RAGASEvaluator()
+            print("Initializing RAGAS evaluator (Claude Haiku + CSD)...")
+            self.ragas = RAGASEvaluator(embedder=self.embedder)
         
         print("Pipeline loaded\n")
     
@@ -438,6 +502,11 @@ class AblationTestSuite:
                 
                 faith = self.ragas.faithfulness(answer_result.answer, context_text)
                 
+                # Compute Claim Semantic Diversity (CSD) from supported claims
+                csd_result = {'csd_score': None, 'n_claims': 0, 'mean_similarity': None}
+                if faith.get('claims'):
+                    csd_result = self.ragas.compute_csd(faith['claims'])
+                
                 time.sleep(2)  # Rate limit protection
                 
                 if self.detailed:
@@ -447,6 +516,8 @@ class AblationTestSuite:
                 
                 if self.detailed:
                     print(f"     Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
+                    if csd_result.get('csd_score') is not None:
+                        print(f"     Claim Diversity (CSD): {csd_result['csd_score']:.3f} (mean_sim={csd_result['mean_similarity']:.3f})")
                     print(f"     Relevancy: {rel['score']:.3f}")
                     if faith.get('explanation'):
                         print(f"     Explanation: {faith['explanation'][:100]}...")
@@ -456,7 +527,11 @@ class AblationTestSuite:
                     faithfulness_details={
                         'supported_claims': faith['supported'],
                         'total_claims': faith['total'],
-                        'explanation': faith['explanation']
+                        'explanation': faith['explanation'],
+                        'claims': faith.get('claims', []),  # Store claims for retrospective analysis
+                        'csd_score': csd_result.get('csd_score'),
+                        'csd_mean_similarity': csd_result.get('mean_similarity'),
+                        'csd_n_claims': csd_result.get('n_claims', 0)
                     },
                     relevancy_score=rel['score'],
                     relevancy_explanation=rel['explanation']
