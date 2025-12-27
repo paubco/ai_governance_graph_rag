@@ -3,10 +3,10 @@
 LaTeX exporter for ablation study results.
 
 Generates:
-1. ablation_table.tex - Main results table
-2. ablation_vars.tex - \\newcommand variables for inline citations
-3. ablation_appendix.tex - Detailed I/O per query (detailed mode only)
-4. ablation_data.tex - Data for pgfplots figures
+1. ablation_table.tex - Results table grouped by category (both modes)
+2. ablation_vars.tex - \\newcommand variables for inline citations (both modes)
+3. ablation_appendix.tex - Detailed I/O per query (DETAILED MODE ONLY)
+4. ablation_data.tex - Data for pgfplots figures (both modes)
 
 Usage:
     from src.analysis.ablation_latex_export import LaTeXExporter
@@ -52,18 +52,35 @@ def truncate_text(text: str, max_len: int = 80) -> str:
 class LaTeXExporter:
     """Export ablation results to LaTeX format."""
     
-    def __init__(self, results_json: Path, is_detailed: bool = False):
+    # Default paths for metadata
+    DEFAULT_PAPER_MAPPING = Path('data/raw/academic/scopus_2023/paper_mapping.json')
+    DLA_PIPER_BASE_URL = 'https://intelligence.dlapiper.com/artificial-intelligence/?t=01-law&c='
+    
+    def __init__(self, results_json: Path, is_detailed: bool = False, 
+                 paper_mapping_path: Path = None):
         """
         Load results from JSON file.
         
         Args:
             results_json: Path to JSON results file
-            is_detailed: Whether this is a detailed run (6 queries with full data)
+            is_detailed: Whether this is a detailed run (8 queries with full data)
+            paper_mapping_path: Path to paper_mapping.json (default: data/processed/paper_mapping.json)
         """
         with open(results_json) as f:
             self.results = json.load(f)
         
+        self.is_detailed = is_detailed
         self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Load paper mapping for citations
+        paper_mapping_path = paper_mapping_path or self.DEFAULT_PAPER_MAPPING
+        self.paper_mapping = {}
+        if paper_mapping_path.exists():
+            with open(paper_mapping_path) as f:
+                self.paper_mapping = json.load(f)
+            print(f"Loaded {len(self.paper_mapping)} paper citations from {paper_mapping_path}")
+        else:
+            print(f"Warning: Paper mapping not found at {paper_mapping_path}")
         
         # Group by query
         self.by_query = {}
@@ -78,137 +95,231 @@ class LaTeXExporter:
         for r in self.results:
             self.by_mode[r['mode']].append(r)
         
-        # Detect detailed mode from data or explicit flag
-        self.is_detailed = is_detailed or len(self.by_query) <= 10
-        self.has_chunks = any('chunks_detail' in r for r in self.results)
-        self.has_answer = any(r.get('answer_text', '') for r in self.results)
+        # Group by category
+        self.by_category = {}
+        for r in self.results:
+            cat = r.get('category', 'unknown')
+            if cat not in self.by_category:
+                self.by_category[cat] = {}
+            q = r['query']
+            if q not in self.by_category[cat]:
+                self.by_category[cat][q] = {}
+            self.by_category[cat][q][r['mode']] = r
+        
+        # Check if detailed data available
+        sample = self.results[0] if self.results else {}
+        self.has_answer = 'answer_text' in sample and sample.get('answer_text')
+        self.has_chunks = 'chunks_detail' in sample and sample.get('chunks_detail')
     
-    def compute_aggregates(self) -> Dict[str, Any]:
-        """Compute aggregate statistics for variables."""
-        agg = {}
+    def format_citation(self, doc_id: str, doc_type: str, jurisdiction: str = None) -> tuple:
+        """
+        Format a proper citation for a document.
         
-        for mode in ['semantic', 'graph', 'dual']:
-            results = self.by_mode[mode]
-            if not results:
-                continue
-            
-            # Faithfulness
-            faith_scores = [r['ragas']['faithfulness_score'] for r in results]
-            agg[f'faith_{mode}_mean'] = sum(faith_scores) / len(faith_scores)
-            agg[f'faith_{mode}_max'] = max(faith_scores)
-            agg[f'faith_{mode}_min'] = min(faith_scores)
-            
-            # Relevancy
-            rel_scores = [r['ragas']['relevancy_score'] for r in results]
-            agg[f'rel_{mode}_mean'] = sum(rel_scores) / len(rel_scores)
-            
-            # Resolution
-            res_counts = [r['entity_resolution']['resolved_count'] for r in results]
-            agg[f'res_{mode}_total'] = sum(res_counts)
-            
-            # Chunks by source
-            s_total = sum(r['retrieval']['chunks_by_source'].get('semantic', 0) for r in results)
-            r_total = sum(r['retrieval']['chunks_by_source'].get('graph_provenance', 0) for r in results)
-            e_total = sum(r['retrieval']['chunks_by_source'].get('graph_entity', 0) for r in results)
-            agg[f'chunks_{mode}_s'] = s_total
-            agg[f'chunks_{mode}_r'] = r_total
-            agg[f'chunks_{mode}_e'] = e_total
-        
-        # Winners by query
-        winners = {'semantic': 0, 'graph': 0, 'dual': 0, 'tie': 0}
-        for query, modes in self.by_query.items():
-            scores = {m: modes[m]['ragas']['faithfulness_score'] for m in modes}
-            max_score = max(scores.values())
-            if max_score == 0:
-                continue
-            winner_modes = [m for m, s in scores.items() if s == max_score]
-            if len(winner_modes) == 1:
-                winners[winner_modes[0]] += 1
+        Returns:
+            (citation_text, url) tuple
+        """
+        if doc_type == 'paper':
+            # Look up in paper_mapping
+            if doc_id in self.paper_mapping:
+                meta = self.paper_mapping[doc_id].get('scopus_metadata', {})
+                authors = meta.get('authors', 'Unknown')
+                # Truncate long author lists
+                if authors.count(';') > 2:
+                    first_author = authors.split(';')[0].strip()
+                    authors = f"{first_author} et al."
+                year = meta.get('year', 'n.d.')
+                title = meta.get('title', 'Untitled')
+                # Truncate long titles
+                if len(title) > 80:
+                    title = title[:77] + '...'
+                journal = meta.get('journal', '')
+                doi = meta.get('doi', '')
+                link = meta.get('link', '')
+                
+                citation = f"{authors} ({year}). ``{title}'' {journal}."
+                url = f"https://doi.org/{doi}" if doi else link
+                return (citation, url)
             else:
-                winners['tie'] += 1
+                return (f"Paper: {doc_id}", "")
         
-        agg['winners'] = winners
-        agg['n_queries'] = len(self.by_query)
-        agg['n_tests'] = len(self.results)
+        elif doc_type == 'regulation':
+            # DLA Piper format
+            jur = jurisdiction or doc_id
+            citation = f"DLA Piper AI Laws -- {jur}"
+            url = f"{self.DLA_PIPER_BASE_URL}{jur}#insight"
+            return (citation, url)
         
-        return agg
+        else:
+            return (f"Source: {doc_id}", "")
     
     def generate_vars_tex(self) -> str:
-        """Generate \\newcommand variables for inline citations."""
-        agg = self.compute_aggregates()
-        
+        """Generate LaTeX variable definitions for inline citations."""
         lines = [
-            "% Auto-generated by ablation_latex_export.py",
+            "% Auto-generated ablation study variables",
             f"% Generated: {datetime.now().isoformat()}",
-            "%",
-            "% Metric definitions: See Appendix \\ref{app:metrics} (metrics_glossary.tex)",
-            "% - Faithfulness: Section \\ref{sec:metric-faithfulness}",
-            "% - Relevancy: Section \\ref{sec:metric-relevancy}",
-            "% - Resolution Rate: Section \\ref{sec:metric-resolution-rate}",
-            "% - Entity Coverage: Section \\ref{sec:metric-entity-coverage}",
-            "%",
+            f"% Queries: {len(self.by_query)}",
             "",
-            "% === AGGREGATE STATISTICS ===",
-            f"\\newcommand{{\\nQueries}}{{{agg['n_queries']}}}",
-            f"\\newcommand{{\\nTests}}{{{agg['n_tests']}}}",
-            "",
-            "% === FAITHFULNESS (\\ref{sec:metric-faithfulness}) ===",
+            "% === MODE AVERAGES ===",
         ]
         
         for mode in ['semantic', 'graph', 'dual']:
-            m = mode[0].upper()  # S, G, D
-            lines.append(f"\\newcommand{{\\faith{m}Mean}}{{{agg.get(f'faith_{mode}_mean', 0):.2f}}}")
-            lines.append(f"\\newcommand{{\\faith{m}Max}}{{{agg.get(f'faith_{mode}_max', 0):.2f}}}")
-            lines.append(f"\\newcommand{{\\faith{m}Min}}{{{agg.get(f'faith_{mode}_min', 0):.2f}}}")
+            results = self.by_mode[mode]
+            if results:
+                faith_avg = sum(r['ragas']['faithfulness_score'] for r in results) / len(results)
+                rel_avg = sum(r['ragas']['relevancy_score'] for r in results) / len(results)
+                
+                mode_cap = mode.capitalize()
+                lines.append(f"\\newcommand{{\\faith{mode_cap}}}{{{faith_avg:.2f}}}")
+                lines.append(f"\\newcommand{{\\relev{mode_cap}}}{{{rel_avg:.2f}}}")
+        
+        # Mode comparison (which mode wins most)
+        winners = {'semantic': 0, 'graph': 0, 'dual': 0}
+        for query, modes in self.by_query.items():
+            scores = {m: modes[m]['ragas']['faithfulness_score'] for m in modes}
+            if scores:
+                best = max(scores, key=scores.get)
+                winners[best] += 1
         
         lines.extend([
             "",
-            "% === RELEVANCY (\\ref{sec:metric-relevancy}) ===",
+            "% === WINNER COUNTS ===",
+            f"\\newcommand{{\\winnersSemantic}}{{{winners['semantic']}}}",
+            f"\\newcommand{{\\winnersGraph}}{{{winners['graph']}}}",
+            f"\\newcommand{{\\winnersDual}}{{{winners['dual']}}}",
         ])
         
-        for mode in ['semantic', 'graph', 'dual']:
-            m = mode[0].upper()
-            lines.append(f"\\newcommand{{\\rel{m}Mean}}{{{agg.get(f'rel_{mode}_mean', 0):.2f}}}")
-        
+        # Category averages
         lines.extend([
             "",
-            "% === WINNERS (\\ref{sec:metric-winner}) ===",
-            f"\\newcommand{{\\winsSemantic}}{{{agg['winners']['semantic']}}}",
-            f"\\newcommand{{\\winsGraph}}{{{agg['winners']['graph']}}}",
-            f"\\newcommand{{\\winsDual}}{{{agg['winners']['dual']}}}",
-            f"\\newcommand{{\\winsTie}}{{{agg['winners']['tie']}}}",
-            "",
-            "% === PER-QUERY VARIABLES ===",
+            "% === CATEGORY AVERAGES ===",
         ])
         
-        # Per-query faithfulness
-        for i, (query, modes) in enumerate(self.by_query.items(), 1):
+        for cat, queries in self.by_category.items():
+            cat_safe = cat.replace('_', '')
             for mode in ['semantic', 'graph', 'dual']:
-                if mode in modes:
-                    m = mode[0].upper()
-                    faith = modes[mode]['ragas']['faithfulness_score']
-                    lines.append(f"\\newcommand{{\\faithQ{i}{m}}}{{{faith:.2f}}}")
+                scores = []
+                for q, modes in queries.items():
+                    if mode in modes:
+                        scores.append(modes[mode]['ragas']['faithfulness_score'])
+                if scores:
+                    avg = sum(scores) / len(scores)
+                    mode_cap = mode.capitalize()
+                    lines.append(f"\\newcommand{{\\faith{cat_safe}{mode_cap}}}{{{avg:.2f}}}")
         
         return "\n".join(lines)
     
-    def generate_table_tex(self) -> str:
-        """Generate the main results table."""
+    def generate_grouped_table_tex(self) -> str:
+        """Generate results table GROUPED BY CATEGORY (for full/stats mode)."""
         lines = [
-            "% Auto-generated ablation results table",
+            "% Auto-generated ablation results table (grouped by category)",
             "\\begin{table}[htbp]",
             "\\centering",
-            "\\caption{Ablation Results Across Retrieval Modes}",
+            "\\caption{Ablation Results by Category}",
             "\\label{tab:ablation_results}",
             "\\resizebox{\\linewidth}{!}{%",
-            "\\begin{tabular}{clccccccccc}",
+            "\\begin{tabular}{llccccccc}",
             "\\toprule",
-            "\\# & Query & Mode & Faith. & Relev. & Res. & Subgraph & S/R/E & Sim. & E.Cov & P/R \\\\",
+            "Category & Query & Mode & Faith. & Relev. & Subgraph & S/R/E & Sim. & P/R \\\\",
+            "\\midrule",
+        ]
+        
+        for cat, queries in sorted(self.by_category.items()):
+            # Category header
+            cat_escaped = escape_latex(cat.replace('_', ' '))
+            lines.append(f"\\multicolumn{{9}}{{l}}{{\\textbf{{{cat_escaped}}}}} \\\\")
+            lines.append("\\midrule")
+            
+            for query, modes in queries.items():
+                q_escaped = escape_latex(truncate_text(query, 40))
+                
+                for i, mode in enumerate(['semantic', 'graph', 'dual']):
+                    if mode not in modes:
+                        continue
+                    
+                    r = modes[mode]
+                    
+                    # Find best faithfulness for this query
+                    all_faith = [modes[m]['ragas']['faithfulness_score'] for m in modes]
+                    max_faith = max(all_faith)
+                    is_best = r['ragas']['faithfulness_score'] == max_faith and max_faith > 0
+                    
+                    # Format values
+                    faith = r['ragas']['faithfulness_score']
+                    faith_str = f"\\textbf{{{faith:.2f}}}" if is_best else f"{faith:.2f}"
+                    relev = r['ragas']['relevancy_score']
+                    
+                    # Subgraph
+                    sg_ent = r['graph_utilization']['entities_in_subgraph']
+                    sg_rel = r['graph_utilization']['relations_in_subgraph']
+                    subgraph = f"{sg_ent}/{sg_rel}"
+                    
+                    # Chunks by source
+                    src = r['retrieval']['chunks_by_source']
+                    s = src.get('semantic', 0)
+                    rel_c = src.get('graph_provenance', 0)
+                    e = src.get('graph_entity', 0)
+                    sre = f"{s}/{rel_c}/{e}"
+                    
+                    # Similarity
+                    sim = r['retrieval'].get('avg_query_similarity', 0)
+                    
+                    # Source diversity
+                    src_div = r['retrieval'].get('source_diversity', {})
+                    p_count = src_div.get('paper', 0)
+                    r_count = src_div.get('regulation', 0)
+                    pr = f"{p_count}/{r_count}"
+                    
+                    # Row content
+                    if i == 0:
+                        lines.append(f" & {q_escaped} & {mode} & {faith_str} & {relev:.2f} & {subgraph} & {sre} & {sim:.2f} & {pr} \\\\")
+                    else:
+                        lines.append(f" & & {mode} & {faith_str} & {relev:.2f} & {subgraph} & {sre} & {sim:.2f} & {pr} \\\\")
+                
+                lines.append("\\cmidrule{2-9}")
+            
+            lines.append("\\midrule")
+        
+        # Remove last midrule and add bottomrule
+        while lines[-1] in ["\\midrule", "\\cmidrule{2-9}"]:
+            lines.pop()
+        lines.append("\\bottomrule")
+        
+        lines.extend([
+            "\\end{tabular}}",
+            "\\begin{minipage}{\\linewidth}",
+            "\\vspace{2mm}",
+            "\\footnotesize\\textit{Legend:} "
+            "Faith.\\ = Faithfulness; "
+            "Relev.\\ = Relevancy; "
+            "Subgraph = nodes/relations; "
+            "S/R/E = semantic/relation/entity chunks; "
+            "Sim.\\ = avg similarity; "
+            "P/R = paper/regulation sources. "
+            "\\textbf{Bold} = best per query.",
+            "\\end{minipage}",
+            "\\end{table}",
+        ])
+        
+        return "\n".join(lines)
+    
+    def generate_flat_table_tex(self) -> str:
+        """Generate results table as FLAT LIST (for detailed mode)."""
+        lines = [
+            "% Auto-generated ablation results table (flat list)",
+            "\\begin{table}[htbp]",
+            "\\centering",
+            "\\caption{Detailed Ablation Results}",
+            "\\label{tab:ablation_detailed}",
+            "\\resizebox{\\linewidth}{!}{%",
+            "\\begin{tabular}{clccccccc}",
+            "\\toprule",
+            "\\# & Query & Mode & Faith. & Relev. & Subgraph & S/R/E & Sim. & P/R \\\\",
             "\\midrule",
         ]
         
         row_num = 1
         for query, modes in self.by_query.items():
-            q_escaped = escape_latex(truncate_text(query, 40))
+            q_escaped = escape_latex(truncate_text(query, 45))
             
             for i, mode in enumerate(['semantic', 'graph', 'dual']):
                 if mode not in modes:
@@ -225,7 +336,6 @@ class LaTeXExporter:
                 faith = r['ragas']['faithfulness_score']
                 faith_str = f"\\textbf{{{faith:.2f}}}" if is_best else f"{faith:.2f}"
                 relev = r['ragas']['relevancy_score']
-                res_count = r['entity_resolution']['resolved_count']
                 
                 # Subgraph
                 sg_ent = r['graph_utilization']['entities_in_subgraph']
@@ -242,9 +352,6 @@ class LaTeXExporter:
                 # Similarity
                 sim = r['retrieval'].get('avg_query_similarity', 0)
                 
-                # Coverage
-                e_cov = r['coverage'].get('terminal_coverage_rate', 0) * 100
-                
                 # Source diversity
                 src_div = r['retrieval'].get('source_diversity', {})
                 p_count = src_div.get('paper', 0)
@@ -253,29 +360,29 @@ class LaTeXExporter:
                 
                 # Row content
                 if i == 0:
-                    lines.append(f"{row_num} & {q_escaped} & {mode} & {faith_str} & {relev:.2f} & {res_count} & {subgraph} & {sre} & {sim:.2f} & {e_cov:.0f}\\% & {pr} \\\\")
+                    lines.append(f"{row_num} & {q_escaped} & {mode} & {faith_str} & {relev:.2f} & {subgraph} & {sre} & {sim:.2f} & {pr} \\\\")
                 else:
-                    lines.append(f" & & {mode} & {faith_str} & {relev:.2f} & {res_count} & {subgraph} & {sre} & {sim:.2f} & {e_cov:.0f}\\% & {pr} \\\\")
+                    lines.append(f" & & {mode} & {faith_str} & {relev:.2f} & {subgraph} & {sre} & {sim:.2f} & {pr} \\\\")
             
             lines.append("\\midrule")
             row_num += 1
         
         # Remove last midrule and add bottomrule
-        lines[-1] = "\\bottomrule"
+        if lines[-1] == "\\midrule":
+            lines.pop()
+        lines.append("\\bottomrule")
         
         lines.extend([
             "\\end{tabular}}",
             "\\begin{minipage}{\\linewidth}",
             "\\vspace{2mm}",
-            "\\footnotesize\\textit{Note:} "
-            "Faith.\\ = Faithfulness (\\S\\ref{sec:metric-faithfulness}); "
-            "Relev.\\ = Relevancy (\\S\\ref{sec:metric-relevancy}); "
-            "Res.\\ = entities resolved (\\S\\ref{sec:metric-resolution-rate}); "
-            "Subgraph = nodes/relations (\\S\\ref{sec:metric-subgraph}); "
-            "S/R/E = chunks by source (\\S\\ref{sec:metric-sre}); "
-            "Sim.\\ = avg query-chunk similarity (\\S\\ref{sec:metric-similarity}); "
-            "E.Cov = entity coverage (\\S\\ref{sec:metric-entity-coverage}); "
-            "P/R = paper/regulation sources (\\S\\ref{sec:metric-source-diversity}). "
+            "\\footnotesize\\textit{Legend:} "
+            "Faith.\\ = Faithfulness; "
+            "Relev.\\ = Relevancy; "
+            "Subgraph = nodes/relations; "
+            "S/R/E = semantic/relation/entity chunks; "
+            "Sim.\\ = avg similarity; "
+            "P/R = paper/regulation sources. "
             "\\textbf{Bold} = best per query.",
             "\\end{minipage}",
             "\\end{table}",
@@ -284,17 +391,24 @@ class LaTeXExporter:
         return "\n".join(lines)
     
     def generate_appendix_tex(self) -> str:
-        """Generate detailed I/O appendix for each query."""
+        """
+        Generate appendix with full query details.
         
-        # For non-detailed runs, generate a summary reference
+        ONLY for detailed mode - returns minimal stub for stats mode.
+        """
         if not self.is_detailed:
-            return self._generate_summary_appendix()
+            # Stats mode: no appendix, just a comment
+            return "% No appendix for stats mode. Use --detailed for full appendix.\n"
         
         lines = [
             "% Auto-generated detailed ablation appendix",
-            "% For detailed mode only - includes full answers and retrieved chunks",
+            "% DETAILED MODE: includes full answers, chunks, and relations",
             "\\chapter{Detailed Query Analysis}",
             "\\label{app:detailed_queries}",
+            "",
+            f"This appendix presents the complete analysis for {len(self.by_query)} representative queries.",
+            "Each section includes metrics comparison, full generated answers,",
+            "retrieved chunks with source provenance, and extracted relations.",
             "",
         ]
         
@@ -314,19 +428,48 @@ class LaTeXExporter:
                 "",
             ])
             
-            # SECTION 1: Metrics comparison table
+            # ─────────────────────────────────────────────────────────────────
+            # SECTION 1: Summary Statistics Box
+            # ─────────────────────────────────────────────────────────────────
             lines.extend([
-                "\\subsection*{Metrics Comparison}",
-                "\\begin{table}[htbp]",
+                "\\subsection*{Summary Statistics}",
+                "\\begin{tcolorbox}[colback=blue!5,colframe=blue!50,title=Mode Comparison]",
+            ])
+            
+            # Find winner
+            scores = {m: modes[m]['ragas']['faithfulness_score'] for m in modes}
+            winner = max(scores, key=scores.get) if scores else 'N/A'
+            winner_score = scores.get(winner, 0)
+            
+            lines.append(f"\\textbf{{Winner:}} {winner.upper()} (Faithfulness: {winner_score:.2f}) \\\\")
+            
+            # Mode summary line
+            for mode in ['semantic', 'graph', 'dual']:
+                if mode in modes:
+                    r = modes[mode]
+                    f_score = r['ragas']['faithfulness_score']
+                    chunks = r['retrieval']['total_chunks']
+                    sg = r['graph_utilization']['entities_in_subgraph']
+                    lines.append(f"\\textit{{{mode.capitalize()}}}: Faith={f_score:.2f}, Chunks={chunks}, Subgraph={sg} nodes \\\\")
+            
+            lines.extend([
+                "\\end{tcolorbox}",
+                "",
+            ])
+            
+            # ─────────────────────────────────────────────────────────────────
+            # SECTION 2: Metrics Comparison Table
+            # ─────────────────────────────────────────────────────────────────
+            lines.extend([
+                "\\subsection*{Detailed Metrics}",
+                "\\begin{table}[H]",
                 "\\centering",
-                "\\caption{Metrics for Query " + str(i) + "}",
                 "\\begin{tabular}{lccc}",
                 "\\toprule",
                 "Metric & Semantic & Graph & Dual \\\\",
                 "\\midrule",
             ])
             
-            # Metrics rows
             metrics = [
                 ('Faithfulness', lambda r: f"{r['ragas']['faithfulness_score']:.2f}"),
                 ('Relevancy', lambda r: f"{r['ragas']['relevancy_score']:.2f}"),
@@ -354,7 +497,9 @@ class LaTeXExporter:
                 "",
             ])
             
-            # SECTION 2: Full answers (only if available)
+            # ─────────────────────────────────────────────────────────────────
+            # SECTION 3: Full Answers (for each mode)
+            # ─────────────────────────────────────────────────────────────────
             if self.has_answer:
                 lines.append("\\subsection*{Generated Answers}")
                 
@@ -368,192 +513,159 @@ class LaTeXExporter:
                     if not answer:
                         answer = "(No answer recorded)"
                     
+                    # FULL answer text - no truncation
                     answer_escaped = escape_latex(answer)
                     faith = r['ragas']['faithfulness_score']
+                    relev = r['ragas']['relevancy_score']
                     
                     lines.extend([
-                        f"\\subsubsection*{{{mode.capitalize()} Mode (Faithfulness: {faith:.2f})}}",
-                        "\\begin{tcolorbox}[colback=gray!5,colframe=gray!50,boxrule=0.5pt]",
+                        f"\\subsubsection*{{{mode.capitalize()} Mode}}",
+                        f"\\textit{{Faithfulness: {faith:.2f}, Relevancy: {relev:.2f}}}",
+                        "",
+                        "\\begin{tcolorbox}[colback=gray!5,colframe=gray!50,boxrule=0.5pt,breakable]",
                         f"\\small {answer_escaped}",
                         "\\end{tcolorbox}",
                         "",
                     ])
             
-            # SECTION 3: Cited chunks table (only if detailed data available)
+            # ─────────────────────────────────────────────────────────────────
+            # SECTION 4: Retrieved Chunks (FULL TEXT for each mode)
+            # ─────────────────────────────────────────────────────────────────
             if self.has_chunks:
-                # Use semantic mode as reference (or first available)
-                ref_mode = 'semantic' if 'semantic' in modes else list(modes.keys())[0]
-                ref_result = modes[ref_mode]
-                chunks = ref_result.get('chunks_detail', [])
-                cited = ref_result.get('cited_chunks', [])
+                lines.append("\\subsection*{Retrieved Chunks}")
                 
-                if chunks:
+                for mode in ['semantic', 'graph', 'dual']:
+                    if mode not in modes:
+                        continue
+                    
+                    r = modes[mode]
+                    chunks = r.get('chunks_detail', [])
+                    cited = r.get('cited_chunks', [])
+                    
+                    if not chunks:
+                        continue
+                    
                     lines.extend([
-                        "\\subsection*{Retrieved Chunks (Semantic Mode)}",
-                        "\\begin{longtable}{clp{7cm}cc}",
-                        "\\toprule",
-                        "\\# & Doc ID & Text (excerpt) & Score & Cited \\\\",
-                        "\\midrule",
-                        "\\endhead",
+                        f"\\subsubsection*{{{mode.capitalize()} Mode Chunks}}",
+                        "",
                     ])
                     
-                    for c in chunks[:10]:  # Top 10
-                        cited_mark = "$\\checkmark$" if c.get('cited', False) or c['index'] in cited else ""
-                        text_excerpt = escape_latex(truncate_text(c['text'], 150))
-                        doc_id = escape_latex(truncate_text(c['doc_id'], 20))
+                    for c in chunks:  # ALL chunks, FULL text
+                        idx = c.get('index', '?')
+                        doc_id = c.get('doc_id', 'unknown')
+                        doc_type = c.get('doc_type', 'unknown')
                         score = c.get('score', 0)
-                        lines.append(
-                            f"{c['index']} & {doc_id} & {text_excerpt} & {score:.2f} & {cited_mark} \\\\"
-                        )
+                        jurisdiction = c.get('jurisdiction', None)
+                        method = c.get('method', 'unknown')
+                        is_cited = c.get('cited', False) or idx in cited
+                        
+                        # FULL text - no truncation
+                        text = escape_latex(c.get('text', ''))
+                        
+                        # Format proper citation
+                        citation, url = self.format_citation(doc_id, doc_type, jurisdiction)
+                        citation_escaped = escape_latex(citation)
+                        
+                        cited_str = " $\\checkmark$ \\textbf{CITED}" if is_cited else ""
+                        
+                        lines.append(f"\\paragraph{{Chunk {idx}{cited_str}}}")
+                        lines.append(f"\\textit{{{citation_escaped}}}")
+                        if url:
+                            lines.append(f"\\\\\\url{{{url}}}")
+                        lines.append(f"\\\\\\textit{{Score: {score:.3f} | Method: {method}}}")
+                        lines.extend([
+                            "",
+                            "\\begin{quote}",
+                            f"\\small {text}",
+                            "\\end{quote}",
+                            "",
+                        ])
                     
-                    lines.extend([
-                        "\\bottomrule",
-                        "\\end{longtable}",
-                        "",
-                    ])
+                    lines.append("")
             
-            # SECTION 4: Relations table (only if detailed data available)
-            if self.has_chunks:
-                ref_mode = 'graph' if 'graph' in modes else list(modes.keys())[0]
-                ref_result = modes[ref_mode]
-                relations = ref_result.get('relations_detail', [])
+            # ─────────────────────────────────────────────────────────────────
+            # SECTION 5: Relations (FULL for graph/dual modes)
+            # ─────────────────────────────────────────────────────────────────
+            lines.append("\\subsection*{Extracted Relations}")
+            
+            for mode in ['graph', 'dual']:  # Only modes with relations
+                if mode not in modes:
+                    continue
                 
-                if relations:
-                    lines.extend([
-                        "\\subsection*{Subgraph Relations (Graph Mode, top 10)}",
-                        "\\begin{tabular}{lll}",
-                        "\\toprule",
-                        "Subject & Predicate & Object \\\\",
-                        "\\midrule",
-                    ])
+                r = modes[mode]
+                relations = r.get('relations_detail', [])
+                
+                if not relations:
+                    lines.append(f"\\textit{{No relations extracted for {mode} mode.}}")
+                    lines.append("")
+                    continue
+                
+                lines.extend([
+                    f"\\subsubsection*{{{mode.capitalize()} Mode Relations ({len(relations)} total)}}",
+                    "\\begin{longtable}{p{4cm}lp{4cm}p{3cm}}",
+                    "\\toprule",
+                    "Subject & Predicate & Object & Provenance \\\\",
+                    "\\midrule",
+                    "\\endhead",
+                ])
+                
+                for rel in relations:  # ALL relations, FULL text
+                    subj = escape_latex(rel.get('subject_id', ''))
+                    pred = escape_latex(rel.get('predicate', ''))
+                    obj = escape_latex(rel.get('object_id', ''))
+                    chunk_ids = rel.get('chunk_ids', [])
+                    provenance = ', '.join(chunk_ids[:3]) if chunk_ids else 'N/A'
+                    provenance = escape_latex(provenance)
                     
-                    for rel in relations[:10]:
-                        source = escape_latex(truncate_text(rel.get('subject_id', ''), 25))
-                        predicate = escape_latex(rel.get('predicate', ''))
-                        target = escape_latex(truncate_text(rel.get('object_id', ''), 25))
-                        lines.append(f"{source} & {predicate} & {target} \\\\")
-                    
-                    lines.extend([
-                        "\\bottomrule",
-                        "\\end{tabular}",
-                        "",
-                    ])
+                    lines.append(f"{subj} & {pred} & {obj} & {provenance} \\\\")
+                
+                lines.extend([
+                    "\\bottomrule",
+                    "\\end{longtable}",
+                    "",
+                ])
             
             lines.append("\\clearpage")
             lines.append("")
         
         return "\n".join(lines)
     
-    def _generate_summary_appendix(self) -> str:
-        """Generate a brief appendix for full runs (reference to main table)."""
-        lines = [
-            "% Auto-generated appendix for full ablation study",
-            "\\chapter{Complete Ablation Results}",
-            "\\label{app:full_results}",
-            "",
-            "This appendix contains the complete results for all 36 queries across 3 modes.",
-            "For detailed qualitative analysis including full answer text and retrieved chunks,",
-            "run the ablation study with the \\texttt{--detailed} flag.",
-            "",
-            "See Table~\\ref{tab:ablation_results} for the summary results.",
-            "",
-        ]
-        
-        # Add a compact per-query winner table
-        lines.extend([
-            "\\section{Per-Query Winners}",
-            "\\begin{longtable}{clcccc}",
-            "\\toprule",
-            "\\# & Query & Category & Semantic & Graph & Dual \\\\",
-            "\\midrule",
-            "\\endhead",
-        ])
-        
-        for i, (query, modes) in enumerate(self.by_query.items(), 1):
-            q_escaped = escape_latex(truncate_text(query, 35))
-            category = escape_latex(list(modes.values())[0].get('category', 'unknown'))
-            
-            scores = {}
-            for mode in ['semantic', 'graph', 'dual']:
-                if mode in modes:
-                    scores[mode] = modes[mode]['ragas']['faithfulness_score']
-                else:
-                    scores[mode] = 0
-            
-            max_score = max(scores.values())
-            
-            def fmt_score(mode):
-                s = scores[mode]
-                if s == max_score and s > 0:
-                    return f"\\textbf{{{s:.2f}}}"
-                return f"{s:.2f}"
-            
-            lines.append(
-                f"{i} & {q_escaped} & {category} & {fmt_score('semantic')} & {fmt_score('graph')} & {fmt_score('dual')} \\\\"
-            )
-        
-        lines.extend([
-            "\\bottomrule",
-            "\\end{longtable}",
-        ])
-        
-        return "\n".join(lines)
-    
     def generate_pgfplots_data(self) -> str:
-        """Generate data file for pgfplots figures."""
+        """Generate data tables for pgfplots."""
         lines = [
-            "% Data for pgfplots - faithfulness by mode and category",
-            "% Generated: " + datetime.now().isoformat(),
+            "% Auto-generated data for pgfplots",
+            f"% Generated: {datetime.now().isoformat()}",
             "",
         ]
         
-        # Group by category
-        by_category = {}
-        for query, modes in self.by_query.items():
-            cat = list(modes.values())[0].get('category', 'unknown')
-            if cat not in by_category:
-                by_category[cat] = {'semantic': [], 'graph': [], 'dual': []}
+        # Category-mode faithfulness table
+        lines.extend([
+            "% Data for category × mode bar chart",
+            "\\pgfplotstableread{",
+            "category semantic graph dual",
+        ])
+        
+        for cat, queries in sorted(self.by_category.items()):
+            cat_safe = cat.replace('_', '-')
+            mode_avgs = {}
             for mode in ['semantic', 'graph', 'dual']:
-                if mode in modes:
-                    by_category[cat][mode].append(modes[mode]['ragas']['faithfulness_score'])
-        
-        # === BAR CHART DATA (proper pgfplots format) ===
-        lines.append("% === BAR CHART DATA: Faithfulness by Category ===")
-        lines.append("% Usage: \\pgfplotstableread{\\categorytable}")
-        lines.append("\\pgfplotstableread[col sep=space]{")
-        lines.append("category semantic graph dual")
-        
-        for cat, mode_scores in sorted(by_category.items()):
-            s_avg = sum(mode_scores['semantic']) / len(mode_scores['semantic']) if mode_scores['semantic'] else 0
-            g_avg = sum(mode_scores['graph']) / len(mode_scores['graph']) if mode_scores['graph'] else 0
-            d_avg = sum(mode_scores['dual']) / len(mode_scores['dual']) if mode_scores['dual'] else 0
-            cat_clean = cat.replace('_', '-')
-            lines.append(f"{cat_clean} {s_avg:.3f} {g_avg:.3f} {d_avg:.3f}")
+                scores = []
+                for q, modes in queries.items():
+                    if mode in modes:
+                        scores.append(modes[mode]['ragas']['faithfulness_score'])
+                mode_avgs[mode] = sum(scores) / len(scores) if scores else 0
+            
+            lines.append(f"{cat_safe} {mode_avgs['semantic']:.3f} {mode_avgs['graph']:.3f} {mode_avgs['dual']:.3f}")
         
         lines.append("}\\categorytable")
         lines.append("")
         
-        # === SCATTER PLOT DATA ===
-        lines.append("% === SCATTER PLOT DATA: Resolution vs Faithfulness ===")
-        lines.append("% Format: (resolution, faithfulness) per mode")
-        lines.append("")
-        
-        for mode in ['semantic', 'graph', 'dual']:
-            lines.append(f"% {mode.upper()} mode coordinates")
-            lines.append(f"\\def\\scatter{mode.capitalize()}{{")
-            coords = []
-            for r in self.by_mode[mode]:
-                res = r['entity_resolution']['resolved_count']
-                faith = r['ragas']['faithfulness_score']
-                coords.append(f"({res},{faith:.3f})")
-            lines.append("  " + " ".join(coords))
-            lines.append("}")
-            lines.append("")
-        
-        # === MODE COMPARISON DATA ===
-        lines.append("% === MODE COMPARISON: Overall averages ===")
-        lines.append("\\pgfplotstableread[col sep=space]{")
-        lines.append("mode faithfulness relevancy")
+        # Mode summary table
+        lines.extend([
+            "% Data for mode summary",
+            "\\pgfplotstableread{",
+            "mode faithfulness relevancy",
+        ])
         
         for mode in ['semantic', 'graph', 'dual']:
             results = self.by_mode[mode]
@@ -567,39 +679,63 @@ class LaTeXExporter:
         return "\n".join(lines)
     
     def export_all(self, output_dir: Path):
-        """Export all LaTeX files."""
+        """
+        Export LaTeX files based on mode.
+        
+        Detailed mode (8 queries):
+          - ablation_vars.tex (macros for inline use)
+          - ablation_table.tex (flat list, no grouping)
+          - ablation_appendix.tex (full I/O per query)
+        
+        Stats/Full mode (36 queries):
+          - ablation_table.tex (grouped by category)
+          - ablation_data.tex (pgfplots data)
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
+        files = {}
         
-        # Variables
-        vars_file = output_dir / f'ablation_vars_{self.timestamp}.tex'
-        with open(vars_file, 'w') as f:
-            f.write(self.generate_vars_tex())
-        print(f"Variables: {vars_file}")
+        if self.is_detailed:
+            # DETAILED MODE: vars, flat table, appendix
+            
+            # Variables (macros for inline citations)
+            vars_file = output_dir / f'ablation_vars_{self.timestamp}.tex'
+            with open(vars_file, 'w') as f:
+                f.write(self.generate_vars_tex())
+            print(f"Variables: {vars_file}")
+            files['vars'] = vars_file
+            
+            # Table (flat list, no category grouping)
+            table_file = output_dir / f'ablation_table_{self.timestamp}.tex'
+            with open(table_file, 'w') as f:
+                f.write(self.generate_flat_table_tex())
+            print(f"Table: {table_file}")
+            files['table'] = table_file
+            
+            # Appendix (full I/O)
+            appendix_file = output_dir / f'ablation_appendix_{self.timestamp}.tex'
+            with open(appendix_file, 'w') as f:
+                f.write(self.generate_appendix_tex())
+            print(f"Appendix: {appendix_file}")
+            files['appendix'] = appendix_file
+            
+        else:
+            # STATS/FULL MODE: grouped table, pgfplots data
+            
+            # Table (grouped by category)
+            table_file = output_dir / f'ablation_table_{self.timestamp}.tex'
+            with open(table_file, 'w') as f:
+                f.write(self.generate_grouped_table_tex())
+            print(f"Table: {table_file}")
+            files['table'] = table_file
+            
+            # Data for plots
+            data_file = output_dir / f'ablation_data_{self.timestamp}.tex'
+            with open(data_file, 'w') as f:
+                f.write(self.generate_pgfplots_data())
+            print(f"Plot data: {data_file}")
+            files['data'] = data_file
         
-        # Table
-        table_file = output_dir / f'ablation_table_{self.timestamp}.tex'
-        with open(table_file, 'w') as f:
-            f.write(self.generate_table_tex())
-        print(f"Table: {table_file}")
-        
-        # Appendix
-        appendix_file = output_dir / f'ablation_appendix_{self.timestamp}.tex'
-        with open(appendix_file, 'w') as f:
-            f.write(self.generate_appendix_tex())
-        print(f"Appendix: {appendix_file}")
-        
-        # Data for plots
-        data_file = output_dir / f'ablation_data_{self.timestamp}.tex'
-        with open(data_file, 'w') as f:
-            f.write(self.generate_pgfplots_data())
-        print(f"Plot data: {data_file}")
-        
-        return {
-            'vars': vars_file,
-            'table': table_file,
-            'appendix': appendix_file,
-            'data': data_file
-        }
+        return files
 
 
 def main():
@@ -612,6 +748,8 @@ def main():
                         help='Output directory')
     parser.add_argument('--detailed', action='store_true',
                         help='Force detailed mode (full appendix with answers/chunks)')
+    parser.add_argument('--paper-mapping', type=Path, default=None,
+                        help='Path to paper_mapping.json (default: data/processed/paper_mapping.json)')
     
     args = parser.parse_args()
     
@@ -619,10 +757,17 @@ def main():
         print(f"Error: {args.json_file} not found")
         return 1
     
-    exporter = LaTeXExporter(args.json_file, is_detailed=args.detailed)
+    # Auto-detect detailed mode from filename
+    is_detailed = args.detailed or 'detailed' in args.json_file.name
+    
+    exporter = LaTeXExporter(
+        args.json_file, 
+        is_detailed=is_detailed,
+        paper_mapping_path=args.paper_mapping
+    )
     exporter.export_all(args.output)
     
-    print("\nLaTeX export complete!")
+    print(f"\nLaTeX export complete! (detailed={is_detailed})")
     return 0
 
 

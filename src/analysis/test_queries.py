@@ -419,7 +419,7 @@ FULL_QUERIES = [
     # =========================================================================
     {
         'id': 'ec1',
-        'query': 'Recipe for chocolate cake',
+        'query': "Who is Snoopy's arch enemy?",
         'primary_category': 'edge_cases',
         'subcategory': 'out_of_domain',
         'tags': {
@@ -508,7 +508,9 @@ DETAILED_QUERIES = [
     FULL_QUERIES[12],  # cd1: cross_domain - academic critiques of AI Act
     FULL_QUERIES[18],  # mp1: metadata_provenance - chunk co-occurrence
     FULL_QUERIES[24],  # as1: applied_scenario - chatbot startup
-    FULL_QUERIES[33],  # ec4: edge_cases - Infopaq (specific_legal)
+    FULL_QUERIES[30],  # ec1: edge_cases - OOD (Snoopy's arch enemy)
+    FULL_QUERIES[31],  # ec2: edge_cases - alias (AI Act → EU AI Act)
+    FULL_QUERIES[33],  # ec4: edge_cases - specific_legal (Infopaq)
 ]
 
 

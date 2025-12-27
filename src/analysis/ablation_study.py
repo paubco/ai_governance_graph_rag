@@ -6,9 +6,9 @@ Unified ablation study with comprehensive evaluation metrics.
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Modes:
-    --detailed    6 queries, full answers printed, verbose per-query analysis
+    --detailed    8 queries, full answers printed, verbose per-query analysis
     --full        36 queries, compact output, aggregate stats for charts
-    (default)     6 queries, compact output
+    (default)     8 queries, compact output
 
 Example:
     python src/analysis/ablation_study.py --detailed        # Full analysis
@@ -1273,7 +1273,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Detailed analysis (6 queries, full answers printed)
+  # Detailed analysis (8 queries, full answers printed)
   python src/analysis/ablation_study.py --detailed
 
   # Stats mode (36 queries, aggregate metrics for charts)
@@ -1287,7 +1287,7 @@ Examples:
         """
     )
     parser.add_argument('--detailed', action='store_true', 
-                        help='Detailed mode: 6 queries, full answers, verbose metrics')
+                        help='Detailed mode: 8 queries, full answers, verbose metrics')
     parser.add_argument('--full', action='store_true', 
                         help='Stats mode: 36 queries, aggregate metrics for charts')
     parser.add_argument('--quick', action='store_true', 
@@ -1310,10 +1310,10 @@ Examples:
     try:
         # Determine mode
         if args.detailed:
-            queries = DETAILED_QUERIES  # 6 diverse queries
+            queries = DETAILED_QUERIES  # 8 diverse queries
             detailed = True
             print("=" * 80)
-            print("  DETAILED MODE: 6 queries × 3 modes = 18 tests")
+            print("  DETAILED MODE: 8 queries × 3 modes = 24 tests")
             print("  Full answers and per-query analysis will be printed")
             print("=" * 80)
         elif args.full:
@@ -1327,7 +1327,7 @@ Examples:
             queries = DETAILED_QUERIES
             detailed = False
             print("=" * 80)
-            print("  DEFAULT MODE: 6 queries × 3 modes = 18 tests")
+            print("  DEFAULT MODE: 8 queries × 3 modes = 24 tests")
             print("  Use --detailed for full answers, --full for 36 queries")
             print("=" * 80)
         
