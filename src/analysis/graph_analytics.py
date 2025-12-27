@@ -69,7 +69,7 @@ References:
     RAGAS: Evaluation framework for retrieval-augmented generation
     config.extraction_config: Entity types and extraction parameters
 """
-
+import os
 import sys
 import json
 import logging
