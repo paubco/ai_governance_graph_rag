@@ -762,8 +762,8 @@ class AblationTestSuite:
         print(f"  {'─'*76}")
         print(f"  1. MODE PERFORMANCE")
         print(f"  {'─'*76}")
-        print(f"\n  {'Mode':<12} {'Chunks':>8} {'Entities':>10} {'Relations':>10} {'Faith':>8} {'Relev':>8}")
-        print(f"  {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*8} {'-'*8}")
+        print(f"\n  {'Mode':<12} {'Chunks':>8} {'Entities':>10} {'Relations':>10} {'Faith':>8} {'Relev':>8} {'CSD':>8}")
+        print(f"  {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*8} {'-'*8} {'-'*8}")
         
         for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
@@ -775,9 +775,13 @@ class AblationTestSuite:
                 if self.enable_ragas:
                     avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
                     avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
-                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {avg_faith:>8.3f} {avg_rel:>8.3f}")
+                    # CSD average (handle None values)
+                    csd_values = [r.ragas.csd_score for r in mode_results if r.ragas.csd_score is not None]
+                    avg_csd = sum(csd_values) / len(csd_values) if csd_values else None
+                    csd_str = f"{avg_csd:.3f}" if avg_csd is not None else "N/A"
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {avg_faith:>8.3f} {avg_rel:>8.3f} {csd_str:>8}")
                 else:
-                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {'N/A':>8} {'N/A':>8}")
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {'N/A':>8} {'N/A':>8} {'N/A':>8}")
         
         # Group results by query (used in sections 2 and 5)
         queries = {}
