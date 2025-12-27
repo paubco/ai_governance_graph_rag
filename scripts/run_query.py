@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # Local imports
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from config.retrieval_config import RetrievalMode
+from src.retrieval.config import RetrievalMode
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 from src.utils.citations import CitationFormatter
@@ -126,18 +126,18 @@ def load_pipeline():
     # Data paths
     data_dir = PROJECT_ROOT / 'data'
     faiss_dir = data_dir / 'processed' / 'faiss'
-    interim_dir = data_dir / 'interim' / 'entities'
+    entities_dir = data_dir / 'processed' / 'entities'
     
     # Load embedding model
     embedding_model = BGEEmbedder()
     
     # Load entity name lookup (for debug display)
     entity_lookup = {}
-    normalized_entities_path = interim_dir / 'normalized_entities_with_ids.json'
+    normalized_entities_path = entities_dir / 'entities_semantic_embedded.jsonl'
     if normalized_entities_path.exists():
         with open(normalized_entities_path, 'r') as f:
-            entities_data = json.load(f)
-            for entity in entities_data:
+            for line in f:
+                entity = json.loads(line)
                 entity_lookup[entity['entity_id']] = entity['name']
     
     # Load citation formatter
@@ -150,6 +150,7 @@ def load_pipeline():
         faiss_entity_index_path=faiss_dir / 'entity_embeddings.index',
         entity_ids_path=faiss_dir / 'entity_id_map.json',
         normalized_entities_path=normalized_entities_path,
+        aliases_path=entities_dir / 'aliases.json',
         # Phase 3.3.2 paths
         faiss_chunk_index_path=faiss_dir / 'chunk_embeddings.index',
         chunk_ids_path=faiss_dir / 'chunk_id_map.json',
@@ -230,10 +231,12 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     print(f"Retrieved chunks: {len(retrieval_result.chunks)}")
     
     # Show method breakdown
-    graphrag_count = sum(1 for c in retrieval_result.chunks if c.retrieval_method == 'graphrag')
-    naive_count = sum(1 for c in retrieval_result.chunks if c.retrieval_method == 'naive')
-    print(f"  GraphRAG: {graphrag_count}")
-    print(f"  Naive: {naive_count}")
+    semantic_count = sum(1 for c in retrieval_result.chunks if c.source_path == 'semantic')
+    graph_prov_count = sum(1 for c in retrieval_result.chunks if c.source_path == 'graph_provenance')
+    graph_ent_count = sum(1 for c in retrieval_result.chunks if c.source_path == 'graph_entity')
+    print(f"  Semantic: {semantic_count}")
+    print(f"  Graph (relation): {graph_prov_count}")
+    print(f"  Graph (entity): {graph_ent_count}")
     print(f"{'-'*80}\n")
     
     if verbose:
@@ -244,13 +247,13 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
         
         print(f"\nSUBGRAPH RELATIONS (top 10):")
         for i, rel in enumerate(retrieval_result.subgraph.relations[:10], 1):
-            print(f"  {i}. {rel.source_name} --[{rel.predicate}]--> {rel.target_name}")
+            print(f"  {i}. {rel.subject_id} --[{rel.predicate}]--> {rel.object_id}")
         
         print(f"\nRETRIEVED CHUNKS:")
         for i, chunk in enumerate(retrieval_result.chunks, 1):
             print(f"\n  [{i}] Chunk ID: {chunk.chunk_id}")
             print(f"      Doc: {chunk.doc_id} ({chunk.doc_type})")
-            print(f"      Score: {chunk.score:.3f}, Method: {chunk.retrieval_method}")
+            print(f"      Score: {chunk.score:.3f}, Method: {chunk.source_path}")
             print(f"      Text: {chunk.text[:300]}...")
             if len(chunk.text) > 300:
                 print(f"      ... (truncated, full length: {len(chunk.text)} chars)")
@@ -404,8 +407,9 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
         'retrieval': {
             'total_chunks': len(retrieval_result.chunks),
             'chunks_by_source': {
-                'graphrag': graphrag_count,
-                'semantic': naive_count
+                'semantic': semantic_count,
+                'graph_provenance': graph_prov_count,
+                'graph_entity': graph_ent_count
             }
         },
         'chunks': [
