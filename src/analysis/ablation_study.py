@@ -46,6 +46,7 @@ from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
+from src.utils.citations import CitationFormatter
 
 # Analysis metrics
 from src.analysis.retrieval_metrics import (
@@ -282,6 +283,7 @@ class AblationTestSuite:
         self.processor = None
         self.generator = None
         self.ragas = None
+        self.citation_formatter = None  # For citation formatting
         self.results = []
         self.results_lock = Lock()  # Thread-safe results collection
         self.print_lock = Lock()  # Thread-safe printing
@@ -291,6 +293,9 @@ class AblationTestSuite:
         print("Loading pipeline components...")
         
         data_dir = PROJECT_ROOT / 'data'
+        
+        # Load citation formatter
+        self.citation_formatter = CitationFormatter(project_root=PROJECT_ROOT)
         
         # Embedding model
         embedding_model = BGEEmbedder()
@@ -497,7 +502,12 @@ class AblationTestSuite:
                         'method': c.source_path,
                         'text': c.text,  # Full text for detailed mode
                         'cited': (i + 1) in cited_indices,
-                        'jurisdiction': c.jurisdiction if hasattr(c, 'jurisdiction') else None
+                        'jurisdiction': c.jurisdiction if hasattr(c, 'jurisdiction') else None,
+                        'citation': self.citation_formatter.format(
+                            c.doc_id, 
+                            c.doc_type, 
+                            c.jurisdiction if hasattr(c, 'jurisdiction') else None
+                        )
                     }
                     for i, c in enumerate(retrieval_result.chunks)
                 ]

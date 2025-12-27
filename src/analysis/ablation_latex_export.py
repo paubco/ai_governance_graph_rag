@@ -562,8 +562,22 @@ class LaTeXExporter:
                         # FULL text - no truncation
                         text = escape_latex(c.get('text', ''))
                         
-                        # Format proper citation
-                        citation, url = self.format_citation(doc_id, doc_type, jurisdiction)
+                        # Use embedded citation if available, otherwise format
+                        if 'citation' in c and c['citation']:
+                            cit = c['citation']
+                            authors = cit.get('authors', 'Unknown')
+                            year = cit.get('year', 'n.d.')
+                            title = cit.get('title', '')
+                            if len(title) > 80:
+                                title = title[:77] + '...'
+                            journal = cit.get('journal', '')
+                            citation = f"{authors} ({year}). ``{title}''"
+                            if journal:
+                                citation += f" {journal}."
+                            url = cit.get('url', '')
+                        else:
+                            citation, url = self.format_citation(doc_id, doc_type, jurisdiction)
+                        
                         citation_escaped = escape_latex(citation)
                         
                         cited_str = " $\\checkmark$ \\textbf{CITED}" if is_cited else ""

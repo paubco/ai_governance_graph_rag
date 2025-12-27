@@ -39,6 +39,7 @@ from src.retrieval.answer_generator import AnswerGenerator
 from src.retrieval.config import RetrievalMode
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
+from src.utils.citations import CitationFormatter
 
 logger = get_logger(__name__)
 
@@ -118,7 +119,7 @@ def load_pipeline():
     Load FAISS indices and pipeline components.
     
     Returns:
-        Tuple of (RetrievalProcessor, AnswerGenerator, entity_lookup)
+        Tuple of (RetrievalProcessor, AnswerGenerator, entity_lookup, CitationFormatter)
     """
     logger.info("Loading pipeline components...")
     
@@ -138,6 +139,9 @@ def load_pipeline():
             entities_data = json.load(f)
             for entity in entities_data:
                 entity_lookup[entity['entity_id']] = entity['name']
+    
+    # Load citation formatter
+    citation_formatter = CitationFormatter(project_root=PROJECT_ROOT)
     
     # Retrieval processor
     processor = RetrievalProcessor(
@@ -159,7 +163,7 @@ def load_pipeline():
     generator = AnswerGenerator()
     
     logger.info("Pipeline loaded successfully")
-    return processor, generator, entity_lookup
+    return processor, generator, entity_lookup, citation_formatter
 
 
 # ============================================================================
@@ -202,7 +206,7 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
     print(f"{'='*80}\n")
     
     # Load pipeline (this generates warnings)
-    processor, generator, entity_lookup = load_pipeline()
+    processor, generator, entity_lookup, citation_formatter = load_pipeline()
     
     # Reprint query after warnings
     print(f"\n{'='*80}")
@@ -363,9 +367,13 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
         for num in cited_chunks:
             if num <= len(retrieval_result.chunks):
                 chunk = retrieval_result.chunks[num - 1]
+                cit = citation_formatter.format(chunk.doc_id, chunk.doc_type, 
+                                                 chunk.jurisdiction if hasattr(chunk, 'jurisdiction') else None)
                 print(f"[{num}] → Chunk {chunk.chunk_id}")
-                print(f"     Score: {chunk.score:.3f}, Method: {chunk.retrieval_method}")
-                print(f"     Doc: {chunk.doc_id} ({chunk.doc_type})")
+                print(f"     Score: {chunk.score:.3f}, Method: {chunk.source_path}")
+                print(f"     Source: {citation_formatter.format_string(chunk.doc_id, chunk.doc_type, chunk.jurisdiction if hasattr(chunk, 'jurisdiction') else None)}")
+                if cit['url']:
+                    print(f"     URL: {cit['url']}")
                 print(f"     Text: {chunk.text[:200]}...")
                 print()
             else:
@@ -407,19 +415,24 @@ def run_query(query: str, mode: str, verbose: bool, debug: bool, skip_answer: bo
                 'doc_id': chunk.doc_id,
                 'doc_type': chunk.doc_type,
                 'score': chunk.score,
-                'method': chunk.retrieval_method,
+                'method': chunk.source_path,
                 'text': chunk.text if json_full else chunk.text[:500],
                 'jurisdiction': chunk.jurisdiction if hasattr(chunk, 'jurisdiction') else None,
-                'entities': list(chunk.entities) if chunk.entities else []
+                'matching_entities': chunk.matching_entities if hasattr(chunk, 'matching_entities') else [],
+                'citation': citation_formatter.format(
+                    chunk.doc_id, 
+                    chunk.doc_type, 
+                    chunk.jurisdiction if hasattr(chunk, 'jurisdiction') else None
+                )
             }
             for i, chunk in enumerate(retrieval_result.chunks)
         ],
         'relations': [
             {
-                'source': rel.source_name,
+                'subject_id': rel.subject_id,
                 'predicate': rel.predicate,
-                'target': rel.target_name,
-                'confidence': rel.confidence
+                'object_id': rel.object_id,
+                'chunk_ids': rel.chunk_ids[:3] if rel.chunk_ids else []
             }
             for rel in retrieval_result.subgraph.relations[:50]
         ]
