@@ -69,6 +69,7 @@ References:
     RAGAS: Evaluation framework for retrieval-augmented generation
     config.extraction_config: Entity types and extraction parameters
 """
+
 import os
 import sys
 import json
@@ -320,37 +321,49 @@ class GraphAnalyzer:
     
     def get_local_clustering(self) -> Dict:
         """
-        Calculate local clustering coefficient for semantic relations.
+        Calculate global clustering coefficient for semantic relations.
         
         Measures how tightly connected neighborhoods are:
         - High (>0.3): Tight communities, entities form cliques
         - Low (<0.1): Hub-spoke structure, sparse local connections
-        """
-        query = """
-        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)-[:RELATION]-(a)
-        WITH count(*) as triangles
-        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)
-        WHERE a <> c
-        WITH triangles, count(*) as triplets
-        RETURN 
-            triangles,
-            triplets,
-            CASE WHEN triplets > 0 
-                 THEN round(3.0 * triangles / triplets, 4) 
-                 ELSE 0 
-            END as clustering_coef
-        """
-        results = self.run_query(query, "Local clustering coefficient")
-        result = results[0] if results else {}
         
-        if result:
-            cc = result.get('clustering_coef', 0)
-            if cc > 0.3:
-                result['interpretation'] = 'High clustering - tight communities'
-            elif cc > 0.1:
-                result['interpretation'] = 'Moderate clustering'
-            else:
-                result['interpretation'] = 'Low clustering - hub-spoke structure'
+        Formula: 3 * triangles / connected_triplets
+        Must be between 0 and 1.
+        """
+        # Count triangles (each triangle counted once by requiring ordering)
+        triangle_query = """
+        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)-[:RELATION]-(a)
+        WHERE elementId(a) < elementId(b) AND elementId(b) < elementId(c)
+        RETURN count(*) as triangles
+        """
+        tri_result = self.run_query(triangle_query, "Triangle count")
+        triangles = tri_result[0]['triangles'] if tri_result else 0
+        
+        # Count connected triplets (wedges): paths of length 2
+        triplet_query = """
+        MATCH (a:Entity)-[:RELATION]-(b:Entity)-[:RELATION]-(c:Entity)
+        WHERE elementId(a) < elementId(c)
+        RETURN count(*) as triplets
+        """
+        trip_result = self.run_query(triplet_query, "Triplet (wedge) count")
+        triplets = trip_result[0]['triplets'] if trip_result else 0
+        
+        # Clustering coefficient = closed triplets / all triplets
+        # A triangle contributes 3 closed triplets
+        clustering_coef = round(3.0 * triangles / triplets, 4) if triplets > 0 else 0
+        
+        result = {
+            'triangles': triangles,
+            'triplets': triplets,
+            'clustering_coef': clustering_coef
+        }
+        
+        if clustering_coef > 0.3:
+            result['interpretation'] = 'High clustering - tight communities'
+        elif clustering_coef > 0.1:
+            result['interpretation'] = 'Moderate clustering'
+        else:
+            result['interpretation'] = 'Low clustering - hub-spoke structure'
         
         return result
     

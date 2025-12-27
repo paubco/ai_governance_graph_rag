@@ -1,13 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Entity
+Entity co-occurrence index builder for optimized relation extraction.
 
-Pre-computes which normalized entities appear in each chunk using three
-type-filtered matrices for optimized relation extraction lookups.
+Pre-computes which normalized entities appear in each chunk using three type-filtered
+sparse matrices for fast lookups during relation extraction. Builds separate indices
+for semantic entities (Concept, Regulation, etc.), citation entities (Citation), and
+other metadata entities (Author, Journal). Enables O(1) chunk-entity and entity-chunk
+lookups to support both entity-centered and chunk-centered extraction workflows.
+
+The builder loads normalized entities with chunk provenance (chunk_ids list), creates
+inverted indices mapping chunks→entities and entities→chunks, filters by entity type
+into three categories, and saves as JSON for runtime loading. Co-occurrence index
+eliminates expensive graph traversals during extraction, enabling parallel processing
+of thousands of entities. Statistics track entity coverage and chunk density.
 
 Examples:
-python -m src.processing.relations.build_entity_cooccurrence
+    # Build co-occurrence index
+    python -m src.processing.relations.build_entity_cooccurrence
 
+    # Python API usage
+    from src.processing.relations.build_entity_cooccurrence import build_cooccurrence_index
+
+    semantic_idx, citation_idx, metadata_idx = build_cooccurrence_index(
+        entities_path="data/processed/entities/entities_normalized.jsonl"
+    )
+
+    # Lookup entities in chunk
+    chunk_entities = semantic_idx['chunk_to_entities']['chunk_abc123']
+    print(f"Entities in chunk: {len(chunk_entities)}")
+
+References:
+    data/processed/entities/entities_normalized.jsonl: Input entities with chunk provenance
+    data/interim/cooccurrence/: Output directory for index files
+    config.extraction_config.METADATA_ENTITY_TYPES: Entity type filtering
 """
 # Standard library
 import json

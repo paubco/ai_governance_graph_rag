@@ -1,11 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-Parallel
+Parallel relation extraction orchestrator with two-track architecture.
 
-Coordinates parallel extraction of relations using two-track architecture:
-- Track 1 (Semantic): Entity-based, multi-chunk MMR (loops over entities)
-- Track 2 (Citation): Chunk-based, single chunk context (loops over chunks)
+Coordinates parallel extraction of semantic and citation relations using dual-track
+processing. Track 1 (Semantic) uses entity-centered extraction with multi-chunk MMR
+for context gathering. Track 2 (Citation) uses chunk-centered extraction for document
+provenance. Both tracks leverage threading, checkpointing, rate limiting, and progress
+tracking for robust large-scale processing.
 
+The processor loads normalized entities and chunks, builds co-occurrence index for fast
+lookups, distributes extraction across worker threads, handles API errors with retries,
+and saves checkpoints every N batches. Semantic track iterates over entities, selecting
+diverse chunks via MMR. Citation track iterates over chunks containing citations. Final
+output is relations_raw.jsonl with extraction statistics and validation reports.
+
+Examples:
+    # Run full relation extraction
+    python -m src.processing.relations.relation_processor
+
+    # Sample mode for testing
+    python -m src.processing.relations.relation_processor --sample 50 --seed 42
+
+    # Resume from checkpoint
+    python -m src.processing.relations.relation_processor --resume
+
+References:
+    MMR (Maximal Marginal Relevance): Diversity-based chunk selection
+    Together.ai API: Mistral-7B for relation extraction with JSON mode
+    config.extraction_config.RELATION_EXTRACTION_CONFIG: Extraction parameters
+    src.processing.relations.relation_extractor: Dual-track extraction logic
 """
 # Standard library
 import argparse

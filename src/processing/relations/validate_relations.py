@@ -1,10 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-Relation
+Relation validation to filter hallucinated extractions via co-occurrence checks.
 
-Validates that relation subject and object entities share at least one chunk.
-Removes hallucinated relations where entities never co-occur.
+Validates that relation subject and object entities share at least one source chunk.
+Removes hallucinated relations where entities never co-occur in the same document
+context. Uses chunk provenance from entity extraction (EXTRACTED_FROM edges) to verify
+co-location. Generates validation statistics (pass rate, hallucination ratio) and
+outputs clean relations_validated.jsonl for graph ingestion.
 
+The validator loads relations and entity-chunk mappings, checks each relation's subject
+and object for shared chunks, discards relations with no overlap, and reports statistics
+by predicate type. Hallucination filtering prevents spurious edges from LLM confabulation
+while preserving genuine cross-document relations. Validation reports inform extraction
+quality and identify problematic predicates for prompt refinement.
+
+Examples:
+    # Run validation
+    python -m src.processing.relations.validate_relations
+
+    # Python API usage
+    from src.processing.relations.validate_relations import RelationValidator
+
+    validator = RelationValidator()
+    valid_relations, stats = validator.validate(relations, entity_chunks)
+
+    print(f"Valid: {len(valid_relations)}/{len(relations)}")
+    print(f"Hallucination rate: {stats['hallucination_rate']:.1f}%")
+
+References:
+    src.utils.dataclasses.Relation: Relation dataclass with chunk_ids provenance
+    data/processed/relations/relations_raw.jsonl: Input relations from extraction
+    data/processed/relations/relations_validated.jsonl: Output validated relations
 """
 import json
 import sys

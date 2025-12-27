@@ -1,31 +1,50 @@
 # -*- coding: utf-8 -*-
 """
-RAKG-style
+RAKG-style relation extraction with two-stage MMR for context diversity.
 
-Implements retrieval-augmented relation extraction using two-stage MMR for semantic
-and entity diversity in chunk selection.
+Implements retrieval-augmented relation extraction using dual-track architecture with
+MMR-based chunk selection. Track 1 (Semantic) extracts relations for entities using
+multi-chunk contexts selected via two-stage MMR (semantic + entity diversity). Track 2
+(Citation) extracts citation-specific relations from single chunks containing citation
+entities. Both tracks use Mistral-7B with JSON mode and few-shot prompting for
+structured relation output.
 
-Modes:
-self._save_debug_files(entity_name, prompt, content, finish_reason)
-            
-            return content
-            
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            raise
-    
-    def _save_debug_files(self, entity_name: str, prompt: str, response: str, finish_reason: str):
+The extractor implements MMR (Maximal Marginal Relevance) to select diverse chunks for
+entity context: first-stage MMR balances query relevance vs semantic diversity, second-
+stage MMR adds entity coverage diversity. Track 1 aggregates 6-8 chunks per entity for
+rich context. Track 2 processes chunks containing citations with co-occurring concepts.
+All extractions include chunk provenance (chunk_ids) for validation and debugging.
 
 Examples:
-extractor = RAKGRelationExtractor(
-        model_name="mistralai/Mistral-7B-Instruct-v0.3",
-        num_chunks=6, mmr_lambda=0.65
-    )
-    # Track 1
-    relations = extractor.extract_relations_for_entity(entity, chunks)
-    # Track 2
-    relations = extractor.extract_citation_relations_for_chunk(chunk, citations, concepts)
+    # Initialize extractor
+    from src.processing.relations.relation_extractor import RAKGRelationExtractor
 
+    extractor = RAKGRelationExtractor(
+        model_name="mistralai/Mistral-7B-Instruct-v0.3",
+        num_chunks=6,
+        mmr_lambda=0.65
+    )
+
+    # Track 1: Entity-centered extraction
+    relations = extractor.extract_relations_for_entity(
+        entity=normalized_entity,
+        all_chunks=chunks,
+        embedder=bge_embedder
+    )
+
+    # Track 2: Chunk-centered citation extraction
+    relations = extractor.extract_citation_relations_for_chunk(
+        chunk=chunk,
+        citations=citation_entities,
+        concepts=concept_entities
+    )
+
+References:
+    MMR (Maximal Marginal Relevance): Diversity-based retrieval algorithm
+    Mistral-7B: mistralai/Mistral-7B-Instruct-v0.3 for relation extraction
+    Together.ai API: LLM inference with JSON mode
+    BGE-M3: BAAI/bge-m3 for chunk embeddings and MMR similarity
+    config.extraction_config.RELATION_EXTRACTION_CONFIG: Extraction parameters
 """
 # Standard library
 import json
