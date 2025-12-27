@@ -1,30 +1,12 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FAISS Index Verification Tests for GraphRAG Vector Store
+FAISS
 
 Verifies FAISS indexes are built correctly and searchable by validating
 index integrity, ID mapping consistency, and search functionality.
 
-Verification Categories:
-1. File Existence: Ensure all index and mapping files exist
-2. Index Loading: Verify indexes can be loaded without errors
-3. Count Consistency: Validate index size matches ID map size
-4. Dimension Validation: Check embedding dimensions are correct (1024 for BGE-M3)
-5. Search Functionality: Test nearest neighbor search returns valid results
-6. Size Validation: Verify index file sizes are reasonable
-
-Test Coverage:
-- Entity embeddings index (entity_embeddings.index)
-- Chunk embeddings index (chunk_embeddings.index)
-- Parallel ID mappings (entity_id_map.json, chunk_id_map.json)
-- HNSW search with random query vectors
-
-Usage:
-    python tests/graph/faiss_builder_test.py
-    python tests/graph/faiss_builder_test.py --faiss-dir data/processed/faiss
 """
-
+"""
 # Standard library
 import json
 from pathlib import Path

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Unit tests for answer generation from retrieval results.
+Unit
 
 Tests prompt formatting with token budgeting, mock API calls, cost estimation,
 and error handling for the answer generator component.
 
-Example:
-    pytest tests/retrieval/test_answer_generator.py -v
-"""
+Examples:
+pytest tests/retrieval/test_answer_generator.py -v
 
+"""
+"""
 # Standard library
 import sys
 from pathlib import Path

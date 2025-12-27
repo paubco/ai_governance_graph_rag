@@ -1,26 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Test queries for GraphRAG ablation study.
+Test
 
 Design: 6 categories × 6 queries = 36 total
 
-Multi-dimensional tagging enables multiple analysis tables:
-- Table 1: By primary category (domain/layer - our unique architecture)
-- Table 2: By complexity (single_entity vs multi_hop - KGQA standard)
-- Table 3: By style (robustness across query formulations)
-
-Key hypotheses:
-- cross_domain: Graph mode should outperform (392 bridging entities)
-- metadata_provenance: Graph mode should outperform (semantic can't traverse)
-- regulation_only / academic_only: Competitive baseline
-
-Citations for methodology:
-- Louis et al. (2024): LLeQA - real legal queries average 15 words, layperson phrasing
-- Yih et al. (2016): WebQSP - multi-hop question patterns
-- He et al. (2024): G-Retriever GraphQA benchmark
-- Abdallah et al. (2023): Legal QA survey - regulatory document patterns
 """
-
+"""
 # =============================================================================
 # FULL TEST SET (36 queries)
 # =============================================================================

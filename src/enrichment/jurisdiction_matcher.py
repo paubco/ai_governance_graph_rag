@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Jurisdiction Entity Matcher.
+Jurisdiction
 
 Maps country and region entities to jurisdiction codes via SAME_AS relationships.
 Only links entities that represent the jurisdiction itself (not organizations
 like CNIL or FTC).
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-21
+Examples:
+matcher = JurisdictionMatcher(valid_codes)
+        matches = matcher.match_entities(entities)
+        # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
 
 References:
-    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    - See PHASE_2A_DESIGN.md for matching pipeline
-"""
+    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    See PHASE_2A_DESIGN.md for matching pipeline
 
+"""
+"""
 # Standard library
 import json
 from pathlib import Path

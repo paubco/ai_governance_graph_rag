@@ -1,15 +1,13 @@
+# -*- coding: utf-8 -*-
 """
-Parallel relation extraction test suite.
+Parallel
 
 Validates parallel processing system before full 55K entity run with 100-entity
 sample. Tests threading, checkpointing, rate limiting, and resume capability.
 Provides cost and time estimates before full extraction.
 
-Run:
-    python tests/processing/test_relation_extraction_parallel.py [--workers N]
-    python tests/processing/test_relation_extraction_parallel.py [--resume] [--debug]
 """
-
+"""
 import sys
 import json
 import logging

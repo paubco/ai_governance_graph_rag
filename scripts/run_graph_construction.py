@@ -1,34 +1,18 @@
-#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Graph Construction Pipeline Runner
+Graph
 
 Orchestrates the full document-to-graph pipeline (Phases 0-2).
 Excludes retrieval (Phase 3) which runs separately at query time.
 
-Usage:
-    # Run full pipeline
-    python run_graph_construction.py
-    
-    # Run specific phases
-    python run_graph_construction.py --start-phase 0A --end-phase 0B
-    python run_graph_construction.py --start-phase 1A --end-phase 1D
-    
-    # Resume from a phase
-    python run_graph_construction.py --start-phase 1C
+Examples:
+python run_graph_construction.py                    # Full pipeline
+  python run_graph_construction.py --start-phase 1A  # From chunking
+  python run_graph_construction.py --end-phase 1D    # Through relations
+  python run_graph_construction.py -s 0B -e 0B       # Just preprocessing
 
-Phases:
-    0A: Scopus Matching    - Link papers to Scopus metadata
-    0B: Preprocessing      - Clean text, detect language, translate
-    1A: Chunking           - Split documents into semantic chunks
-    1B: Entity Extraction  - Extract pre-entities from chunks (LLM)
-    1C: Disambiguation     - Merge duplicates, assign canonical IDs
-    1D: Relation Extraction- Extract relations between entities (LLM)
-    2A: Scopus Enrichment  - Add authors, journals, citations
-    2B: Storage            - Import to Neo4j + build FAISS indices
-
-See ARCHITECTURE_v1.1.md for detailed phase documentation.
 """
-
+"""
 import argparse
 import logging
 import sys

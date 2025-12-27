@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Result ranker for AI governance GraphRAG pipeline.
+Result
 
-v2.0: Two-stage retrieval for DUAL mode.
 - SEMANTIC: Pure FAISS similarity (baseline)
 - GRAPH: Entity coverage scoring (baseline)
 - DUAL: Graph for recall, semantic for precision (two-stage)
 
-Key insight: Graph finds structurally-relevant chunks you wouldn't find semantically,
-but semantic similarity ensures the final ranking is query-relevant.
-"""
+Modes:
+    SEMANTIC: Rank by FAISS similarity (already scored)
+    GRAPH: Rank by entity coverage (terminal > path > other)
+    DUAL: Two-stage (graph recall + semantic rerank)
 
+"""
+"""
 # Standard library
 from typing import List, Set, Dict, Optional
 from dataclasses import dataclass

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-LLM prompt templates - Mistral-7B optimized, v2.0 (semantic + metadata).
+LLM
 
-v2.1 Changes (Phase 1D):
 - RELATION_EXTRACTION_PROMPT now uses entity_ids for constrained output
 - METADATA_RELATION_EXTRACTION_PROMPT updated for Track 2 (discusses only)
-"""
 
+"""
+"""
 from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,
     METADATA_ENTITY_TYPES,

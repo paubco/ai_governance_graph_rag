@@ -1,21 +1,12 @@
-#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Relation Validation - Co-occurrence Check
+Relation
 
 Validates that relation subject and object entities share at least one chunk.
 Removes hallucinated relations where entities never co-occur.
 
-Usage:
-    # Validate existing files (standalone)
-    python -m src.processing.relations.validate_relations
-    
-    # Validate specific file
-    python -m src.processing.relations.validate_relations --input relations_semantic.jsonl
-    
-    # Dry run (report only, no output)
-    python -m src.processing.relations.validate_relations --dry-run
 """
-
+"""
 import json
 import sys
 import argparse

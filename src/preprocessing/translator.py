@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Module: translator.py
-Package: src.preprocessing
-Purpose: Translation to English via Google Translate API with caching
+Translator
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+@dataclass
+class TranslationResult:
 
 References:
-    - See ARCHITECTURE.md § 7 for known issues (non-English docs)
-"""
+    See ARCHITECTURE.md § 7 for known issues (non-English docs)
 
+"""
+"""
 # Standard library
 import os
 import json

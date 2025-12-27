@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Shared constants for AI Governance GraphRAG Pipeline.
+Shared constants for AI Governance GraphRAG Pipeline
 
-Central location for entity types, jurisdiction codes, and other
-constants used across multiple pipeline phases.
+Central location for entity types, jurisdiction codes, and other constants used
+across multiple pipeline phases. Includes entity type definitions for 
+48 jurisdiction codes from DLA Piper plus EU, and helper functions for normalization
+and validation.
 
-v1.1: Consolidated from scattered definitions. Type list pending
-      enforcement during extraction phase.
 """
-
 from typing import Dict, List, Set
 
 

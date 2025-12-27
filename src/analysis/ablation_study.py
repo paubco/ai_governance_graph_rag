@@ -1,21 +1,21 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unified ablation study with comprehensive evaluation metrics.
+Unified
 
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Modes:
-    --detailed    8 queries, full answers printed, verbose per-query analysis
-    --full        36 queries, compact output, aggregate stats for charts
+    -detailed    8 queries, full answers printed, verbose per-query analysis
+    -full        36 queries, compact output, aggregate stats for charts
     (default)     8 queries, compact output
 
-Example:
-    python src/analysis/ablation_study.py --detailed        # Full analysis
+Examples:
+python src/analysis/ablation_study.py --detailed        # Full analysis
     python src/analysis/ablation_study.py --full            # Stats for charts
     python src/analysis/ablation_study.py --quick --no-ragas  # Quick debug
-"""
 
+"""
+"""
 # Standard library
 import argparse
 import json

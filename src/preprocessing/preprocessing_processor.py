@@ -1,30 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Module: preprocessing_processor.py
-Package: src.preprocessing
-Purpose: Orchestrates text cleaning, language detection, translation, and reference extraction
+Preprocessing Processor
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
-
-Pipeline:
-    1. Load documents via DocumentLoader
-    2. Clean text (encoding, HTML, LaTeX, images, emails, garbage sections)
-    3. Extract references from papers (saved separately)
-    4. Detect language
-    5. Translate non-English to English
-    6. Output cleaned JSONL + references JSON + report
-
-Outputs:
-    - documents_cleaned.jsonl: Cleaned text (references removed)
-    - paper_references.json: Extracted bibliography per paper
-    - preprocessing_report.json: Statistics and metadata
+@dataclass
+class CleanedDocument:
 
 References:
-    - See ARCHITECTURE.md § 7 for known issues
-"""
+    See ARCHITECTURE.md § 7 for known issues
 
+"""
+"""
 # Standard library
 import sys
 from pathlib import Path

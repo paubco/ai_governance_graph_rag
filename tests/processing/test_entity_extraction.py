@@ -1,13 +1,11 @@
+# -*- coding: utf-8 -*-
 """
-Entity extraction test suite.
+Entity
 
 Tests entity extraction on manually selected chunks before full run.
 Supports chunk selection by ID, random sampling, or custom test files.
 
-Run:
-    python tests/processing/test_entity_extraction.py --chunk-ids chunk_1,chunk_2
-    python tests/processing/test_entity_extraction.py --sample 10
-    python tests/processing/test_entity_extraction.py --test-file test_chunks.json
+"""
 """
 import sys
 import json

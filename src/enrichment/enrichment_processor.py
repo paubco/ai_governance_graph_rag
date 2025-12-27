@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Phase 2A Enrichment Pipeline Orchestrator.
+Phase
 
 Coordinates L1 metadata extraction, citation matching, jurisdiction linking,
 and relation generation for the AI governance GraphRAG pipeline.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-21
-
 References:
-    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    - See PHASE_2A_DESIGN.md for matching pipeline
-"""
+    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    See PHASE_2A_DESIGN.md for matching pipeline
 
+"""
+"""
 # Standard library
 import json
 import sys

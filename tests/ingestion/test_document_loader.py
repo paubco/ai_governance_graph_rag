@@ -1,13 +1,13 @@
+# -*- coding: utf-8 -*-
 """
-Document loader test suite.
+Document
 
 Tests the document loader on a small subset of files to verify functionality
 before loading the full dataset. Includes tests for single regulations,
 single papers, small batches, and full dataset loading.
 
-Run: python tests/ingestion/test_document_loader.py
 """
-
+"""
 import sys
 from pathlib import Path
 

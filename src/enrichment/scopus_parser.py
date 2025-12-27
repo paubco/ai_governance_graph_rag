@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Scopus CSV and Reference String Parsing.
+Scopus
 
 Parses Scopus export CSVs to extract L1 publications, authors, and journals.
 Also parses reference strings from the References field for citation matching.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-21
+Examples:
+parser = ScopusParser(Path('data/raw/scopus.csv'))
+        pubs, authors, journals = parser.parse_publications()
 
 References:
-    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    - See PHASE_2A_DESIGN.md for matching pipeline
-"""
+    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    See PHASE_2A_DESIGN.md for matching pipeline
 
+"""
+"""
 # Standard library
 import csv
 import re

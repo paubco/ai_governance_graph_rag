@@ -1,14 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Universal BGE-M3 embedder for RAKG pipeline.
+Universal BGE-M3 embedder for RAKG pipeline
 
 Supports both chunk and entity embedding across multiple phases of the pipeline.
-Used for chunk embedding (full text for corpus retrieval) and entity embedding
-("name [type]" format for VecJudge disambiguation).
+Used for chunk embedding with full text for corpus retrieval and entity embedding
+using "name [type]" format for VecJudge disambiguation. Provides batch processing
+with configurable batch sizes for memory efficiency.
 
-Model: BAAI/bge-m3 (1024 dimensions, multilingual)
+Examples:
+embedder = BGEEmbedder(device='cuda')
+
+        # For chunks
+        chunk_texts = ["Article 1: ...", "Section 2: ..."]
+        embeddings = embedder.embed_batch(chunk_texts)
+
+        # For entities
+        entity_texts = ["GDPR [Regulation]", "EU [Organization]"]
+        embeddings = embedder.embed_batch(entity_texts)
+
+References:
+BGE-M3 Model: BAAI/bge-m3 (1024 dimensions, multilingual)
+    HuggingFace: https://huggingface.co/BAAI/bge-m3
+
 """
-
 # Standard library
 import logging
 from typing import List, Union

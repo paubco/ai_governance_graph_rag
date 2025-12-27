@@ -1,26 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Metadata entity disambiguation for Phase 1C (v2.0).
+Metadata
 
 Handles the METADATA path (6 types):
     Citation, Author, Journal, Affiliation, Document, DocumentSection
 
-Key operations:
-    1. NO merge for most types (Author, Citation, Journal, Affiliation)
-    2. DocumentSection → PART_OF → Document (within metadata path)
-    3. Document ↔ Regulation → SAME_AS (cross-path linking)
-
-v2.0 Changes:
-    - "Academic" → "Metadata" terminology
-    - Added Document and DocumentSection types
-    - PART_OF now links DocumentSection to Document (not Citation to Regulation)
-    - NEW: SAME_AS relations for Document ↔ Regulation linking
-
-Example:
-    disambiguator = MetadataDisambiguator(semantic_entities)
+Examples:
+disambiguator = MetadataDisambiguator(semantic_entities)
     metadata_entities, part_of, same_as = disambiguator.process(metadata_raw)
-"""
 
+"""
+"""
 import re
 import logging
 from typing import Dict, List, Tuple, Optional

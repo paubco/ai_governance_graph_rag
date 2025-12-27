@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Module: semantic_chunker.py
-Package: src.processing.chunks
-Purpose: Semantic chunking with sentence-similarity boundaries and coherence filtering
+Semantic chunking with sentence-similarity boundaries and coherence filtering
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+RAKG-style semantic chunker with hierarchical boundaries using BGE-small model for
+sentence similarity during boundary detection. Splits documents into sections at
+headers with source-type awareness (regulation vs paper), uses sentence similarity
+for soft boundaries within sections, and filters chunks by coherence score and
+token density to remove low-quality content.
 
 References:
-    - RAKG methodology for hierarchical chunking
-    - See ARCHITECTURE.md § 3.1.1 for design context
-    - See extraction_config.py CHUNKING_CONFIG for parameters
-"""
+RAKG methodology: Hierarchical chunking approach
+    ARCHITECTURE.md: Section 3.1.1 for design context
+    extraction_config.py: CHUNKING_CONFIG for parameters
 
+"""
 # Standard library
 import logging
 import re

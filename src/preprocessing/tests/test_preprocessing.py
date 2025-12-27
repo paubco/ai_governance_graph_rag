@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Module: test_preprocessing.py
-Package: src.preprocessing.tests
-Purpose: Tests for preprocessing module
+Test Preprocessing
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+# ============================================================================
+# SAMPLE DATA (from actual v1.0 chunks)
+# ============================================================================
 
-Run:
-    pytest src/preprocessing/tests/test_preprocessing.py -v
 """
-
+"""
 # Standard library
 import sys
 from pathlib import Path

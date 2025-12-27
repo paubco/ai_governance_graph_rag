@@ -1,25 +1,24 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Script: run_query.py
-Package: scripts
-Purpose: CLI interface for GraphRAG retrieval pipeline
+Script:
 
-Author: Pau Barba i Colomer
-Created: 2025-12-12
-Modified: 2025-12-26
+# ============================================================================
+# ARGUMENT PARSING
+# ============================================================================
 
-Usage:
-    python scripts/run_query.py "What is the EU AI Act?"
-    python scripts/run_query.py "Compare GDPR and CCPA" --mode dual --output results.json
-    python scripts/run_query.py "High-risk AI systems" --verbose --no-answer
-    python scripts/run_query.py "Test query" --json-full  # Full chunk text in output
+Examples:
+python scripts/run_query.py "What is the EU AI Act?"
+  python scripts/run_query.py "Compare GDPR and CCPA" --mode dual
+  python scripts/run_query.py "High-risk AI systems" --output results.json --verbose
+  python scripts/run_query.py "Test query" --no-answer  # Skip LLM call
+  python scripts/run_query.py "Test query" --json-full  # Full chunk text in JSON
 
 References:
-    - PHASE_3_DESIGN.md § 4 (Retrieval Pipeline)
-    - PHASE_3_DESIGN.md § 6 (Evaluation)
-"""
+    PHASE_3_DESIGN.md § 4 (Retrieval Pipeline)
+    PHASE_3_DESIGN.md § 6 (Evaluation)
 
+"""
+"""
 import sys
 import os
 import re

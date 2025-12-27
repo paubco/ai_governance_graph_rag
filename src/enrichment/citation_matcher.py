@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Citation and Metadata Entity Matching.
+Citation
 
 Identifies and matches metadata entities to structured nodes:
 - Citation entities → L2 Publications (via Scopus references)
@@ -8,15 +8,16 @@ Identifies and matches metadata entities to structured nodes:
 - Journal entities → Scopus Journal nodes
 - Document entities → L1 Publications OR Jurisdictions
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-22
+Examples:
+identifier = CitationEntityIdentifier()
+        citations = identifier.identify(entities, relations)
 
 References:
-    - See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    - See PHASE_2A_DESIGN.md for matching pipeline
-"""
+    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
+    See PHASE_2A_DESIGN.md for matching pipeline
 
+"""
+"""
 # Standard library
 import re
 from typing import Dict, List, Optional, Tuple

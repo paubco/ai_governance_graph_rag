@@ -1,19 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Module: chunk_processor.py
-Package: src.processing.chunks
-Purpose: Orchestrate document chunking pipeline with mode-aware output
+Document chunking pipeline orchestrator with mode-aware output
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+Orchestrates Phase 1A document chunking pipeline with mode-aware processing. Local
+mode performs chunking and merging using BGE-small, while server mode adds BGE-M3
+embedding with OOM recovery and checkpointing. Supports resume capability to skip
+chunking and jump to embedding phase.
+
+Modes:
+local     Chunking plus merge only using BGE-small, outputs chunks.jsonl
+    server    Chunking plus merge plus BGE-M3 embedding, outputs chunks_embedded.jsonl
+
+Examples:
+# Local mode for chunking and merge
+    python -m src.processing.chunks.chunk_processor --mode local
+
+    # Sample for testing
+    python -m src.processing.chunks.chunk_processor --mode local --sample 10 --seed 42
+
+    # Server mode with full embedding
+    python -m src.processing.chunks.chunk_processor --mode server
+
+    # Resume from checkpoint
+    python -m src.processing.chunks.chunk_processor --mode server --resume
 
 References:
-    - See ARCHITECTURE.md § 3.1.1 for Phase 1A design
-    - See CONTRIBUTING.md § 2 for foundation module usage
-    - See extraction_config.py CHUNKING_CONFIG for parameters
-"""
+ARCHITECTURE.md: Section 3.1.1 for Phase 1A design
+    CONTRIBUTING.md: Section 2 for foundation module usage
+    extraction_config.py: CHUNKING_CONFIG for parameters
 
+"""
 # Standard library
 import logging
 import sys

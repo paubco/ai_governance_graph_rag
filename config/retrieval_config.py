@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Module: retrieval.py
-Package: src.config
-Purpose: Configuration for Phase 3 retrieval pipeline
+Retrieval Config
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18 (consolidated from src/retrieval/config.py)
+# ============================================================================
+# ENTITY TYPES (v2.0 - imported from extraction_config.py for DRY)
+# ============================================================================
 
 References:
-    - ARCHITECTURE.md Â§ 5 (Phase 3)
-    - PHASE_3_DESIGN.md
-"""
+    ARCHITECTURE.md Â§ 5 (Phase 3)
+    PHASE_3_DESIGN.md
 
+"""
+"""
 import os
 from enum import Enum
 from dotenv import load_dotenv

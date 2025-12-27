@@ -1,13 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Entity type classification using negative template strategy.
+Entity type classification using negative template strategy
 
-Defines non-semantic entity types via negative template; everything else defaults to
-semantic types. After normalization, reduces ~900 entity types to 15 canonical academic
-types plus semantic types for knowledge graph construction. Used by entity filtering and
-relation extraction to determine which entities participate in semantic relation tracks.
+Defines non-semantic entity types via negative template where everything else defaults
+to semantic types. After normalization, reduces approximately 900 entity types to 15
+canonical academic types plus semantic types for knowledge graph construction. Used by
+entity filtering and relation extraction to determine which entities participate in
+semantic relation tracks versus academic citation tracks.
+
+Examples:
+>>> is_semantic('Regulation', 'GDPR')
+        True
+        >>> is_semantic('Journal', 'Nature')
+        False  # Academic type
+        >>> is_semantic('DOI', '10.1234/example')
+        False  # Skip type
+
+References:
+Entity classification strategy based on two-track extraction design
+
 """
-
 # ============================================================================
 # ACADEMIC TYPES - Track 2 subjects (excluded from semantic matrix)
 # ============================================================================

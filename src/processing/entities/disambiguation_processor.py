@@ -1,39 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1C Entity Disambiguation - Main Orchestrator (v2.0).
+Phase
 
 Two-path architecture:
     - Semantic path: FAISS blocking + tiered thresholds + LLM SameJudge
     - Metadata path: Document/DocumentSection relations, no merge
 
-v2.0 Changes:
-    - "Academic" → "Metadata" terminology
-    - 6 metadata types: Citation, Author, Journal, Affiliation, Document, DocumentSection
-    - NEW: SAME_AS relations (Document ↔ Regulation)
-    - PART_OF now links DocumentSection → Document (not Citation → Regulation)
-
-Usage:
-    # Full run
-    python -m src.processing.entities.disambiguation_processor
-    
-    # Sample for threshold tuning
-    python -m src.processing.entities.disambiguation_processor --sample 500 --seed 42
-    
-    # Resume from checkpoint
-    python -m src.processing.entities.disambiguation_processor --resume
-
-Outputs:
-    - data/processed/entities/entities_semantic.jsonl (without embeddings)
-    - data/processed/entities/entities_semantic_embedded.jsonl (with embeddings)
-    - data/processed/entities/entities_metadata.jsonl (without embeddings)
-    - data/processed/entities/entities_metadata_embedded.jsonl (with embeddings)
-    - data/processed/entities/aliases.json
-    - data/processed/relations/part_of_relations.jsonl (DocumentSection → Document)
-    - data/processed/relations/same_as_relations.jsonl (Document ↔ Regulation)
-    - data/interim/entities/filter_report.json
-    - data/interim/entities/hallucinations.jsonl
 """
-
+"""
 import os
 import sys
 import json

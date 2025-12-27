@@ -1,33 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Parallel pre-entity extraction processor with checkpoint/resume.
+Parallel
 
 Batch orchestration for Phase 1B entity extraction. Wraps DualPassEntityExtractor
 with threading, checkpointing, rate limiting, and progress tracking.
 
-Workflow:
-    1. Load chunks from JSONL file
-    2. Resume from checkpoint if available
-    3. Extract entities in parallel (N worker threads)
-    4. Save checkpoints every N chunks
-    5. Output pre_entities.jsonl
-
-Config:
-    --workers N: Parallel workers (3 for Tier 1, 10 for Tier 2+ rate limits)
-    --limit N: Process only N chunks (for testing)
-    --sample N: Random sample of N chunks (for testing)
-    --resume: Resume from checkpoint
-
-Example:
-    python -m src.processing.entities.pre_entity_processor --workers 4
+Examples:
+python -m src.processing.entities.pre_entity_processor --workers 4
     python -m src.processing.entities.pre_entity_processor --sample 50 --seed 42
     python -m src.processing.entities.pre_entity_processor --resume
 
 References:
-    - ARCHITECTURE.md Section 3.1.2
-    - v1.0 entity_processor.py (parallelism pattern)
-"""
+    ARCHITECTURE.md Section 3.1.2
+    v1.0 entity_processor.py (parallelism pattern)
 
+"""
+"""
 # Standard library
 import argparse
 import json

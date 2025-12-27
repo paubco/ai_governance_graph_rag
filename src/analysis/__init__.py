@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Evaluation module for AI governance GraphRAG pipeline.
+Evaluation
 
 Provides:
 - metrics.py: Dataclasses for entity resolution, retrieval, RAGAS, etc.
 - ablation_study.py: Comparative analysis across retrieval modes
-"""
 
+"""
+"""
 from src.analysis.retrieval_metrics import (
     EntityResolutionMetrics,
     GraphUtilizationMetrics,

@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-I/O utilities for pipeline artifacts.
+I/O utilities for pipeline artifacts
 
-Simple helpers for JSON/JSONL operations. No magic - just convenience
-functions with consistent encoding and logging.
+Simple helpers for JSON and JSONL operations with consistent encoding and logging.
+Provides convenience functions for loading and saving JSON files, streaming JSONL files,
+and
 
-v1.1: Simplified from over-engineered auto-split approach.
-
-Example:
+Examples:
+# JSON operations
     from src.utils.io import load_json, save_json, load_jsonl, save_jsonl
-    
     entities = load_json("data/processed/entities.json")
     save_json(entities, "data/processed/entities_v2.json")
-"""
 
+    # JSONL streaming
+    for record in stream_jsonl("data/interim/relations.jsonl"):
+        process(record)
+
+"""
 import json
 import logging
 from pathlib import Path

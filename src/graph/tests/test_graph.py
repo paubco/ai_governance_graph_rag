@@ -1,19 +1,12 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Phase 2B Graph Building Preflight Tests.
+Phase
 
 Quick sanity checks for Neo4j import and FAISS index building.
 Run before graph construction to catch configuration and import errors early.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-
-Usage:
-    python tests/test_graph.py
-    python tests/test_graph.py --test-neo4j  # Also test Neo4j connection
 """
-
+"""
 # Standard library
 import sys
 from pathlib import Path

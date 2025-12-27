@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Entity resolver for AI governance GraphRAG pipeline.
+Entity
 
 Resolves entity mentions from queries to canonical entity IDs in the knowledge
 graph. Uses three-stage matching:
@@ -8,11 +8,8 @@ graph. Uses three-stage matching:
     2. Alias match using aliases.json lookup
     3. FAISS semantic similarity for fuzzy matching
 
-v1.1 Changes:
-    - Added alias support (1,310 clusters, 2,594 aliases)
-    - Alias lookup: alias → canonical_name → entity_id
 """
-
+"""
 # Standard library
 import json
 from pathlib import Path

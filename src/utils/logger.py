@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Centralized logging configuration for GraphRAG pipeline.
+Centralized logging configuration for GraphRAG pipeline
 
-Provides consistent logging setup across all modules with optional file output.
-Each module should still use `logger = logging.getLogger(__name__)` after calling
-setup_logging() once at the entry point.
+Provides consistent logging setup across all modules with optional file output and
+real-time log streaming. Each module should call setup_logging() once at the entry
+point, then use logger = logging.getLogger(__name__) in individual modules.
 
-Example:
-    # In main script or entry point:
+Examples:
+# In main script or entry point
     from src.utils.logger import setup_logging
     setup_logging(log_file="logs/my_process.log")
 
-    # In any module:
+    # In any module
     import logging
     logger = logging.getLogger(__name__)
     logger.info("This will use the configured format")
-"""
 
+"""
 # Standard library
 import logging
 import sys

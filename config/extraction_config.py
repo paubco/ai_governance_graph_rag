@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Module: extraction_config.py
-Package: config
-Purpose: Configuration for all extraction phases (0B, 1A-1D, 2A)
+Extraction Config
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-20
+# ============================================================================
+# LOGGING
+# ============================================================================
 
 References:
-    - ARCHITECTURE.md Ã‚Â§ 3-4 (Phases 1-2)
-    - ARCHITECTURE.md Ã‚Â§ 7.5 (Type normalization)
-    - Phase 1B v2.0: Semantic + Metadata schema
-"""
+    ARCHITECTURE.md Ã‚Â§ 3-4 (Phases 1-2)
+    ARCHITECTURE.md Ã‚Â§ 7.5 (Type normalization)
+    Phase 1B v2.0: Semantic + Metadata schema
 
+"""
+"""
 import os
 from dotenv import load_dotenv
 

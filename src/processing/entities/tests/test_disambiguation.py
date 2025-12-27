@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Tests for Phase 1C entity disambiguation (v2.0).
+Tests
 
 Tests cover:
     - Pre-entity filtering (blacklist + provenance)
@@ -8,11 +8,8 @@ Tests cover:
     - Metadata disambiguation (Document/DocumentSection relations)
     - Alias tracking
 
-Run:
-    pytest tests/test_disambiguation.py -v
-    pytest tests/test_disambiguation.py -v -k "test_filter"  # specific
 """
-
+"""
 import pytest
 import json
 from typing import Dict, List

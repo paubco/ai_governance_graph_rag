@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Phase 1C Disambiguation Output Analysis & Quality Tests.
+Phase
 
 Comprehensive analysis of entity disambiguation outputs including:
 - Alias distribution and largest clusters
@@ -9,16 +9,8 @@ Comprehensive analysis of entity disambiguation outputs including:
 - Quality checks (short names, numeric patterns, high chunk counts)
 - Merge quality validation
 
-Usage:
-    python -m src.processing.entities.analyze_disambiguation
-    
-    # Or directly
-    python src/processing/entities/analyze_disambiguation.py
-
-Author: Pau Barba i Colomer
-Created: 2025-12-21
 """
-
+"""
 import json
 import re
 from pathlib import Path

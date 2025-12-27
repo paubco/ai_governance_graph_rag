@@ -1,20 +1,13 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Phase 2A Enrichment Preflight Tests.
+Phase
 
 Quick sanity checks for Scopus parsing, citation matching, metadata matching,
 and jurisdiction linking. Run before enrichment pipeline to catch configuration
 and import errors early.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-22
-
-Usage:
-    python tests/test_enrichment.py
 """
-
+"""
 # Standard library
 import sys
 from pathlib import Path

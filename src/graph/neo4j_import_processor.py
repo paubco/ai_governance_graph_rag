@@ -1,24 +1,13 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neo4j Import Processor for GraphRAG Knowledge Graph
+Neo4j
 
 Orchestrates complete Neo4j import with checkpointing and progress tracking.
 Handles loading all input files, database clearing with confirmation,
 import in correct dependency order, and checkpoint management for resume capability.
 
-Features:
-- Checkpointing for resumable imports
-- Automatic file loading and validation
-- Dependency-ordered node and relationship creation
-- Support for both regulatory and academic data sources
-- Enrichment relation integration (citations, entity matching)
-
-Usage:
-    python src/graph/neo4j_import_processor.py --clear --uri bolt://localhost:7687
-    python src/graph/neo4j_import_processor.py --force-restart
 """
-
+"""
 # Standard library
 import json
 import csv

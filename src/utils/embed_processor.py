@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Universal embedding processor with batch processing and checkpoints.
+Universal embedding processor with batch processing and checkpoints
 
 Orchestrates batch embedding pipeline with progress tracking and checkpointing.
-Works for both text chunks (Phase 1A-2) and entities (Phase 1C-1) using BGE-M3
+Works for both text chunks in Phase 1A-2 and entities in Phase 1C-1 using BGE-M3
 embedder. Features rolling checkpoint cleanup, optimized append phase without
-checkpoints to prevent O(nÂ²) slowdown, and numpy array serialization for JSON
-compatibility.
-"""
+checkpoints to prevent O(n²) slowdown, CUDA OOM recovery with automatic batch size
+reduction, and numpy array serialization for JSON compatibility.
 
+"""
 # Standard library
 import json
 import logging

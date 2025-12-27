@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Retrieval module for AI governance GraphRAG pipeline.
+Retrieval
 
 Phase 3 components:
 - QueryParser: Parse queries with LLM entity extraction
@@ -10,8 +10,9 @@ Phase 3 components:
 - ResultRanker: Multiplicative scoring and ranking
 - AnswerGenerator: Claude-based answer generation
 - RetrievalProcessor: Full pipeline orchestrator
-"""
 
+"""
+"""
 from src.retrieval.query_parser import QueryParser
 from src.retrieval.entity_resolver import EntityResolver
 from src.retrieval.graph_expander import GraphExpander

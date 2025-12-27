@@ -1,13 +1,13 @@
+# -*- coding: utf-8 -*-
 """
-Relation extraction test suite.
+Relation
 
 Simplified test script for relation extraction. Edit the TEST_ENTITIES
 configuration section to select entities for testing, then run the script
 to validate relation extraction before processing the full dataset.
 
-Run: python tests/processing/test_relation_extraction.py
 """
-
+"""
 import sys
 import json
 import logging

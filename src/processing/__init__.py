@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-AI Governance GraphRAG Pipeline - Processing package.
+AI
+
+Module providing   init   functionality
+
+"""
 """

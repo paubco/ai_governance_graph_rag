@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Pre-flight test for SameJudge before committing to full 21K pair run.
+Pre-flight
 
 Tests:
 1. API connection works
@@ -8,10 +8,8 @@ Tests:
 3. Rate limiting doesn't kill us
 4. Merge logic picks correct canonical
 
-Usage:
-    python -m src.processing.entities.tests.test_samejudge_preflight
 """
-
+"""
 import json
 import time
 import logging

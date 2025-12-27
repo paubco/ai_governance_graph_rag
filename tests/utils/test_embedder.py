@@ -1,11 +1,12 @@
+# -*- coding: utf-8 -*-
 """
-Universal embedder test suite for RAKG pipeline.
+Universal
 
 Tests BGEEmbedder and EmbedProcessor with both chunk and entity embedding
 using the universal architecture. Includes unit tests, integration tests
 with real data, and performance benchmarks.
 
-Run: pytest tests/utils/test_embedder.py -v
+"""
 """
 import sys
 import pytest

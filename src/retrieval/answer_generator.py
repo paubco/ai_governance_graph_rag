@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Answer generator for AI governance GraphRAG pipeline.
+Answer
 
 Generates answers from retrieval results using Claude API with structured prompts,
 token budgeting, and citation extraction.
-"""
 
+"""
+"""
 # Standard library
 import os
 from dataclasses import dataclass

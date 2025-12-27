@@ -1,28 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Module: test_chunking.py
-Package: src.processing.chunks.tests
-Purpose: CLI entry point for chunking pipeline with threshold experimentation
+Test Chunking
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+def parse_args():
 
-Usage:
-    # Local mode (laptop): chunking only, fast iteration
+Examples:
+# Quick local test with 10 docs (uses config defaults)
     python test_chunking.py --mode local --sample 10 --seed 42
     
-    # Server mode (GPU): chunking + embedding + dedup
-    python test_chunking.py --mode server --sample 10 --seed 42
+    # Override threshold
+    python test_chunking.py --mode local --threshold 0.50 --sample 20 --seed 42
     
-    # Full run (all documents)
+    # Full server run
     python test_chunking.py --mode server
 
 References:
-    - See ARCHITECTURE.md § 3.1.1 for Phase 1A design
-    - See extraction_config.py CHUNKING_CONFIG for default parameters
-"""
+    See ARCHITECTURE.md § 3.1.1 for Phase 1A design
+    See extraction_config.py CHUNKING_CONFIG for default parameters
 
+"""
+"""
 # Standard library
 import argparse
 import json

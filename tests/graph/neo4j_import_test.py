@@ -1,30 +1,13 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neo4j Import Verification Tests for GraphRAG Knowledge Graph
+Neo4j
 
 Verifies Neo4j import completeness and correctness by running comprehensive
 validation checks on node counts, relationship counts, data integrity,
 and query functionality.
 
-Verification Categories:
-1. Constraint Verification: Ensure all unique constraints are created
-2. Node Count Validation: Verify expected counts for all node types
-3. Relationship Count Validation: Verify expected relationship counts
-4. Orphan Node Detection: Find nodes without relationships
-5. Sample Query Testing: Validate key query patterns work correctly
-
-Test Coverage:
-- Entity-relation graph structure
-- Provenance paths (Jurisdiction/Publication → Chunk ← Entity)
-- Citation enrichment (Entity → L2Publication)
-- Metadata completeness (Author, Journal connections)
-
-Usage:
-    python tests/graph/neo4j_import_test.py
-    python tests/graph/neo4j_import_test.py --uri bolt://localhost:7687
 """
-
+"""
 # Standard library
 import os
 from pathlib import Path

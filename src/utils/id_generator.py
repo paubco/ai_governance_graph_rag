@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Deterministic ID generation for pipeline artifacts.
+Deterministic ID generation for pipeline artifacts
 
-Single source of truth for all ID generation. Uses SHA-256 hashing
-with consistent normalization for reproducible IDs across runs.
+Single source of truth for all ID generation across the pipeline. Uses SHA-256 hashing
+with consistent normalization for reproducible IDs across runs. Supports entity IDs,
+chunk IDs, publication IDs, author IDs, journal IDs, and relation IDs.
 
-v1.1: Consolidated from id_generator.py and add_entity_ids.py.
-      Standardized on SHA-256 with "name|type" format.
-
-Example:
+Examples:
+# Generate entity IDs
     from src.utils.id_generator import generate_entity_id, generate_chunk_id
-    
     entity_id = generate_entity_id("EU AI Act", "Regulation")
     # Returns: "ent_a3f4e9c2d5b1"
-"""
 
+    # Generate chunk IDs
+    chunk_id = generate_chunk_id("reg_EU", 42)
+    # Returns: "reg_EU_CHUNK_0042"
+
+"""
 import hashlib
 from typing import Optional
 

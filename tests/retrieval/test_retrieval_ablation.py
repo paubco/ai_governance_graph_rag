@@ -1,14 +1,22 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unified ablation study with comprehensive evaluation metrics.
+Unified
 
 Compares semantic, graph, and dual retrieval modes with RAGAS metrics (faithfulness
 and relevancy), entity resolution tracking, graph utilization, and coverage metrics
 for comprehensive analysis with detailed report generation.
 
-Example:
-    # Full suite (18 tests)
+Modes:
+test_num += 1
+                result = self.run_single_test(query_def, mode, test_num, total_tests)
+                self.results.append(result)
+        
+        return self.results
+    
+    def analyze_results(self):
+
+Examples:
+# Full suite (18 tests)
     python tests/retrieval/test_retrieval_ablation.py
 
     # Quick test (2 queries)
@@ -16,8 +24,9 @@ Example:
 
     # Skip RAGAS (faster)
     python tests/retrieval/test_retrieval_ablation.py --no-ragas
-"""
 
+"""
+"""
 # Standard library
 import argparse
 import json

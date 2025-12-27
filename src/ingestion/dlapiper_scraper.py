@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-DLA Piper AI Laws scraper for regulatory data acquisition.
+DLA
 
 Scrapes regulatory content from DLA Piper's AI Laws of the World database.
 Extracts country-specific AI regulations with section-level granularity.
 Outputs JSON files per country with regulatory sections, notes, and subsections.
 
-Data source: https://www.dlapiperintelligence.com/aihub/
 """
-
+"""
 # Standard library
 import json
 import logging

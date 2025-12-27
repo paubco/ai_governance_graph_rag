@@ -1,27 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Semantic entity disambiguation with alias tracking (v1.1).
+Semantic
 
 Handles the SEMANTIC path (9 types):
     RegulatoryConcept, TechnicalConcept, PoliticalConcept, EconomicConcept,
     Regulation, Technology, Organization, Location, Risk
 
-Stages:
-    Stage 1: ExactDeduplicator (hash-based exact deduplication + alias tracking)
-    Stage 2: FAISSBlocker (HNSW approximate nearest neighbors)
-    Stage 3: TieredThresholdFilter (similarity-based filtering with auto-merge)
-    Stage 4: SameJudge (LLM verification)
-
-v1.1 Changes:
-    - Alias tracking during merge (not post-hoc)
-    - Type routing helpers for two-path architecture
-    - Uses Mistral-7B for SameJudge (not Qwen due to JSON bugs)
-
-Example:
-    deduplicator = ExactDeduplicator()
+Examples:
+deduplicator = ExactDeduplicator()
     entities, aliases = deduplicator.deduplicate(raw_entities)
-"""
 
+"""
+"""
 # Standard library
 import hashlib
 import unicodedata

@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Module: pre_entity_extractor.py
-Package: src.processing.entities
-Purpose: Dual-pass entity extraction using Mistral-7B
+Pre Entity Extractor
 
-v2.0: Semantic + Metadata architecture
 - Semantic pass: 9 types (concepts, regulations, technology, etc.)
 - Metadata pass: 6 types (Citation, Author, Journal, Affiliation, Document, DocumentSection)
-"""
 
+"""
+"""
 # Standard library
 import json
 import logging

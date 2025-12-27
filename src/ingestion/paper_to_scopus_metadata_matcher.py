@@ -1,32 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Module: paper_to_scopus_metadata_matcher.py
-Package: src.ingestion
-Purpose: Link MinerU parsed papers to Scopus metadata using multi-strategy matching
+Paper To Scopus Metadata Matcher
 
-Author: Pau Barba i Colomer
-Created: 2025-11-15
-Modified: 2025-12-18
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 
-Matching strategies (in order):
-    1. DOI extraction from content_list.json (confidence: 1.0)
-    2. Title matching from content_list.json OR full.md (threshold: 0.70)
-    3. Abstract similarity matching (threshold: 0.60)
+Examples:
+python -m src.ingestion.paper_to_scopus_metadata_matcher
 
-Confidence tiers:
-    - HIGH: 0.85+ (auto-accept)
-    - MEDIUM: 0.70-0.85 (accept with note)
-    - LOW: 0.60-0.70 (flag for review)
-
-Output:
-    - paper_mapping.json with scopus_metadata added
-    - data/interim/academic/paper_scopus_matches.csv
-    - data/interim/academic/manual_review_needed.csv
-
-Example:
-    python -m src.ingestion.paper_to_scopus_metadata_matcher
 """
-
+"""
 # Standard library
 import json
 import re

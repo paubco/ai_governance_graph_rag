@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Thread-safe rate limiter for Together.ai API.
+Thread-safe rate limiter for Together.ai API
 
 Handles 3000 RPM limit with thread-safe token bucket pattern using sliding window
-algorithm. Prevents API throttling during parallel relation extraction. Uses RLock
-(reentrant lock) for recursive acquire() calls with better error handling.
-"""
+algorithm to prevent API throttling during parallel relation extraction. Uses RLock
+(reentrant lock) for recursive acquire() calls with better error handling and
+automatic blocking when rate limits are reached.
 
+References:
+Together.ai API: https://docs.together.ai/docs/rate-limits
+
+"""
 import time
 import threading
 from collections import deque

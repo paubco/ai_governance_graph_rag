@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Pre-entity filtering for Phase 1C entity disambiguation.
+Pre-entity
 
 Two-stage filtering:
     Stage 1: Blacklist patterns (removes obvious garbage)
     Stage 2: Provenance check (verifies entity appears in source text)
 
-Type-aware filtering allows numeric citations in Citation type only.
-Patterns imported from extraction_config.py (single source of truth).
-
-Example:
-    filter = PreEntityFilter(chunks)
+Examples:
+filter = PreEntityFilter(chunks)
     clean_entities, stats = filter.filter(pre_entities)
-"""
 
+"""
+"""
 import re
 import logging
 from typing import Dict, List, Tuple, Set

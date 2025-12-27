@@ -1,31 +1,13 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Neo4j Importer for GraphRAG Knowledge Graph
+Neo4j
 
 Core Neo4j import functionality with batched UNWIND pattern.
 Handles connection management, constraint creation, and all node/relationship imports
 using efficient batch processing with progress tracking.
 
-Import Categories:
-1. Nodes:
-   - Jurisdictions (regulatory sources)
-   - Publications (L1 source papers, L2 cited papers)
-   - Authors and Journals
-   - Chunks (text segments)
-   - Entities (normalized with IDs)
-2. Relationships:
-   - Provenance: CONTAINS, EXTRACTED_FROM
-   - Metadata: AUTHORED_BY, PUBLISHED_IN
-   - Semantic: RELATION (entity-entity)
-   - Enrichment: MATCHED_TO, CITES, SAME_AS
-
-Usage:
-    from src.graph.neo4j_importer import Neo4jImporter
-    importer = Neo4jImporter(uri, user, password)
-    importer.import_jurisdictions(session, data)
 """
-
+"""
 # Standard library
 import json
 from pathlib import Path

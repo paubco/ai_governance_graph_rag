@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-AI Governance GraphRAG Pipeline - Graph tests package.
+AI
+
+Module providing   init   functionality
+
+"""
 """

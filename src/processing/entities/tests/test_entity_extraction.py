@@ -1,20 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Test suite for Phase 1B entity extraction.
+Test
 
 Tests dual-pass entity extraction with Type x Domain schema validation.
 Uses pytest with fixtures for extractor and sample chunks.
 
-Run:
-    pytest src/processing/entities/tests/test_entity_extraction.py -v
-    pytest src/processing/entities/tests/test_entity_extraction.py -v -k "test_semantic"
-    pytest src/processing/entities/tests/test_entity_extraction.py -v -k "TestLiveAPI"
-
 References:
-    - CONTRIBUTING.md Section 2.3 (Testing standards)
-    - Phase 1B spec
-"""
+    CONTRIBUTING.md Section 2.3 (Testing standards)
+    Phase 1B spec
 
+"""
+"""
 import json
 import pytest
 from pathlib import Path

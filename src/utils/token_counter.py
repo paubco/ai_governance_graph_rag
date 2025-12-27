@@ -1,17 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-Token counting and cost estimation for LLM API calls.
+Token counting and cost estimation for LLM API calls
 
 Provides token counting using tiktoken and cost estimation for different Claude
-models with budget tracking for API calls. Supports input/output token tracking
-and per-model pricing calculation.
+models with budget tracking for API calls. Supports input/output token tracking,
+per-model pricing calculation, and cumulative cost tracking across multiple API calls.
 
-Example:
-    counter = TokenCounter(model='claude-sonnet')
+Examples:
+# Count tokens and estimate costs
+    counter = TokenCounter()
     tokens = counter.count_tokens("example prompt")
-    cost = counter.estimate_cost(input_tokens=1000, output_tokens=500)
-"""
+    cost = counter.estimate_cost(input_tokens=1000, output_tokens=500, model='claude-sonnet')
 
+    # Track API calls
+    counter.track_call(input_tokens=1000, output_tokens=500, model='claude-haiku')
+    totals = counter.get_totals()
+
+References:
+Tiktoken: https://github.com/openai/tiktoken
+    Anthropic Pricing: https://www.anthropic.com/pricing
+
+"""
 # Standard library
 import sys
 from pathlib import Path

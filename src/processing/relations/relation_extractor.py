@@ -1,32 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-RAKG-style relation extractor with entity_id-based output (v1.2).
+RAKG-style
 
 Implements retrieval-augmented relation extraction using two-stage MMR for semantic
 and entity diversity in chunk selection.
 
-Key v1.2 Changes:
-- Track 1 (Semantic): Entity-based, multi-chunk MMR with up to 3 rounds
-- Track 2 (Citation): Chunk-based, single chunk with fixed 'discusses' predicate
-- Type-filtered detected entities (semantic→semantic, citation→concepts)
-- Entity lookup keyed by entity_id (not name)
-- LLM prompt constrains output to valid entity_ids
+Modes:
+self._save_debug_files(entity_name, prompt, content, finish_reason)
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
+            raise
+    
+    def _save_debug_files(self, entity_name: str, prompt: str, response: str, finish_reason: str):
 
-Algorithm (Track 1):
-    1. Semantic MMR: Select top-k chunks by entity embedding similarity with diversity
-    2. Entity MMR: Add chunks containing co-occurring entities (diversified selection)
-    3. Threshold check: Trigger 2nd/3rd batch if centroid distance > threshold
-    4. LLM extraction: OpenIE triplet extraction with ID-constrained JSON schema
-    5. Validation: Verify output IDs exist in detected entity set
-
-Algorithm (Track 2):
-    1. Iterate over chunks (not entities)
-    2. For each chunk: find citations + concepts
-    3. Single LLM call per citation with 'discusses' predicate
-    4. No MMR, no batching - single chunk context
-
-Example:
-    extractor = RAKGRelationExtractor(
+Examples:
+extractor = RAKGRelationExtractor(
         model_name="mistralai/Mistral-7B-Instruct-v0.3",
         num_chunks=6, mmr_lambda=0.65
     )
@@ -34,8 +25,9 @@ Example:
     relations = extractor.extract_relations_for_entity(entity, chunks)
     # Track 2
     relations = extractor.extract_citation_relations_for_chunk(chunk, citations, concepts)
-"""
 
+"""
+"""
 # Standard library
 import json
 import os

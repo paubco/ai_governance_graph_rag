@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Graph expander for AI governance GraphRAG pipeline.
+Graph
 
 Layered expansion strategy:
 - Single entity: k-NN expansion via FAISS (bounded by k_candidates)
 - Multi-entity: Steiner Tree (connect) + k-NN expansion (context)
 
-Note: PCST expansion requires GDS 2.5+ (current: 2.4.6). Left as future work.
 """
-
+"""
 # Standard library
 from typing import List, Dict, Set, Tuple
 import json

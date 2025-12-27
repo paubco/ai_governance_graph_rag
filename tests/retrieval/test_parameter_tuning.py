@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Parameter Tuning Tests for Phase 3 Retrieval Pipeline.
+Parameter
 
 Tests different parameter combinations to evaluate sensitivity for entity resolution,
 ranking bonuses, and FAISS top-k settings with comparative analysis output.
 
-Example:
-    pytest test_parameter_tuning.py -v -s
+Examples:
+pytest test_parameter_tuning.py -v -s
     # Output: Comparison table showing parameter effects on entities, subgraphs, chunks
-"""
 
+"""
+"""
 # Standard library
 from pathlib import Path
 

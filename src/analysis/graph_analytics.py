@@ -1,17 +1,12 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Graph Analytics for GraphRAG Knowledge Graph
+Graph
 
 Runs analytical queries on Neo4j to compute network statistics,
 coverage metrics, and entity centrality measures.
 
-Usage:
-    python -m src.analysis.graph_analytics
-    python -m src.analysis.graph_analytics --verbose
-    python -m src.analysis.graph_analytics --output reports/graph_stats.json
 """
-
+"""
 import os
 import sys
 import json

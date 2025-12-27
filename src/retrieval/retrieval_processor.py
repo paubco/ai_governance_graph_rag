@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Retrieval processor for AI governance GraphRAG pipeline.
+Retrieval
 
 Orchestrates full retrieval pipeline combining query understanding and context
 retrieval.
-"""
 
+"""
+"""
 # Standard library
 from dataclasses import dataclass
 from pathlib import Path

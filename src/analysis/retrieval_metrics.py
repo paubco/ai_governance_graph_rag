@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Comprehensive evaluation metrics for retrieval ablation study.
+Comprehensive
 
 Provides metrics aligned with thesis objectives for factual accuracy, query relevance,
 and effective use of sources. Includes entity resolution, graph utilization, and
 RAGAS metrics for comprehensive retrieval system evaluation.
 
-Example:
-    metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
-"""
+Examples:
+metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
 
+"""
+"""
 # Standard library
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional

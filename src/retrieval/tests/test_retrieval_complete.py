@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Complete Phase 3 Retrieval Test Suite.
+Complete
 
 Tests Phase 3.3.1 (Query Understanding) and Phase 3.3.2 (Context Retrieval)
 with both mock tests and real integration tests.
 
-Example:
-    pytest src/retrieval/tests/test_retrieval_complete.py -v -m "not integration"
+Examples:
+pytest src/retrieval/tests/test_retrieval_complete.py -v -m "not integration"
     pytest src/retrieval/tests/test_retrieval_complete.py -v -m integration
-"""
 
+"""
+"""
 # Standard library
 import json
 import os

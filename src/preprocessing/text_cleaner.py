@@ -1,31 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Module: text_cleaner.py
-Package: src.preprocessing
-Purpose: Text cleaning with encoding fixes, HTML stripping, LaTeX removal, 
-         image placeholder removal, email removal, and section extraction
+Text Cleaner
 
-Author: Pau Barba i Colomer
-Created: 2025-12-18
-Modified: 2025-12-18
+image placeholder removal, email removal, and section extraction
 
-Cleaning steps:
-    1. Encoding fixes (ftfy via clean-text)
-    2. HTML tag stripping
-    3. LaTeX notation removal
-    4. Markdown image placeholder removal
-    5. Email address removal
-    6. Irrelevant section removal (ARTICLEINFO, ACKNOWLEDGMENTS, etc.)
-    7. Reference section extraction (saved separately, removed from text)
-    8. Whitespace normalization
-
-Configuration:
-    - Garbage sections and reference sections defined in extraction_config.py
-    
 References:
-    - See ARCHITECTURE.md § 7 for known issues
-"""
+    See ARCHITECTURE.md § 7 for known issues
 
+"""
+"""
 # Standard library
 import re
 import sys

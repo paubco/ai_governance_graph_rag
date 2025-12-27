@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Checkpoint manager for parallel extraction with thread-safe operations.
+Checkpoint manager for parallel extraction with thread-safe operations
 
 Handles progress tracking and JSONL append operations for parallel relation extraction
 with concurrent writes. Features O(1) append-only JSONL output, progress state tracking
-(counts, cost, ETA), rolling checkpoints (keeps N most recent), thread-safe file operations,
-and resume capability to skip completed entities.
+including counts, cost, and ETA calculations, rolling checkpoints keeping N most recent,
+thread-safe file operations, and resume capability to skip completed entities.
 
-Example:
+Examples:
+# Initialize checkpoint manager
     manager = CheckpointManager(output_dir=Path("data/interim/relations"))
     manager.set_start_time(datetime.now())
+
+    # Process entities with checkpointing
     manager.append_result(result_dict)
     manager.update_progress(cost=0.001, success=True)
-    completed = manager.load_completed_entities()  # Resume from checkpoint
-"""
 
+    # Resume from checkpoint
+    completed = manager.load_completed_entities()
+
+"""
 import json
 import logging
 from pathlib import Path

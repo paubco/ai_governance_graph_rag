@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Document loader module for data ingestion.
+Document
 
 Loads documents from different sources (DLA Piper regulations and academic papers)
 into standardized Document format for downstream processing. Handles regulations
 (one document per country, concatenated sections) and academic papers (markdown-
 preserved) with detailed provenance metadata tracking.
 
-Example:
-    loader = DocumentLoader(year='2023')
+Examples:
+loader = DocumentLoader(year='2023')
     documents = loader.load_all_documents()
     # Returns: List[Document] with regulations and papers
-"""
 
+"""
+"""
 import json
 import csv
 from pathlib import Path

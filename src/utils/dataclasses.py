@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Core data structures for AI Governance GraphRAG Pipeline.
+Core data structures for AI Governance GraphRAG Pipeline
 
-Single source of truth for all pipeline data structures. Import from here,
-not from individual modules.
+Single source of truth for all pipeline data structures. Defines dataclasses for
+chunks, entities, relations, and retrieval components used throughout the pipeline.
+Import from this module rather than individual modules for consistency.
 
-v1.1 Changes:
-- Simplified PreEntity (flat, no nesting, no confidence)
-- Added aliases field to Entity
-- Standardized Relation to use IDs not names
-- Added domain and embedding_text to PreEntity for Type×Domain schema
-
-Example:
+Examples:
+# Import core data structures
     from src.utils.dataclasses import Entity, PreEntity, Relation, Chunk
-"""
 
+    # Create entity
+    entity = Entity(
+        entity_id="ent_abc123",
+        name="GDPR",
+        type="Regulation",
+        description="General Data Protection Regulation",
+        chunk_ids=["chunk_001"]
+    )
+
+"""
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Dict, Any
 from enum import Enum

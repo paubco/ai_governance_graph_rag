@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Dual-channel chunk retrieval for AI governance GraphRAG pipeline.
+Dual-channel
 
 Implements combined graph-based and semantic retrieval for context gathering.
-"""
 
+"""
+"""
 # Standard library
 from typing import List
 import json

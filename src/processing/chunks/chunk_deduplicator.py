@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Module: chunk_deduplicator.py
-Package: src.processing.chunks
-Purpose: Deduplicate chunks using embedding cosine similarity
+Chunk deduplication using embedding cosine similarity
 
-Author: Pau Barba i Colomer
-Created: 2025-01-XX
-Modified: 2025-01-XX
+Deduplicates chunks using cosine similarity on BGE-M3 embeddings with configurable
+threshold. Processes chunks in batches to avoid memory issues with large matrices,
+marks higher-index chunks as duplicates, and tracks duplicate pairs for reporting
+and analysis.
 
 References:
-    - See ARCHITECTURE.md § 3.1.1 for deduplication design
-"""
+ARCHITECTURE.md: Section 3.1.1 for deduplication design
 
+"""
 # Standard library
 import logging
 import sys

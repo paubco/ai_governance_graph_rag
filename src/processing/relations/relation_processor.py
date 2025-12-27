@@ -1,30 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Parallel relation extraction processor with checkpoint resume (v1.2).
+Parallel
 
 Coordinates parallel extraction of relations using two-track architecture:
 - Track 1 (Semantic): Entity-based, multi-chunk MMR (loops over entities)
 - Track 2 (Citation): Chunk-based, single chunk context (loops over chunks)
 
-v1.2 Changes:
-- Uses entity_id throughout (no post-hoc name normalization)
-- Separate processing methods for each track
-- Track 2 uses chunk-based loop with process_citation_track()
-
-Usage:
-    # Full extraction (both tracks)
-    python -m src.processing.relations.relation_processor
-    
-    # Semantic track only (100 entity test)
-    python -m src.processing.relations.relation_processor --track semantic --entities 100
-    
-    # Citation track only
-    python -m src.processing.relations.relation_processor --track citation
-    
-    # Resume from checkpoint
-    python -m src.processing.relations.relation_processor --resume
 """
-
+"""
 # Standard library
 import argparse
 import json

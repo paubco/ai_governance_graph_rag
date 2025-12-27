@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Preflight test for Phase 1D relation extraction (v1.2).
+Preflight
 
 Tests extraction on 10 hand-picked entities covering edge cases before full run.
 Validates:
@@ -10,13 +10,8 @@ Validates:
 4. No self-references
 5. Cost within expected range
 
-Usage:
-    python -m src.processing.relations.tests.test_relation_preflight
-    
-    # Verbose output
-    python -m src.processing.relations.tests.test_relation_preflight --verbose
 """
-
+"""
 # Standard library
 import json
 import sys

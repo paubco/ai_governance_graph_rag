@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-FAISS Index Builder for GraphRAG Vector Store.
+FAISS
 
 Builds FAISS HNSW indexes for entity and chunk embeddings with parallel ID mapping.
 Handles embedding extraction, index construction, and persistence.
 
-Author: Pau Barba i Colomer
-Created: 2025-12-21
-Modified: 2025-12-21
+Examples:
+builder = FAISSIndexBuilder(Path('data/processed/faiss'))
+        builder.build_all_indexes(entities_file, chunks_file)
 
 References:
-    - See ARCHITECTURE.md § 3.2.2 for Phase 2B context
-    - See PHASE_2B_DESIGN.md for FAISS indices
-"""
+    See ARCHITECTURE.md § 3.2.2 for Phase 2B context
+    See PHASE_2B_DESIGN.md for FAISS indices
 
+"""
+"""
 # Standard library
 import json
 from pathlib import Path

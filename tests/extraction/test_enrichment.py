@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Module: test_enrichment.py
-Package: tests
-Purpose: Critical tests for Phase 2A Scopus enrichment
+Test Enrichment
 
-Author: Pau Barba i Colomer
-Created: 2025-12-05
-Modified: 2025-12-05
+# ==============================================================================
+# REFERENCE PARSING TESTS
+# ==============================================================================
 
-Tests cover:
-- Reference parsing (string manipulation - error prone)
-- Citation matching (core algorithm)
-- L1 overlap detection (critical correctness)
-- Confidence scoring (correctness checks)
-
-Run: pytest tests/test_enrichment.py -v
 """
-
+"""
 import sys
 from pathlib import Path
 

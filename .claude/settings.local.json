@@ -8,7 +8,9 @@
       "Bash(cat:*)",
       "Bash(for dir in src/*/)",
       "Bash(done)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python update_headers.py:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

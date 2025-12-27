@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LaTeX exporter for ablation study results.
+LaTeX
 
 Generates:
 1. ablation_table.tex - Results table grouped by category (both modes)
@@ -8,12 +8,19 @@ Generates:
 3. ablation_appendix.tex - Detailed I/O per query (DETAILED MODE ONLY)
 4. ablation_data.tex - Data for pgfplots figures (both modes)
 
-Usage:
-    from src.analysis.ablation_latex_export import LaTeXExporter
-    exporter = LaTeXExporter(json_path, is_detailed=True)
-    exporter.export_all(output_dir)
-"""
+Modes:
+scores.append(modes[mode]['ragas']['faithfulness_score'])
+                if scores:
+                    avg = sum(scores) / len(scores)
+                    mode_cap = mode.capitalize()
+                    lines.append(f"\\newcommand{{\\faith{cat_safe}{mode_cap}}}{{{avg:.2f}}}")
+        
+        return "\n".join(lines)
+    
+    def generate_grouped_table_tex(self) -> str:
 
+"""
+"""
 import json
 import re
 from pathlib import Path

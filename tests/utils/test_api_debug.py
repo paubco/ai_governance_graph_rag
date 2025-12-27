@@ -1,13 +1,13 @@
+# -*- coding: utf-8 -*-
 """
-Together.ai API debugging test suite.
+Together.ai
 
 Tests three scenarios: basic connectivity (hello world), simple JSON extraction,
 and minimal relation extraction. Used for debugging API issues and validating
 Together.ai API integration.
 
-Run: python tests/utils/test_api_debug.py
 """
-
+"""
 import os
 import json
 from together import Together

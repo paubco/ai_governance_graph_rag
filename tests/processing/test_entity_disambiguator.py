@@ -1,14 +1,14 @@
+# -*- coding: utf-8 -*-
 """
-Entity disambiguation test suite for CPU version.
+Entity
 
 Tests all 4 stages of entity disambiguation: ExactDeduplicator (hash-based
 exact deduplication), FAISSBlocker (HNSW blocking), TieredThresholdFilter
 (threshold-based filtering), and SameJudge (LLM-based verification).
 Includes integration tests for full pipeline.
 
-Run: pytest tests/processing/test_entity_disambiguator.py -v
 """
-
+"""
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock

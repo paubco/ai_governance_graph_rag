@@ -1,37 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Entity co-occurrence matrix construction with entity_id output (v1.2).
+Entity
 
 Pre-computes which normalized entities appear in each chunk using three
 type-filtered matrices for optimized relation extraction lookups.
 
-v1.2 Changes:
-- Output format: {chunk_id: [entity_ids]} instead of {chunk_id: [names]}
-- Uses entity_id from Phase 1C disambiguation output
-- Enables direct ID-based relation extraction without name→ID lookup
+Examples:
+python -m src.processing.relations.build_entity_cooccurrence
 
-Matrix types:
-    semantic: Excludes academic entities (Track 1 OpenIE)
-    concept: Only concept-type entities (Track 2 objects)
-    full: All entities except skip types (backup/debugging)
-
-Input files:
-    entities_semantic_embedded.jsonl (~21K entities with entity_id)
-    entities_metadata_embedded.jsonl (~17K entities with entity_id)
-    chunks_embedded.jsonl (25,131 chunks)
-
-Output files:
-    cooccurrence_semantic.json {chunk_id: [entity_ids]}
-    cooccurrence_concept.json {chunk_id: [entity_ids]}
-    cooccurrence_full.json {chunk_id: [entity_ids]}
-    entity_id_lookup.json {entity_id: entity_dict}
-
-Runtime: ~2-5 minutes (uses entity chunk_ids, no scanning)
-
-Example:
-    python -m src.processing.relations.build_entity_cooccurrence
 """
-
+"""
 # Standard library
 import json
 import logging

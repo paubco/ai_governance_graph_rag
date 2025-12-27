@@ -1,24 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-Module: citations.py
-Package: src/utils
-Purpose: Citation formatting for papers and regulations
+Citation formatting for papers and regulations
 
-Provides proper attribution for retrieved chunks:
-- Scopus papers: Authors, Year, Title, Journal, DOI/URL
-- DLA Piper regulations: Jurisdiction, URL
+Provides proper attribution for retrieved chunks from both Scopus academic papers
+and DLA Piper regulations. Formats citations with authors, year, title, journal,
+DOI, and URLs for academic papers, and jurisdiction-specific URLs for regulations.
 
-Usage:
+Examples:
+    # Initialize formatter
     from src.utils.citations import CitationFormatter
-    
-    formatter = CitationFormatter()  # Loads paper_mapping.json
+    formatter = CitationFormatter()
+
+    # Format paper citation
     citation = formatter.format(doc_id='paper_001', doc_type='paper')
     # Returns: {'authors': 'Smith et al.', 'year': 2023, 'title': '...', ...}
 
-Author: Pau Barba i Colomer
-Created: 2025-12-27
-"""
+    # Format regulation citation
+    citation = formatter.format(doc_id='FR', doc_type='regulation', jurisdiction='FR')
 
+References:
+    DLA Piper AI Laws: https://intelligence.dlapiper.com/artificial-intelligence/
+"""
 import json
 from pathlib import Path
 from typing import Dict, Optional, Any
