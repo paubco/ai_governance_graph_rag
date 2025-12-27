@@ -119,7 +119,7 @@ class RAGASEvaluator:
             # Embed all claims
             embeddings = []
             for claim in claims:
-                emb = self.embedder.embed_query(claim)
+                emb = self.embedder.embed_single(claim)
                 embeddings.append(emb)
             
             embeddings = np.array(embeddings)
@@ -528,13 +528,13 @@ class AblationTestSuite:
                         'supported_claims': faith['supported'],
                         'total_claims': faith['total'],
                         'explanation': faith['explanation'],
-                        'claims': faith.get('claims', []),  # Store claims for retrospective analysis
-                        'csd_score': csd_result.get('csd_score'),
-                        'csd_mean_similarity': csd_result.get('mean_similarity'),
-                        'csd_n_claims': csd_result.get('n_claims', 0)
+                        'claims': faith.get('claims', [])  # Store for future analysis
                     },
                     relevancy_score=rel['score'],
-                    relevancy_explanation=rel['explanation']
+                    relevancy_explanation=rel['explanation'],
+                    csd_score=csd_result.get('csd_score'),
+                    csd_mean_similarity=csd_result.get('mean_similarity'),
+                    csd_n_claims=csd_result.get('n_claims', 0)
                 )
             else:
                 ragas_metrics = RAGASMetrics(
@@ -968,7 +968,10 @@ class AblationTestSuite:
                     'faithfulness_score': r.ragas.faithfulness_score,
                     'faithfulness_details': r.ragas.faithfulness_details,
                     'relevancy_score': r.ragas.relevancy_score,
-                    'relevancy_explanation': r.ragas.relevancy_explanation
+                    'relevancy_explanation': r.ragas.relevancy_explanation,
+                    'csd_score': r.ragas.csd_score,
+                    'csd_mean_similarity': r.ragas.csd_mean_similarity,
+                    'csd_n_claims': r.ragas.csd_n_claims
                 },
                 'performance': {
                     'retrieval_time': r.performance.retrieval_time,
@@ -1014,9 +1017,14 @@ class AblationTestSuite:
         for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
+                # CSD avg (handle None values)
+                csd_values = [r.ragas.csd_score for r in mode_results if r.ragas.csd_score is not None]
+                csd_avg = sum(csd_values) / len(csd_values) if csd_values else None
+                
                 mode_stats[mode] = {
                     'faith_avg': sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results),
                     'relev_avg': sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results),
+                    'csd_avg': csd_avg,
                     'time_avg': sum(r.performance.total_time for r in mode_results) / len(mode_results),
                     'cost_avg': sum(r.performance.cost_usd for r in mode_results) / len(mode_results),
                     'entities_avg': sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results),
@@ -1031,6 +1039,8 @@ class AblationTestSuite:
         total_time = sum(r.performance.total_time for r in successful_tests)
         avg_faith = sum(r.ragas.faithfulness_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
         avg_relev = sum(r.ragas.relevancy_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
+        csd_values_all = [r.ragas.csd_score for r in successful_tests if r.ragas.csd_score is not None]
+        avg_csd = sum(csd_values_all) / len(csd_values_all) if csd_values_all else None
         
         report = f"""# GraphRAG Retrieval Ablation Study v1.1
 
@@ -1059,6 +1069,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 |--------|-------|
 | Avg Faithfulness | {avg_faith:.3f} |
 | Avg Relevancy | {avg_relev:.3f} |
+| Avg Claim Diversity | {f'{avg_csd:.3f}' if avg_csd else 'N/A'} |
 | Entity Resolution | 100% (in-domain) |
 | Best Overall Mode | {'semantic' if mode_stats.get('semantic', {}).get('faith_avg', 0) >= mode_stats.get('graph', {}).get('faith_avg', 0) else 'graph'} |
 
@@ -1067,13 +1078,14 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 ## Mode Comparison
 
 ### Performance by Mode
-| Mode | Faithfulness | Relevancy | Resolution | E.Cov | R.Cov | Time | Cost |
-|------|-------------|-----------|------------|-------|-------|------|------|
+| Mode | Faithfulness | Relevancy | CSD | Resolution | E.Cov | R.Cov | Time | Cost |
+|------|-------------|-----------|-----|------------|-------|-------|------|------|
 """
         for mode, stats in mode_stats.items():
             best_faith = max(s.get('faith_avg', 0) for s in mode_stats.values())
             marker = "**" if stats['faith_avg'] == best_faith else ""
-            report += f"| {mode.upper()} | {marker}{stats['faith_avg']:.3f}{marker} | {stats['relev_avg']:.3f} | {stats['resolution_avg']:.1%} | {stats['e_cov_avg']:.1%} | {stats['r_cov_avg']:.1%} | {stats['time_avg']:.1f}s | ${stats['cost_avg']:.4f} |\n"
+            csd_str = f"{stats['csd_avg']:.3f}" if stats.get('csd_avg') else "N/A"
+            report += f"| {mode.upper()} | {marker}{stats['faith_avg']:.3f}{marker} | {stats['relev_avg']:.3f} | {csd_str} | {stats['resolution_avg']:.1%} | {stats['e_cov_avg']:.1%} | {stats['r_cov_avg']:.1%} | {stats['time_avg']:.1f}s | ${stats['cost_avg']:.4f} |\n"
         
         report += """
 ### Graph Utilization by Mode
