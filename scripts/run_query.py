@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # Local imports
 from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
-from src.retrieval.config import RetrievalMode
+from src.config.retrieval_config import RetrievalMode
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
 from src.utils.citations import CitationFormatter
