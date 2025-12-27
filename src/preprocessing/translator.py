@@ -9,7 +9,6 @@ References:
     See ARCHITECTURE.md § 7 for known issues (non-English docs)
 
 """
-"""
 # Standard library
 import os
 import json

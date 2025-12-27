@@ -19,7 +19,6 @@ References:
     See extraction_config.py CHUNKING_CONFIG for default parameters
 
 """
-"""
 # Standard library
 import argparse
 import json

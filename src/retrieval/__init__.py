@@ -12,7 +12,6 @@ Phase 3 components:
 - RetrievalProcessor: Full pipeline orchestrator
 
 """
-"""
 from src.retrieval.query_parser import QueryParser
 from src.retrieval.entity_resolver import EntityResolver
 from src.retrieval.graph_expander import GraphExpander

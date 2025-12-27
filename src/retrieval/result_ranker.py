@@ -12,7 +12,6 @@ Modes:
     DUAL: Two-stage (graph recall + semantic rerank)
 
 """
-"""
 # Standard library
 from typing import List, Set, Dict, Optional
 from dataclasses import dataclass

@@ -1,17 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-Extraction Config
+Configuration settings for graph construction pipeline (Phases 0-2).
 
-# ============================================================================
-# LOGGING
-# ============================================================================
+Centralizes all parameters for the document-to-graph pipeline including scraping,
+preprocessing, chunking, entity extraction, disambiguation, relation extraction,
+enrichment, and storage. Defines the v2.0 dual-type system (semantic + metadata
+entities), model selections, thresholds, and batch processing settings.
+
+Configuration sections:
+    - API keys and logging
+    - Phase 0B: Preprocessing (cleaning, translation, garbage removal)
+    - Phase 1A: Chunking (semantic boundary detection, deduplication)
+    - Phase 1B: Entity extraction (dual-pass LLM with Mistral-7B)
+    - Phase 1C: Disambiguation (FAISS blocking, tiered thresholds, SameJudge)
+    - Phase 1D: Relation extraction (semantic + citation tracks)
+    - Phase 2A: Scopus enrichment (authors, journals, citations)
+    - Phase 2B: Storage (Neo4j import, FAISS indices)
+
+Examples:
+    # Import entity types for extraction
+    from config.extraction_config import SEMANTIC_ENTITY_TYPES, METADATA_ENTITY_TYPES
+
+    # Access chunking parameters
+    from config.extraction_config import CHUNKING_CONFIG
+    threshold = CHUNKING_CONFIG['similarity_threshold']
+
+    # Use disambiguation settings
+    from config.extraction_config import DISAMBIGUATION_CONFIG
+    auto_merge = DISAMBIGUATION_CONFIG['auto_merge_threshold']
 
 References:
-    ARCHITECTURE.md Ã‚Â§ 3-4 (Phases 1-2)
-    ARCHITECTURE.md Ã‚Â§ 7.5 (Type normalization)
-    Phase 1B v2.0: Semantic + Metadata schema
-
-"""
+    ARCHITECTURE.md (Phases 1-2 pipeline design)
+    Mistral-7B: mistralai/Mistral-7B-Instruct-v0.3 (entity/relation extraction)
+    BGE-M3: BAAI/bge-m3 (embedding model for chunks and entities)
+    FAISS: Facebook AI Similarity Search for blocking and retrieval
 """
 import os
 from dotenv import load_dotenv

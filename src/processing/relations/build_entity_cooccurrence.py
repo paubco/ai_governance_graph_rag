@@ -9,7 +9,6 @@ Examples:
 python -m src.processing.relations.build_entity_cooccurrence
 
 """
-"""
 # Standard library
 import json
 import logging

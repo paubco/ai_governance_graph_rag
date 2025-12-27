@@ -10,7 +10,6 @@ Examples:
 metrics = EntityResolutionMetrics(extracted_count=5, resolved_count=4)
 
 """
-"""
 # Standard library
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional

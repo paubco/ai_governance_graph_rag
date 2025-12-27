@@ -10,7 +10,6 @@ References:
     Phase 1B spec
 
 """
-"""
 import json
 import pytest
 from pathlib import Path

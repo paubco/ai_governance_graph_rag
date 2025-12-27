@@ -7,7 +7,6 @@ Test Preprocessing
 # ============================================================================
 
 """
-"""
 # Standard library
 import sys
 from pathlib import Path

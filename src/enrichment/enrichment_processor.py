@@ -10,7 +10,6 @@ References:
     See PHASE_2A_DESIGN.md for matching pipeline
 
 """
-"""
 # Standard library
 import json
 import sys

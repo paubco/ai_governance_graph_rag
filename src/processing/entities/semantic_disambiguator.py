@@ -11,7 +11,6 @@ deduplicator = ExactDeduplicator()
     entities, aliases = deduplicator.deduplicate(raw_entities)
 
 """
-"""
 # Standard library
 import hashlib
 import unicodedata

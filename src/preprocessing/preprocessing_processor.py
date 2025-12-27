@@ -1,14 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-Preprocessing Processor
+Document preprocessing pipeline for GraphRAG corpus preparation.
 
-@dataclass
-class CleanedDocument:
+Orchestrates the complete preprocessing workflow including text cleaning,
+language detection, translation, and reference extraction. Processes raw
+documents from regulations and academic papers into normalized English text
+ready for chunking and entity extraction.
+
+Pipeline stages:
+    1. Text cleaning - Remove encoding artifacts, HTML tags, LaTeX commands
+    2. Language detection - Identify document language with confidence scores
+    3. Translation - Convert non-English documents to English via Google Translate
+    4. Reference extraction - Extract bibliographies from academic papers
+    5. Output generation - Save cleaned JSONL, references, and statistics report
+
+Examples:
+    # Run preprocessing on 2023 documents
+    from src.ingestion.document_loader import DocumentLoader
+    from src.preprocessing.preprocessing_processor import PreprocessingProcessor
+
+    loader = DocumentLoader(year='2023')
+    processor = PreprocessingProcessor(document_loader=loader)
+    cleaned_docs = processor.process_all()
+
+    # Use custom output directory
+    processor = PreprocessingProcessor(
+        document_loader=loader,
+        output_dir="data/custom/preprocessed"
+    )
+
+    # Run from command line
+    python -m src.preprocessing.preprocessing_processor
 
 References:
+    langdetect library: https://github.com/Mimino666/langdetect
+    Google Translate API: https://cloud.google.com/translate/docs
     See ARCHITECTURE.md § 7 for known issues
-
-"""
 """
 # Standard library
 import sys

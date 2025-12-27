@@ -7,7 +7,6 @@ Handles loading all input files, database clearing with confirmation,
 import in correct dependency order, and checkpoint management for resume capability.
 
 """
-"""
 # Standard library
 import json
 import csv

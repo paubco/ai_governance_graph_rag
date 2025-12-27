@@ -7,7 +7,6 @@ Run:
     python -m src.processing.entities.tests.test_extraction_quality --file data/interim/entities/pre_entities.jsonl --sample-type Citation --n 15
 
 """
-"""
 import argparse
 import json
 import sys

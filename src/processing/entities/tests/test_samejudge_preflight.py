@@ -9,7 +9,6 @@ Tests:
 4. Merge logic picks correct canonical
 
 """
-"""
 import json
 import time
 import logging

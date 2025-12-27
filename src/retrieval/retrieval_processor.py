@@ -6,7 +6,6 @@ Orchestrates full retrieval pipeline combining query understanding and context
 retrieval.
 
 """
-"""
 # Standard library
 from dataclasses import dataclass
 from pathlib import Path

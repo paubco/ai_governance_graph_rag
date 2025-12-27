@@ -6,7 +6,6 @@ Validates that relation subject and object entities share at least one chunk.
 Removes hallucinated relations where entities never co-occur.
 
 """
-"""
 import json
 import sys
 import argparse

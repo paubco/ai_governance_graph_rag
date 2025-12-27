@@ -15,7 +15,6 @@ References:
     v1.0 entity_processor.py (parallelism pattern)
 
 """
-"""
 # Standard library
 import argparse
 import json

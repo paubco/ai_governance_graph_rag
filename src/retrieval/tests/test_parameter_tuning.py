@@ -9,7 +9,6 @@ Examples:
 pytest src/retrieval/tests/test_parameter_tuning.py -v -s
 
 """
-"""
 # Standard library
 from pathlib import Path
 

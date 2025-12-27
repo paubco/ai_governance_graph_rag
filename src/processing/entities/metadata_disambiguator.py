@@ -10,7 +10,6 @@ disambiguator = MetadataDisambiguator(semantic_entities)
     metadata_entities, part_of, same_as = disambiguator.process(metadata_raw)
 
 """
-"""
 import re
 import logging
 from typing import Dict, List, Tuple, Optional

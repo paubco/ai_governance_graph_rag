@@ -1,24 +1,46 @@
 # -*- coding: utf-8 -*-
 """
-Script:
+GraphRAG Query Interface
 
-# ============================================================================
-# ARGUMENT PARSING
-# ============================================================================
+This script provides a command-line interface for querying the GraphRAG system built
+by run_graph_construction.py. It executes the full Phase 3 retrieval pipeline: entity
+resolution via FAISS, graph expansion using PCST, chunk retrieval (semantic + graph
+tracks), ranking with entity coverage scoring, and answer generation via Claude Haiku.
+
+The script supports three retrieval modes for ablation studies: SEMANTIC (vector-only
+baseline), GRAPH (entity-centric expansion), and DUAL (combined approach). Query parsing
+extracts jurisdiction and document type hints for source filtering, enabling comparative
+questions like "Compare EU and US AI regulations". Results include retrieved chunks with
+provenance, citations, cost estimates, and optional debug scoring breakdowns.
+
+Modes:
+    --mode           Retrieval strategy: dual (default), semantic, graph
+    --output         Save full results to JSON file
+    --verbose        Display detailed intermediate steps and chunk text
+    --debug          Show scoring breakdown for ranking decisions
+    --no-answer      Skip LLM answer generation (retrieval testing only)
+    --json-full      Include complete chunk text in JSON output
 
 Examples:
-python scripts/run_query.py "What is the EU AI Act?"
-  python scripts/run_query.py "Compare GDPR and CCPA" --mode dual
-  python scripts/run_query.py "High-risk AI systems" --output results.json --verbose
-  python scripts/run_query.py "Test query" --no-answer  # Skip LLM call
-  python scripts/run_query.py "Test query" --json-full  # Full chunk text in JSON
+    # Standard query with dual retrieval
+    python scripts/run_query.py "What is the EU AI Act?"
+
+    # Ablation study: semantic-only baseline
+    python scripts/run_query.py "High-risk AI systems" --mode semantic
+
+    # Save detailed results with scoring debug info
+    python scripts/run_query.py "Compare GDPR and CCPA" --debug --output results.json
+
+    # Test retrieval without LLM call (faster, cheaper)
+    python scripts/run_query.py "Test query" --no-answer --verbose
 
 References:
-    PHASE_3_DESIGN.md § 4 (Retrieval Pipeline)
-    PHASE_3_DESIGN.md § 6 (Evaluation)
+    PHASE_3_DESIGN.md § 4 (Retrieval Pipeline Architecture)
+    PHASE_3_DESIGN.md § 6 (Evaluation Metrics)
+    Claude Haiku API: claude-3-5-haiku-20241022
+    PCST: Prize-Collecting Steiner Tree graph expansion algorithm
+"""
 
-"""
-"""
 import sys
 import os
 import re

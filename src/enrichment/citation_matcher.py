@@ -17,7 +17,6 @@ References:
     See PHASE_2A_DESIGN.md for matching pipeline
 
 """
-"""
 # Standard library
 import re
 from typing import Dict, List, Optional, Tuple

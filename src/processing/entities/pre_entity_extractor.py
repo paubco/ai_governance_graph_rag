@@ -6,7 +6,6 @@ Pre Entity Extractor
 - Metadata pass: 6 types (Citation, Author, Journal, Affiliation, Document, DocumentSection)
 
 """
-"""
 # Standard library
 import json
 import logging

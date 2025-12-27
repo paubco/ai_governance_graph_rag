@@ -6,7 +6,6 @@ Parses user queries into structured format with LLM-based entity extraction,
 rule-based metadata filter extraction, and query embedding.
 
 """
-"""
 # Standard library
 import json
 import os

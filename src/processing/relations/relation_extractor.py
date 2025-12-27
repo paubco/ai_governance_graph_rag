@@ -27,7 +27,6 @@ extractor = RAKGRelationExtractor(
     relations = extractor.extract_citation_relations_for_chunk(chunk, citations, concepts)
 
 """
-"""
 # Standard library
 import json
 import os

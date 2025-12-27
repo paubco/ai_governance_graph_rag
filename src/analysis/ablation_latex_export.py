@@ -20,7 +20,6 @@ scores.append(modes[mode]['ragas']['faithfulness_score'])
     def generate_grouped_table_tex(self) -> str:
 
 """
-"""
 import json
 import re
 from pathlib import Path

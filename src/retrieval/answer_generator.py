@@ -1,11 +1,40 @@
 # -*- coding: utf-8 -*-
 """
-Answer
+Answer generation for GraphRAG retrieval pipeline using Claude API.
 
-Generates answers from retrieval results using Claude API with structured prompts,
-token budgeting, and citation extraction.
+Converts retrieval results (chunks, entities, relations) into natural language answers
+with inline citations. Implements smart token budgeting to fit retrieved context within
+Claude Haiku's 15K token limit, including automatic chunk truncation and prioritization.
+Tracks token usage and cost for evaluation purposes.
 
-"""
+The generator formats retrieval results into structured prompts with graph structure,
+entity context, and source chunks, then calls Claude API with temperature=0 for
+deterministic outputs. Returns answers with citation numbers ([1], [2]) that map
+to retrieved chunks for provenance tracking.
+
+Examples:
+    # Initialize with API key from environment
+    from src.retrieval.answer_generator import AnswerGenerator
+    generator = AnswerGenerator()
+
+    # Generate answer from retrieval result
+    from src.retrieval.retrieval_processor import RetrievalProcessor
+    processor = RetrievalProcessor(...)
+    retrieval_result = processor.retrieve("What is the EU AI Act?")
+    
+    answer = generator.generate(retrieval_result)
+    print(answer.answer)  # Natural language answer with citations
+    print(f"Cost: ${answer.cost_usd:.4f}")
+
+    # Estimate cost before generating
+    estimate = generator.estimate_cost_for_query(retrieval_result)
+    print(f"Estimated cost: ${estimate['estimated_cost_usd']:.4f}")
+    print(f"Chunks that fit: {estimate['chunks_that_fit']}/{estimate['total_chunks_available']}")
+
+References:
+    Claude API: claude-3-5-haiku-20241022 for answer generation
+    Anthropic Python SDK: https://github.com/anthropics/anthropic-sdk-python
+    Token budgeting follows config.retrieval_config.ANSWER_GENERATION_CONFIG
 """
 # Standard library
 import os

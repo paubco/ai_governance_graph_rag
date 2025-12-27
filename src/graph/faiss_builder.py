@@ -14,7 +14,6 @@ References:
     See PHASE_2B_DESIGN.md for FAISS indices
 
 """
-"""
 # Standard library
 import json
 from pathlib import Path

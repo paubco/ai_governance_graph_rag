@@ -1,18 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-Graph
+Graph Construction Pipeline Orchestrator
 
-Orchestrates the full document-to-graph pipeline (Phases 0-2).
-Excludes retrieval (Phase 3) which runs separately at query time.
+This script orchestrates the complete document-to-knowledge-graph pipeline spanning
+Phases 0-2: preprocessing (0A-0B), extraction (1A-1D), and enrichment/storage (2A-2B).
+It provides a unified CLI interface for running individual phases or phase ranges,
+enabling flexible pipeline execution from raw documents (DLA Piper regulations + Scopus
+papers) to a populated Neo4j graph database with FAISS indices.
+
+Phase 0A links MinerU-parsed PDFs to Scopus metadata via DOI/title matching. Phase 0B
+cleans text and translates non-English documents. Phase 1A performs semantic chunking,
+1B extracts entities via LLM, 1C disambiguates using FAISS+similarity, and 1D extracts
+relations. Phase 2A enriches with Scopus author/journal/citation metadata, and 2B
+imports to Neo4j and builds FAISS indices for retrieval.
+
+Modes:
+    --start-phase    First phase to execute (default: 0A)
+    --end-phase      Last phase to execute (default: 2B)
+    --list-phases    Display all available phases and exit
 
 Examples:
-python run_graph_construction.py                    # Full pipeline
-  python run_graph_construction.py --start-phase 1A  # From chunking
-  python run_graph_construction.py --end-phase 1D    # Through relations
-  python run_graph_construction.py -s 0B -e 0B       # Just preprocessing
+    # Run full pipeline from documents to graph
+    python run_graph_construction.py
 
+    # Run only chunking phase
+    python run_graph_construction.py --start-phase 1A --end-phase 1A
+
+    # Resume from disambiguation through storage
+    python run_graph_construction.py -s 1C -e 2B
+
+    # Reprocess preprocessing only
+    python run_graph_construction.py -s 0B -e 0B
+
+References:
+    ARCHITECTURE.md § 3-4 (Pipeline Phases 0-2)
+    MinerU: PDF parsing library for academic papers
+    Scopus API: Academic metadata enrichment source
+    Neo4j: Graph database for storage
+    FAISS: Vector index library for fast similarity search
 """
-"""
+
 import argparse
 import logging
 import sys

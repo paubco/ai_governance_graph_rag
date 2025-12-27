@@ -7,7 +7,6 @@ Layered expansion strategy:
 - Multi-entity: Steiner Tree (connect) + k-NN expansion (context)
 
 """
-"""
 # Standard library
 from typing import List, Dict, Set, Tuple
 import json

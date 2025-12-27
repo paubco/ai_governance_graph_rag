@@ -15,7 +15,6 @@ python src/analysis/ablation_study.py --detailed        # Full analysis
     python src/analysis/ablation_study.py --quick --no-ragas  # Quick debug
 
 """
-"""
 # Standard library
 import argparse
 import json

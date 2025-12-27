@@ -6,7 +6,6 @@ LLM
 - METADATA_RELATION_EXTRACTION_PROMPT updated for Track 2 (discusses only)
 
 """
-"""
 from config.extraction_config import (
     SEMANTIC_ENTITY_TYPES,
     METADATA_ENTITY_TYPES,

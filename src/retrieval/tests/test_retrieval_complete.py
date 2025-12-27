@@ -10,7 +10,6 @@ pytest src/retrieval/tests/test_retrieval_complete.py -v -m "not integration"
     pytest src/retrieval/tests/test_retrieval_complete.py -v -m integration
 
 """
-"""
 # Standard library
 import json
 import os

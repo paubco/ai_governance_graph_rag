@@ -9,7 +9,6 @@ Examples:
 pytest src/retrieval/tests/test_answer_generator.py -v
 
 """
-"""
 # Standard library
 import sys
 from pathlib import Path

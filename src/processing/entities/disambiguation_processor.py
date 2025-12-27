@@ -7,7 +7,6 @@ Two-path architecture:
     - Metadata path: Document/DocumentSection relations, no merge
 
 """
-"""
 import os
 import sys
 import json

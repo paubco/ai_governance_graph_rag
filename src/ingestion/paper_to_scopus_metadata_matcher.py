@@ -10,7 +10,6 @@ Examples:
 python -m src.ingestion.paper_to_scopus_metadata_matcher
 
 """
-"""
 # Standard library
 import json
 import re

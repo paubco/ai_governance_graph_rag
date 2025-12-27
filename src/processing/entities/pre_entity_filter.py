@@ -11,7 +11,6 @@ filter = PreEntityFilter(chunks)
     clean_entities, stats = filter.filter(pre_entities)
 
 """
-"""
 import re
 import logging
 from typing import Dict, List, Tuple, Set

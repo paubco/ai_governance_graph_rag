@@ -13,7 +13,6 @@ loader = DocumentLoader(year='2023')
     # Returns: List[Document] with regulations and papers
 
 """
-"""
 import json
 import csv
 from pathlib import Path

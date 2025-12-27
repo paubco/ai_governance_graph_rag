@@ -1,16 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-Retrieval Config
+Configuration settings for GraphRAG retrieval pipeline (Phase 3).
 
-# ============================================================================
-# ENTITY TYPES (v2.0 - imported from extraction_config.py for DRY)
-# ============================================================================
+Defines all parameters for the question-answering system including entity resolution,
+graph expansion via PCST, chunk retrieval (semantic + graph tracks), ranking with
+entity coverage scoring, and answer generation with Claude Haiku. Supports three
+retrieval modes for ablation studies: SEMANTIC (vector-only baseline), GRAPH
+(entity-centric), and DUAL (combined approach).
+
+Configuration sections:
+    - Retrieval modes (semantic, graph, dual)
+    - Query understanding (entity extraction, jurisdiction/doc-type parsing)
+    - Entity resolution (FAISS similarity matching)
+    - Graph expansion (PCST algorithm with prize-cost balancing)
+    - Chunk retrieval (semantic top-K, graph provenance, entity chunks)
+    - Ranking and scoring (entity coverage, provenance bonuses, hint filtering)
+    - Answer generation (Claude Haiku with token budgeting)
+    - Evaluation (RAGAS metrics, test query paths)
+
+Examples:
+    # Import retrieval modes
+    from config.retrieval_config import RetrievalMode
+    mode = RetrievalMode.DUAL
+
+    # Access PCST parameters
+    from config.retrieval_config import PCST_CONFIG
+    delta = PCST_CONFIG['delta']
+
+    # Use answer generation settings
+    from config.retrieval_config import ANSWER_GENERATION_CONFIG
+    model = ANSWER_GENERATION_CONFIG['model']
+
+    # Parse jurisdiction hints from query
+    from config.retrieval_config import parse_jurisdictions
+    jurisdictions = parse_jurisdictions("Compare EU and US AI regulations")
 
 References:
-    ARCHITECTURE.md Â§ 5 (Phase 3)
-    PHASE_3_DESIGN.md
-
-"""
+    PHASE_3_DESIGN.md (Retrieval pipeline architecture)
+    Claude Haiku: claude-3-5-haiku-20241022 for answer generation
+    PCST: Prize-Collecting Steiner Tree for graph expansion
+    RAGAS: Retrieval-Augmented Generation Assessment framework
 """
 import os
 from enum import Enum

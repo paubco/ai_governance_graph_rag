@@ -6,7 +6,6 @@ Runs analytical queries on Neo4j to compute network statistics,
 coverage metrics, and entity centrality measures.
 
 """
-"""
 import os
 import sys
 import json

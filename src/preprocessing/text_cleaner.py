@@ -8,7 +8,6 @@ References:
     See ARCHITECTURE.md § 7 for known issues
 
 """
-"""
 # Standard library
 import re
 import sys

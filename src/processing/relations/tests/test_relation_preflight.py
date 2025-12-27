@@ -11,7 +11,6 @@ Validates:
 5. Cost within expected range
 
 """
-"""
 # Standard library
 import json
 import sys

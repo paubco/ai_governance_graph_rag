@@ -7,7 +7,6 @@ Extracts country-specific AI regulations with section-level granularity.
 Outputs JSON files per country with regulatory sections, notes, and subsections.
 
 """
-"""
 # Standard library
 import json
 import logging

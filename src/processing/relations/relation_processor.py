@@ -7,7 +7,6 @@ Coordinates parallel extraction of relations using two-track architecture:
 - Track 2 (Citation): Chunk-based, single chunk context (loops over chunks)
 
 """
-"""
 # Standard library
 import argparse
 import json

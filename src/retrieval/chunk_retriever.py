@@ -5,7 +5,6 @@ Dual-channel
 Implements combined graph-based and semantic retrieval for context gathering.
 
 """
-"""
 # Standard library
 from typing import List
 import json

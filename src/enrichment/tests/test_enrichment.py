@@ -7,7 +7,6 @@ and jurisdiction linking. Run before enrichment pipeline to catch configuration
 and import errors early.
 
 """
-"""
 # Standard library
 import sys
 from pathlib import Path

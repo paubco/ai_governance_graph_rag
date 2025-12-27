@@ -10,7 +10,6 @@ Comprehensive analysis of entity disambiguation outputs including:
 - Merge quality validation
 
 """
-"""
 import json
 import re
 from pathlib import Path

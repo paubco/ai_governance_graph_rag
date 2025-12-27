@@ -6,7 +6,6 @@ Quick sanity checks for Neo4j import and FAISS index building.
 Run before graph construction to catch configuration and import errors early.
 
 """
-"""
 # Standard library
 import sys
 from pathlib import Path
