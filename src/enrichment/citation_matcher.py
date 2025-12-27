@@ -1,21 +1,41 @@
 # -*- coding: utf-8 -*-
 """
-Citation
+Citation entity matching for metadata enrichment in Phase 2A.
 
-Identifies and matches metadata entities to structured nodes:
-- Citation entities → L2 Publications (via Scopus references)
-- Author entities → Scopus Author nodes
-- Journal entities → Scopus Journal nodes
-- Document entities → L1 Publications OR Jurisdictions
+Identifies and matches metadata entities to structured bibliographic nodes for
+academic provenance tracking. Maps Citation entities to L2 Publications (via Scopus
+reference matching), Author entities to Scopus Author nodes, Journal entities to
+Scopus Journal nodes, and Document entities to either L1 Publications or Jurisdictions.
+Creates CITES edges for citation networks and SAME_AS edges for entity merging.
+
+The matcher uses fuzzy string matching for publication titles (difflib), exact matching
+for DOIs and journal names, and structural relationship analysis (PART_OF edges) to
+identify citation contexts. Scopus metadata provides ground truth for L2 publications.
+All matches are scored by confidence for quality assessment. Unmatched citations are
+flagged for manual review.
 
 Examples:
-identifier = CitationEntityIdentifier()
-        citations = identifier.identify(entities, relations)
+    # Initialize matcher with Scopus and jurisdiction data
+    from src.enrichment.citation_matcher import CitationMatcher
+
+    matcher = CitationMatcher(
+        scopus_refs=scopus_references,
+        jurisdictions=jurisdiction_list
+    )
+
+    # Match citation entities to publications
+    matches = matcher.match_citations(citation_entities, entities, relations)
+    print(f"Matched {len(matches)} citations")
+
+    # Get unmatched for review
+    unmatched = matcher.get_unmatched_citations()
+    print(f"Review needed: {len(unmatched)}")
 
 References:
-    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    See PHASE_2A_DESIGN.md for matching pipeline
-
+    Scopus API: Bibliographic metadata for L2 publications
+    difflib: Fuzzy string matching for publication titles
+    src.enrichment.scopus_parser: Scopus reference parsing
+    ARCHITECTURE.md § 3.2.1: Phase 2A enrichment design
 """
 # Standard library
 import re

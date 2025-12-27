@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Retrieval
+Retrieval package for Phase 3 multi-stage GraphRAG retrieval pipeline.
 
-Phase 3 components:
-- QueryParser: Parse queries with LLM entity extraction
-- EntityResolver: Resolve mentions to canonical entities (with alias support)
-- GraphExpander: PCST-based subgraph extraction
-- ChunkRetriever: Dual-channel (graph + semantic) retrieval
-- ResultRanker: Multiplicative scoring and ranking
-- AnswerGenerator: Claude-based answer generation
-- RetrievalProcessor: Full pipeline orchestrator
-
+Contains QueryParser (LLM entity extraction), EntityResolver (canonical entity
+resolution with aliases), GraphExpander (Steiner Tree subgraph extraction),
+ChunkRetriever (dual-track graph + semantic retrieval), ResultRanker (multiplicative
+scoring), AnswerGenerator (Claude Haiku generation), and RetrievalProcessor
+(full pipeline orchestrator).
 """
 from src.retrieval.query_parser import QueryParser
 from src.retrieval.entity_resolver import EntityResolver

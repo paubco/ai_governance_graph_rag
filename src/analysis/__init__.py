@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Evaluation
+Analysis package for retrieval evaluation and graph analytics.
 
-Provides:
-- metrics.py: Dataclasses for entity resolution, retrieval, RAGAS, etc.
-- ablation_study.py: Comparative analysis across retrieval modes
-
+Contains retrieval_metrics (entity resolution, coverage, RAGAS metrics),
+graph_analytics (network science analysis), and ablation_study (comparative
+evaluation across retrieval modes).
 """
 from src.analysis.retrieval_metrics import (
     EntityResolutionMetrics,

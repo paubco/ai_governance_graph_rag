@@ -1,18 +1,65 @@
 # -*- coding: utf-8 -*-
 """
-FAISS
+FAISS HNSW index builder for entity and chunk embedding retrieval.
 
-Builds FAISS HNSW indexes for entity and chunk embeddings with parallel ID mapping.
-Handles embedding extraction, index construction, and persistence.
+Builds FAISS HNSW (Hierarchical Navigable Small Worlds) indexes for entity and
+chunk embeddings with parallel ID mapping for Phase 3 retrieval. The
+FAISSIndexBuilder class loads BGE-M3 embeddings (1024 dimensions) from JSONL/JSON
+files, constructs separate HNSW indexes for entities and chunks with configurable
+graph connectivity (M) and construction quality (efConstruction), and saves indexes
+alongside parallel ID maps for consistent ID resolution during retrieval.
+
+The builder extracts embeddings in consistent order to ensure index position matches
+ID map position (critical for retrieval correctness). HNSW parameters are tuned for
+semantic search: M=32 (graph connectivity), efConstruction=200 (build quality),
+efSearch=64 (query quality). Indexes are persisted to disk for loading by the
+retrieval pipeline. Both JSON and JSONL formats are supported. Skipped embeddings
+(missing entity_id or embedding field) are logged for debugging.
 
 Examples:
-builder = FAISSIndexBuilder(Path('data/processed/faiss'))
-        builder.build_all_indexes(entities_file, chunks_file)
+    # Build both entity and chunk indexes
+    from src.graph.faiss_builder import FAISSIndexBuilder
+    from pathlib import Path
+
+    builder = FAISSIndexBuilder(
+        output_dir=Path('data/processed/faiss')
+    )
+
+    # Build all indexes from embedded files
+    builder.build_all_indexes(
+        entities_file=Path('data/processed/entities/entities_semantic_embedded.jsonl'),
+        chunks_file=Path('data/processed/chunks/chunks_embedded.jsonl')
+    )
+    # Output:
+    # - entity_embeddings.index (1500 vectors, 1024 dim)
+    # - entity_id_map.json (["ent_xyz_123", ...])
+    # - chunk_embeddings.index (800 vectors, 1024 dim)
+    # - chunk_id_map.json (["chunk_abc_0", ...])
+
+    # Build just entity index with custom config
+    from config.extraction_config import FAISS_CONFIG
+
+    custom_config = {
+        'hnsw_m': 64,  # Higher connectivity
+        'hnsw_ef_construction': 400,  # Better quality
+        'hnsw_ef_search': 128
+    }
+    builder = FAISSIndexBuilder(
+        output_dir=Path('data/processed/faiss'),
+        config=custom_config
+    )
+    builder.build_entity_index(entities_file)
+
+    # CLI usage
+    # python -m src.graph.faiss_builder --data-dir data --output-dir data/processed/faiss
 
 References:
-    See ARCHITECTURE.md § 3.2.2 for Phase 2B context
-    See PHASE_2B_DESIGN.md for FAISS indices
-
+    FAISS: Facebook AI Similarity Search library with GPU support
+    HNSW: Hierarchical Navigable Small Worlds graph-based ANN algorithm
+    BGE-M3: BAAI/bge-m3 embeddings (1024 dimensions) for semantic search
+    config.extraction_config.FAISS_CONFIG: HNSW parameter configuration
+    ARCHITECTURE.md § 3.2.2: Phase 2B FAISS index design
+    Phase 3 retrieval: Dual-track semantic search using entity/chunk indexes
 """
 # Standard library
 import json

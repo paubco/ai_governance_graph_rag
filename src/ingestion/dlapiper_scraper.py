@@ -1,11 +1,60 @@
 # -*- coding: utf-8 -*-
 """
-DLA
+DLA Piper AI Laws of the World web scraper for regulatory content ingestion.
 
-Scrapes regulatory content from DLA Piper's AI Laws of the World database.
-Extracts country-specific AI regulations with section-level granularity.
-Outputs JSON files per country with regulatory sections, notes, and subsections.
+Scrapes country-specific AI regulations from DLA Piper's AI Laws of the World
+database with section-level granularity and structured metadata extraction. The
+DLAPiperScraper class fetches the country dropdown list (codes + names), scrapes
+each country page with retry logic and rate limiting, extracts accordion sections
+with BeautifulSoup HTML parsing, and saves structured JSON output per country.
+All content includes provenance metadata (URLs, scraped timestamps, section counts)
+for data quality tracking.
 
+The scraper handles heterogeneous section structures across jurisdictions: standard
+sections (Law/proposed law, Definitions, Scope), EU country-specific notes (national
+implementation details), and US/Canada subsections (state/province-level regulations).
+All hyperlinks are extracted with text and URL pairs for reference tracking. Retry
+logic with exponential backoff handles transient network failures. Rate limiting
+(configurable delay between requests) prevents server overload. Failed scrapes are
+logged for manual review.
+
+Examples:
+    # Run scraper from command line
+    # python -m src.ingestion.dlapiper_scraper
+
+    # Python API usage
+    from src.ingestion.dlapiper_scraper import DLAPiperScraper
+
+    # Initialize with project config
+    scraper = DLAPiperScraper()
+
+    # Get country list from dropdown
+    countries = scraper.get_country_list()
+    print(f"Found {len(countries)} countries")  # 52 countries
+    print(countries[0])  # {'code': 'AU', 'name': 'Australia'}
+
+    # Scrape single country
+    country_data = scraper.scrape_country('EU', 'European Union')
+    print(f"Sections: {country_data['num_sections']}")  # 11 sections
+    print(country_data['sections'][0]['title'])  # "Law / proposed law"
+
+    # Scrape all countries
+    summary = scraper.scrape_all_countries()
+    print(f"Scraped: {summary['successful']}/{summary['total']}")
+    print(f"Failed: {summary['failed']}")
+
+    # Output files created in data/raw/dlapiper/:
+    # - EU.json (European Union regulations)
+    # - FR.json (France regulations)
+    # - US.json (United States regulations)
+    # - scraping_summary.json (metadata summary)
+
+References:
+    DLA Piper AI Laws of the World: https://www.dlapiperdataprotection.com/
+    BeautifulSoup: HTML parsing library (lxml parser)
+    requests: HTTP library with timeout and retry support
+    config.scraper_config: Scraper configuration (delays, timeouts, user agent)
+    src.utils.logger: Logging setup with daily log rotation
 """
 # Standard library
 import json

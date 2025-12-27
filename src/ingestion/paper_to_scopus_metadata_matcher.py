@@ -1,14 +1,63 @@
 # -*- coding: utf-8 -*-
 """
-Paper To Scopus Metadata Matcher
+MinerU paper to Scopus metadata matcher with multi-strategy linking.
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+Matches MinerU-parsed academic papers (paper_XXX folders) to Scopus CSV metadata
+using multi-strategy fuzzy linking for metadata enrichment. The MinerUMatcher class
+attempts DOI extraction first (from content_list.json and full.md markdown), falls
+back to title fuzzy matching with confidence tiers (high≥0.85, medium≥0.70, low≥0.60),
+and uses abstract similarity as additional signal. All matches include confidence
+scores and match methods for quality assessment. Failed matches are logged for manual
+review.
+
+The matcher handles MinerU extraction artifacts (no DOI in metadata, title extraction
+failures) by trying multiple title sources: content_list.json text_level=1 items, full.md
+first heading, and full.md filename. Title normalization removes punctuation and
+whitespace for robust fuzzy matching. Abstract matching uses SequenceMatcher for
+content similarity when titles are ambiguous. Results are saved to paper_mapping.json
+(paper_XXX → Scopus metadata) and paper_scopus_matches.csv (paper_id, scopus_eid)
+for downstream processing.
 
 Examples:
-python -m src.ingestion.paper_to_scopus_metadata_matcher
+    # Run matcher from command line
+    # python -m src.ingestion.paper_to_scopus_metadata_matcher
 
+    # Python API usage
+    from src.ingestion.paper_to_scopus_metadata_matcher import MinerUMatcher
+
+    # Initialize with paths
+    matcher = MinerUMatcher(
+        papers_path='data/raw/academic/scopus_2023/MinerU_parsed_papers',
+        scopus_csv='data/raw/academic/scopus_2023/scopus_export_2023_raw.csv'
+    )
+
+    # Match all papers
+    results = matcher.match_all_papers()
+    print(f"Matched: {results['matched']}/{results['total']}")
+    print(f"DOI matches: {results['doi_matches']}")
+    print(f"Title matches: {results['title_matches']}")
+    print(f"Failed: {results['failed']}")
+
+    # Output files created:
+    # - data/raw/academic/scopus_2023/paper_mapping.json
+    # - data/interim/academic/paper_scopus_matches.csv
+    # - data/interim/academic/paper_scopus_matches_summary.json
+
+    # Access match results
+    with open('data/raw/academic/scopus_2023/paper_mapping.json') as f:
+        mapping = json.load(f)
+
+    paper_001 = mapping['paper_001']
+    print(paper_001['scopus_metadata']['title'])  # "AI Ethics in Healthcare"
+    print(paper_001['scopus_metadata']['match_method'])  # "doi_exact"
+    print(paper_001['scopus_metadata']['match_confidence'])  # 1.0
+
+References:
+    MinerU: PDF-to-markdown parser with content_list.json metadata
+    Scopus: Bibliometric database with CSV export (utf-8-sig encoding)
+    difflib.SequenceMatcher: Fuzzy string matching for title/abstract similarity
+    pandas: CSV reading with BOM handling
+    DOI patterns: Regex extraction for DOI links (doi.org URLs and bare DOIs)
 """
 # Standard library
 import json

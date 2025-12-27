@@ -1,14 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Phase
+Phase 2A enrichment pipeline orchestrator for metadata integration.
 
-Coordinates L1 metadata extraction, citation matching, jurisdiction linking,
-and relation generation for the AI governance GraphRAG pipeline.
+Coordinates L1 metadata extraction, citation matching, jurisdiction linking, and
+relation generation for AI governance GraphRAG. Enriches extracted entities with
+structured bibliographic data (Scopus publications, authors, journals) and regulatory
+metadata (jurisdictions, document types). Creates CITES edges for citation networks,
+SAME_AS edges for entity merging, and enriched entity nodes with complete provenance.
+
+The processor loads normalized entities and Scopus/jurisdiction data, runs citation
+matcher to link Citation entities to L2 publications, matches jurisdictions via fuzzy
+name matching, generates enrichment relations (CITES, SAME_AS, PART_OF), and exports
+enriched graph to Neo4j-ready format. Statistics track match rates and data quality for
+thesis evaluation.
+
+Examples:
+    # Run enrichment pipeline
+    python -m src.enrichment.enrichment_processor
+
+    # Python API usage
+    from src.enrichment.enrichment_processor import EnrichmentProcessor
+
+    processor = EnrichmentProcessor()
+    enriched_entities, relations, stats = processor.run()
+
+    print(f"Enriched: {len(enriched_entities)} entities")
+    print(f"Citation matches: {stats['citation_match_rate']:.1f}%")
+    print(f"Jurisdiction links: {stats['jurisdiction_links']}")
 
 References:
-    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    See PHASE_2A_DESIGN.md for matching pipeline
-
+    Scopus API: Bibliographic metadata for L2 publications
+    src.enrichment.citation_matcher: Citation-to-publication matching
+    src.enrichment.jurisdiction_matcher: Regulatory document linking
+    ARCHITECTURE.md § 3.2.1: Phase 2A enrichment design
 """
 # Standard library
 import json

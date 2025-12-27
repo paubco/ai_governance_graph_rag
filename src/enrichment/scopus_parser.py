@@ -1,18 +1,60 @@
 # -*- coding: utf-8 -*-
 """
-Scopus
+Scopus bibliometric data parser for L1 publication metadata integration.
 
-Parses Scopus export CSVs to extract L1 publications, authors, and journals.
-Also parses reference strings from the References field for citation matching.
+Parses Scopus CSV exports to extract L1 publications, authors, and journals for
+Phase 2A metadata enrichment. The ScopusParser class reads Scopus export CSVs,
+extracting publication metadata (title, DOI, year, citations), author data with
+Scopus IDs, and journal information. The ReferenceParser class parses semicolon-
+delimited reference strings from the References field to extract citation metadata
+(author, title, year, journal) for citation matching.
+
+The parser handles Scopus-specific CSV format with BOM encoding (utf-8-sig), splits
+multi-value fields (authors, references) on semicolons, and deduplicates authors
+and journals across publications. Author names are cleaned to remove ID suffixes.
+Reference strings follow Scopus format: "Surname, Given Names, Title, Journal,
+Volume, Pages, (Year)". All extracted entities receive generated IDs for graph
+node creation.
 
 Examples:
-parser = ScopusParser(Path('data/raw/scopus.csv'))
-        pubs, authors, journals = parser.parse_publications()
+    # Initialize parser with Scopus CSV export
+    from src.enrichment.scopus_parser import ScopusParser, ReferenceParser
+    from pathlib import Path
+
+    parser = ScopusParser(Path('data/raw/scopus_export.csv'))
+
+    # Parse publications, authors, and journals
+    pubs, authors, journals = parser.parse_publications()
+    print(f"Extracted {len(pubs)} publications")  # 50 publications
+    print(f"Found {len(authors)} unique authors")  # 120 authors
+    print(f"Found {len(journals)} unique journals")  # 30 journals
+
+    # Inspect publication metadata
+    pub = pubs[0]
+    print(pub['title'])  # "AI Ethics in Healthcare Systems"
+    print(pub['year'])  # 2023
+    print(pub['cited_by'])  # 15
+
+    # Parse references for citation matching
+    ref_parser = ReferenceParser()
+    refs_lookup = ref_parser.parse_all_references(pubs)
+
+    # Get references for a specific publication
+    scopus_id = pubs[0]['scopus_id']
+    refs = refs_lookup[scopus_id]
+    print(f"Publication has {len(refs)} references")
+
+    # Inspect parsed reference
+    ref = refs[0]
+    print(ref['author'])  # "Smith, J."
+    print(ref['title'])  # "Machine Learning in Medicine"
+    print(ref['year'])  # 2022
 
 References:
-    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    See PHASE_2A_DESIGN.md for matching pipeline
-
+    Scopus CSV Export: Scopus bibliometric database export format with BOM
+    ARCHITECTURE.md § 3.2.1: Phase 2A metadata enrichment design
+    PHASE_2A_DESIGN.md: Citation matching pipeline with L1/L2 layers
+    src.utils.id_generator: Publication/author/journal ID generation
 """
 # Standard library
 import csv

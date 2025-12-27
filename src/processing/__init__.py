@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-AI
+Processing package for Phase 1 chunking, entity extraction, and relation extraction.
 
-Module providing   init   functionality
-
+Contains subpackages: chunks (semantic chunking), entities (dual-pass extraction and
+disambiguation), and relations (two-track relation extraction with validation).
 """

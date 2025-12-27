@@ -1,11 +1,69 @@
 # -*- coding: utf-8 -*-
 """
-Neo4j
+Neo4j graph database import with batched UNWIND pattern and constraint management.
 
-Core Neo4j import functionality with batched UNWIND pattern.
-Handles connection management, constraint creation, and all node/relationship imports
-using efficient batch processing with progress tracking.
+Core importer class for loading GraphRAG knowledge graph into Neo4j with efficient
+batch processing. The Neo4jImporter class handles connection management, unique
+constraint creation for all node types, and batched imports using the UNWIND Cypher
+pattern for optimal performance. Supports all GraphRAG node types (Jurisdiction,
+Publication, Author, Journal, Chunk, Entity, L2Publication) and relationship types
+(CONTAINS, AUTHORED_BY, PUBLISHED_IN, EXTRACTED_FROM, RELATION, MATCHED_TO, CITES,
+SAME_AS, AUTHORED, PART_OF).
 
+The importer uses a batched UNWIND approach with configurable batch size (default
+500 items) to avoid memory issues and timeout errors. Progress tracking via tqdm
+provides real-time import visibility. Unique constraints on entity_id, chunk_id,
+scopus_id, etc. prevent duplicates and auto-create indexes for fast lookups.
+Database clearing is supported for fresh imports. All relationship imports use
+MATCH-MATCH-CREATE pattern to ensure referential integrity.
+
+Examples:
+    # Initialize importer with Neo4j credentials
+    from src.graph.neo4j_importer import Neo4jImporter
+
+    importer = Neo4jImporter(
+        uri="neo4j+s://abc123.databases.neo4j.io",
+        user="neo4j",
+        password="your_password"
+    )
+
+    # Setup database with constraints
+    with importer.driver.session() as session:
+        # Optional: clear existing data
+        importer.clear_database(session)
+
+        # Create constraints and indexes
+        importer.create_constraints_and_indexes(session)
+
+        # Import nodes
+        importer.import_jurisdictions(session, jurisdictions)  # 50 jurisdictions
+        importer.import_entities(session, entities)  # 1500 entities
+        importer.import_chunks(session, chunks)  # 800 chunks
+
+        # Import relationships
+        importer.import_extracted_from(session, extractions)  # 3000 edges
+        importer.import_relations(session, relations)  # 2500 edges
+
+    # Close connection
+    importer.close()
+
+    # Custom batch size for large imports
+    with importer.driver.session() as session:
+        # Use smaller batches for memory-constrained environments
+        importer.batch_import(
+            session,
+            query=custom_query,
+            data=large_dataset,
+            batch_size=100,
+            desc="Custom import"
+        )
+
+References:
+    Neo4j Python Driver: Official neo4j-driver library for Bolt protocol
+    UNWIND Cypher: Batched import pattern for efficient bulk loading
+    tqdm: Progress bar library for import tracking
+    ARCHITECTURE.md § 3.3: Graph import design and schema
+    Phase 3 import: Two-stage process (nodes first, then relationships)
 """
 # Standard library
 import json

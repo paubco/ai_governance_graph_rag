@@ -1,20 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Jurisdiction
+Jurisdiction entity matching for regulatory document linking.
 
-Maps country and region entities to jurisdiction codes via SAME_AS relationships.
-Only links entities that represent the jurisdiction itself (not organizations
-like CNIL or FTC).
+Maps country and region entities to jurisdiction codes via SAME_AS relationships for
+regulatory metadata integration. Links Location entities representing jurisdictions
+(e.g., "European Union", "California") to structured Jurisdiction nodes with regulatory
+codes. Excludes organizational entities (CNIL, FTC) to maintain clean jurisdiction
+taxonomy. Uses fuzzy string matching with aliases for variant names.
+
+The matcher loads valid jurisdiction codes from config, builds alias maps for common
+variants (EU↔European Union, US↔United States), performs fuzzy matching on entity
+names, and generates SAME_AS edges for matched entities. Match confidence scores enable
+quality filtering. Unmatched location entities remain as standalone entities without
+jurisdiction links.
 
 Examples:
-matcher = JurisdictionMatcher(valid_codes)
-        matches = matcher.match_entities(entities)
-        # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU"}, ...]
+    # Initialize with valid jurisdiction codes
+    from src.enrichment.jurisdiction_matcher import JurisdictionMatcher
+
+    matcher = JurisdictionMatcher(valid_codes=["EU", "US", "UK", "CN"])
+
+    # Match location entities to jurisdictions
+    matches = matcher.match_entities(location_entities)
+    # Returns: [{"entity_id": "ent_123", "jurisdiction_code": "EU", "confidence": 0.95}, ...]
+
+    print(f"Matched {len(matches)} jurisdictions")
 
 References:
-    See ARCHITECTURE.md § 3.2.1 for Phase 2A context
-    See PHASE_2A_DESIGN.md for matching pipeline
-
+    config.extraction_config.JURISDICTION_CODES: Valid jurisdiction taxonomy
+    difflib: Fuzzy string matching for jurisdiction names
+    ARCHITECTURE.md § 3.2.1: Phase 2A enrichment design
 """
 # Standard library
 import json

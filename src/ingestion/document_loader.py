@@ -1,17 +1,75 @@
 # -*- coding: utf-8 -*-
 """
-Document
+Document loader for DLA Piper regulations and Scopus academic papers.
 
-Loads documents from different sources (DLA Piper regulations and academic papers)
-into standardized Document format for downstream processing. Handles regulations
-(one document per country, concatenated sections) and academic papers (markdown-
-preserved) with detailed provenance metadata tracking.
+Loads documents from heterogeneous sources into standardized Document dataclass
+format for Phase 1A chunking. The DocumentLoader class handles DLA Piper regulation
+JSON files (one document per country with concatenated sections) and Scopus academic
+papers (MinerU-parsed markdown with Scopus CSV metadata enrichment). All documents
+include comprehensive provenance metadata (source URLs, scraped dates, DOIs, authors)
+for citation tracking and quality assessment.
+
+The loader concatenates regulation sections with markdown headers (# Title, ## Heading)
+to preserve semantic structure for hierarchical chunking. Academic papers retain
+MinerU markdown formatting (tables, figures, equations) for structure-aware processing.
+Scopus metadata is matched via paper_mapping.json (paper_XXX → Scopus EID) and
+enriched with CSV fields (title, authors, year, citations, keywords). Failed loads
+are logged for manual review. Statistics tracking provides document counts, character
+distributions, and year coverage.
 
 Examples:
-loader = DocumentLoader(year='2023')
-    documents = loader.load_all_documents()
-    # Returns: List[Document] with regulations and papers
+    # Initialize with default 2023 dataset
+    from src.ingestion.document_loader import DocumentLoader
 
+    loader = DocumentLoader(year='2023')
+
+    # Load all documents (regulations + papers)
+    documents = loader.load_all_documents()
+    # Output:
+    # ✓ Loaded: reg_EU (European Union)
+    # ✓ Loaded: paper_001 - AI Ethics in Healthcare Systems...
+    # TOTAL DOCUMENTS LOADED: 102
+    #   Regulations: 52
+    #   Academic Papers: 50
+
+    # Load only regulations
+    regulations = loader.load_all_regulations()
+    print(f"Loaded {len(regulations)} regulation documents")
+
+    # Load only academic papers
+    papers = loader.load_all_papers()
+    print(f"Loaded {len(papers)} academic papers")
+
+    # Get statistics
+    stats = loader.get_stats(documents)
+    print(f"Total chars: {stats['total_chars']:,}")
+    print(f"Avg sections per regulation: {stats['regulations']['avg_sections']:.1f}")
+
+    # Save to JSON for caching
+    loader.save_documents(documents, 'data/interim/loaded_documents.json')
+
+    # Access individual document
+    doc = documents[0]
+    print(doc.doc_id)  # "reg_EU"
+    print(doc.source_type)  # "regulation"
+    print(doc.title)  # "AI Regulations - European Union"
+    print(doc.metadata['country_code'])  # "EU"
+    print(len(doc.text))  # 145000 chars
+
+    # Custom year and paths
+    loader_2024 = DocumentLoader(
+        year='2024',
+        regulations_dir='data/raw/dlapiper',
+        academic_base='data/raw/academic'
+    )
+
+References:
+    DLA Piper: AI Laws of the World regulation scraper
+    Scopus: Bibliometric database with CSV export (utf-8-sig BOM encoding)
+    MinerU: PDF-to-markdown parser preserving structure
+    Document dataclass: Standardized document representation with metadata
+    paper_mapping.json: paper_XXX → Scopus EID matching results
+    ARCHITECTURE.md § 2.1: Data ingestion design
 """
 import json
 import csv

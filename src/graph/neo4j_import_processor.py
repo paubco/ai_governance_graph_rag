@@ -1,11 +1,68 @@
 # -*- coding: utf-8 -*-
 """
-Neo4j
+Neo4j graph import orchestrator with checkpointing and dependency management.
 
-Orchestrates complete Neo4j import with checkpointing and progress tracking.
-Handles loading all input files, database clearing with confirmation,
-import in correct dependency order, and checkpoint management for resume capability.
+Orchestrates complete GraphRAG knowledge graph import into Neo4j with resumable
+checkpointing for production reliability. The Neo4jImportProcessor class coordinates
+loading all input files (regulations, academic papers, entities, relations, enrichment),
+prepares nodes and relationships with proper ID mapping, and executes import in correct
+dependency order (nodes before relationships) using the Neo4jImporter batched UNWIND
+pattern. Checkpointing enables resume from any step after failures or interruptions.
 
+The processor loads data from multiple sources: DLA Piper regulation metadata, Scopus
+academic publication CSV (with BOM handling), Phase 1 chunks, Phase 1B/1C entities and
+relations, and Phase 2A enrichment relations (citation matching, jurisdiction linking).
+All imports follow dependency order: Jurisdiction→Publication→Author→Journal→Chunk→
+Entity→L2Publication nodes first, then CONTAINS→AUTHORED_BY→PUBLISHED_IN→
+EXTRACTED_FROM→RELATION→MATCHED_TO→CITES→SAME_AS relationships. Database clearing
+requires explicit confirmation for safety.
+
+Examples:
+    # Run complete import from command line
+    # python -m src.graph.neo4j_import_processor \\
+    #     --uri neo4j+s://abc123.databases.neo4j.io \\
+    #     --user neo4j \\
+    #     --password your_password \\
+    #     --clear \\
+    #     --data-dir data
+
+    # Python API usage with checkpointing
+    from src.graph.neo4j_import_processor import Neo4jImportProcessor
+    from pathlib import Path
+
+    processor = Neo4jImportProcessor(
+        data_dir=Path('data'),
+        checkpoint_dir=Path('checkpoints'),
+        force_restart=False  # Resume from checkpoint if exists
+    )
+
+    # Run import (uses environment variables for credentials)
+    processor.run_import(
+        uri="neo4j+s://abc123.databases.neo4j.io",
+        user="neo4j",
+        password="your_password",
+        clear_db=True  # Clear existing data first
+    )
+
+    # Resume after failure
+    # If import fails at step 15, restart script and it will:
+    # 1. Load checkpoint file
+    # 2. Skip completed steps 1-14
+    # 3. Resume from step 15
+
+    # Force fresh import (ignore checkpoint)
+    processor_fresh = Neo4jImportProcessor(
+        data_dir=Path('data'),
+        checkpoint_dir=Path('checkpoints'),
+        force_restart=True  # Ignore existing checkpoint
+    )
+
+References:
+    Neo4jImporter: Core batched UNWIND import engine
+    src.enrichment.enrichment_processor: Phase 2A metadata enrichment
+    ARCHITECTURE.md § 3.3: Graph import design and schema
+    Dependency order: Critical for referential integrity in Neo4j
+    Checkpointing: JSON file tracking completed steps for production reliability
 """
 # Standard library
 import json
