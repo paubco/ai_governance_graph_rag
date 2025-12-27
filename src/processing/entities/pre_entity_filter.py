@@ -1,15 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-Pre-entity
+Two-stage pre-entity filtering for garbage removal and provenance validation.
 
-Two-stage filtering:
-    Stage 1: Blacklist patterns (removes obvious garbage)
-    Stage 2: Provenance check (verifies entity appears in source text)
+Filters extracted pre-entities using blacklist patterns and source text provenance
+checks. Stage 1 removes obvious garbage using regex patterns (single characters,
+numbers only, markdown artifacts, special characters). Stage 2 verifies entities
+appear in source chunk text via case-insensitive substring matching with special
+character normalization. Tracks filter statistics by entity type and discard reason
+for quality monitoring.
+
+The filter loads chunk text into memory for fast provenance lookups. Blacklist
+patterns catch LLM hallucinations and extraction artifacts (", *, #, etc.). Provenance
+check catches entities mentioned in prompts or examples but not in actual chunk text.
+All discarded entities are logged with reasons (blacklist match or provenance failure)
+for analysis. Pass rate and discard distribution inform extraction quality.
 
 Examples:
-filter = PreEntityFilter(chunks)
-    clean_entities, stats = filter.filter(pre_entities)
+    # Initialize with chunk lookup
+    from src.processing.entities.pre_entity_filter import PreEntityFilter
 
+    chunks_by_id = {c.chunk_id: c.text for c in chunks}
+    filter = PreEntityFilter(chunks_by_id)
+
+    # Filter pre-entities
+    clean_entities, stats = filter.filter(pre_entities)
+    print(f"Kept: {len(clean_entities)}, Discarded: {stats['total_discarded']}")
+    print(f"Pass rate: {stats['pass_rate']:.1f}%")
+
+    # Inspect discard reasons
+    for reason, count in stats['discard_reasons'].items():
+        print(f"{reason}: {count}")
+
+    # Type-specific statistics
+    for type_name, type_stats in stats['by_type'].items():
+        print(f"{type_name}: {type_stats['kept']}/{type_stats['total']}")
+
+References:
+    config.extraction_config.ENTITY_FILTER_CONFIG: Blacklist patterns
+    src.utils.dataclasses.PreEntity: Pre-entity dataclass with chunk IDs
 """
 import re
 import logging

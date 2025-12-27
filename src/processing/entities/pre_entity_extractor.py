@@ -1,10 +1,46 @@
 # -*- coding: utf-8 -*-
 """
-Pre Entity Extractor
+Dual-pass entity extraction for GraphRAG knowledge graph construction.
 
-- Semantic pass: 9 types (concepts, regulations, technology, etc.)
-- Metadata pass: 6 types (Citation, Author, Journal, Affiliation, Document, DocumentSection)
+Extracts pre-entities from document chunks using two-pass methodology with Mistral-7B
+LLM. Pass 1 (semantic) extracts 11 domain-fused entity types from all chunks
+(Concept, Technology, Regulation, Organization, etc.). Pass 2 (metadata) extracts 6
+academic provenance types from paper chunks only (Citation, Author, Journal,
+Affiliation, Document, DocumentSection). Both passes use JSON mode with type
+enforcement and few-shot prompting for structured output.
 
+The extractor sends chunk text to Mistral-7B with entity type lists and extraction
+instructions. Responses are parsed as JSON arrays, validated against allowed types,
+and converted to PreEntity dataclasses with chunk provenance. Semantic entities
+enable domain reasoning, while metadata entities support citation analysis and
+author networks. Extraction failures are logged but don't halt the pipeline.
+
+Examples:
+    # Initialize with Together.ai API key
+    from src.processing.entities.pre_entity_extractor import DualPassEntityExtractor
+
+    extractor = DualPassEntityExtractor()
+
+    # Semantic extraction (all chunks)
+    semantic_entities = extractor.extract_semantic(chunk_text, chunk_id)
+    print(f"Extracted {len(semantic_entities)} semantic entities")
+    for entity in semantic_entities:
+        print(f"{entity.name} ({entity.type})")
+
+    # Metadata extraction (paper chunks only)
+    metadata_entities = extractor.extract_metadata(paper_chunk_text, chunk_id)
+    print(f"Extracted {len(metadata_entities)} metadata entities")
+
+    # Full dual-pass extraction
+    all_entities = extractor.extract_dual_pass(chunk_text, chunk_id, is_paper=True)
+    print(f"Total: {len(all_entities)} entities")
+
+References:
+    Mistral-7B: mistralai/Mistral-7B-Instruct-v0.3 for entity extraction
+    Together.ai API: LLM inference with JSON mode for structured output
+    config.extraction_config.ENTITY_EXTRACTION_CONFIG: Model and type configuration
+    src.prompts.prompts: SEMANTIC_EXTRACTION_PROMPT, METADATA_EXTRACTION_PROMPT
+    src.utils.dataclasses.PreEntity: Pre-entity dataclass with chunk provenance
 """
 # Standard library
 import json

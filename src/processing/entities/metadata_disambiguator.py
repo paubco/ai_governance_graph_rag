@@ -1,14 +1,44 @@
 # -*- coding: utf-8 -*-
 """
-Metadata
+Metadata entity disambiguation for academic provenance tracking.
 
-Handles the METADATA path (6 types):
-    Citation, Author, Journal, Affiliation, Document, DocumentSection
+Disambiguates 6 metadata entity types extracted from academic papers (Citation,
+Author, Journal, Affiliation, Document, DocumentSection) using exact string matching
+and structural parent-child relationships. Creates PART_OF edges for hierarchical
+containment (Author→Affiliation, Citation→Document) and SAME_AS edges for entity
+merging. Links metadata entities to semantic entities via document context.
+
+The disambiguator performs case-sensitive exact matching on normalized names (strip
+whitespace, lowercase for comparison). Builds PART_OF graph from extraction patterns
+(citations belong to documents, authors belong to affiliations). Merges duplicate
+names within same type using SAME_AS edges. Tracks statistics on merge ratios and
+structural edge counts for quality monitoring.
 
 Examples:
-disambiguator = MetadataDisambiguator(semantic_entities)
-    metadata_entities, part_of, same_as = disambiguator.process(metadata_raw)
+    # Initialize with semantic entities for linking
+    from src.processing.entities.metadata_disambiguator import MetadataDisambiguator
 
+    disambiguator = MetadataDisambiguator(semantic_entities)
+
+    # Disambiguate metadata entities
+    metadata_entities, part_of, same_as = disambiguator.process(metadata_raw)
+    print(f"Entities: {len(metadata_entities)}")
+    print(f"PART_OF edges: {len(part_of)}")
+    print(f"SAME_AS edges: {len(same_as)}")
+
+    # Access entity lookup
+    entity_by_id = {e.entity_id: e for e in metadata_entities}
+
+    # Inspect structural relationships
+    for edge in part_of[:10]:
+        child = entity_by_id[edge.subject_id]
+        parent = entity_by_id[edge.object_id]
+        print(f"{child.name} PART_OF {parent.name}")
+
+References:
+    config.extraction_config.METADATA_ENTITY_TYPES: 6 metadata types
+    src.utils.dataclasses: NormalizedEntity, StructuralRelation dataclasses
+    src.utils.id_generator: generate_entity_id for canonical IDs
 """
 import re
 import logging

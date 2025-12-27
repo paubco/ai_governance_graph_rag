@@ -69,7 +69,7 @@ References:
     RAGAS: Evaluation framework for retrieval-augmented generation
     config.extraction_config: Entity types and extraction parameters
 """
-import os
+
 import sys
 import json
 import logging
@@ -286,7 +286,7 @@ class GraphAnalyzer:
         """
         query = """
         MATCH (e:Entity)
-        WITH e, size((e)-[]-()) as degree
+        WITH e, COUNT { (e)-[]-() } as degree
         RETURN 
             round(avg(degree), 2) as avg_degree,
             max(degree) as max_degree,
