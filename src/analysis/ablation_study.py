@@ -829,6 +829,42 @@ class AblationTestSuite:
                 print(f"  {q_short:<45} {sem:>6.2f} {graph:>6.2f} {dual:>6.2f} {winner:>8}")
             
             print(f"\n  Winner counts: semantic={winners['semantic']}, graph={winners['graph']}, dual={winners['dual']}, tie={winners['tie']}")
+            
+            # ─────────────────────────────────────────────────────────────────────
+            # 2b. CSD PER-QUERY (Claim Semantic Diversity)
+            # ─────────────────────────────────────────────────────────────────────
+            print(f"\n  {'─'*76}")
+            print(f"  2b. CSD PER-QUERY (Claim Semantic Diversity)")
+            print(f"  {'─'*76}")
+            
+            # Collect CSD per query
+            csd_by_query = {}
+            for r in successful_tests:
+                if r.query not in csd_by_query:
+                    csd_by_query[r.query] = {}
+                csd_by_query[r.query][r.mode] = r.ragas.csd_score
+            
+            print(f"\n  {'Query':<45} {'Sem':>6} {'Graph':>6} {'Dual':>6} {'Best':>8}")
+            print(f"  {'-'*45} {'-'*6} {'-'*6} {'-'*6} {'-'*8}")
+            
+            for query, csd_scores in csd_by_query.items():
+                q_short = query[:42] + '...' if len(query) > 42 else query
+                sem = csd_scores.get('semantic')
+                graph = csd_scores.get('graph')
+                dual = csd_scores.get('dual')
+                
+                sem_str = f"{sem:.3f}" if sem is not None else "N/A"
+                graph_str = f"{graph:.3f}" if graph is not None else "N/A"
+                dual_str = f"{dual:.3f}" if dual is not None else "N/A"
+                
+                # Determine highest CSD (most diverse)
+                valid_scores = {k: v for k, v in csd_scores.items() if v is not None}
+                if valid_scores:
+                    best = max(valid_scores, key=valid_scores.get)
+                else:
+                    best = "N/A"
+                
+                print(f"  {q_short:<45} {sem_str:>6} {graph_str:>6} {dual_str:>6} {best:>8}")
         
         # ─────────────────────────────────────────────────────────────────────
         # 3. CATEGORY ANALYSIS
@@ -843,23 +879,32 @@ class AblationTestSuite:
                 categories[r.category] = {'semantic': [], 'graph': [], 'dual': []}
             categories[r.category][r.mode].append(r)
         
-        print(f"\n  {'Category':<30} {'Best Mode':<12} {'Faith (S/G/D)':<20} {'n':>4}")
-        print(f"  {'-'*30} {'-'*12} {'-'*20} {'-'*4}")
+        print(f"\n  {'Category':<30} {'Best Mode':<12} {'Faith (S/G/D)':<20} {'CSD (S/G/D)':<20}")
+        print(f"  {'-'*30} {'-'*12} {'-'*20} {'-'*20}")
         
         for cat, mode_results in sorted(categories.items()):
             scores = {}
+            csd_scores = {}
             for mode in ['semantic', 'graph', 'dual']:
                 if mode_results[mode]:
                     if self.enable_ragas:
                         scores[mode] = sum(r.ragas.faithfulness_score for r in mode_results[mode]) / len(mode_results[mode])
+                        # CSD average (handle None)
+                        csd_vals = [r.ragas.csd_score for r in mode_results[mode] if r.ragas.csd_score is not None]
+                        csd_scores[mode] = sum(csd_vals) / len(csd_vals) if csd_vals else None
                     else:
                         scores[mode] = 0
+                        csd_scores[mode] = None
             
             if scores:
                 best = max(scores, key=scores.get)
                 score_str = f"{scores.get('semantic', 0):.2f}/{scores.get('graph', 0):.2f}/{scores.get('dual', 0):.2f}"
-                n = len(mode_results['semantic']) + len(mode_results['graph']) + len(mode_results['dual'])
-                print(f"  {cat:<30} {best.upper():<12} {score_str:<20} {n//3:>4}")
+                # CSD string
+                csd_s = f"{csd_scores.get('semantic'):.2f}" if csd_scores.get('semantic') else "N/A"
+                csd_g = f"{csd_scores.get('graph'):.2f}" if csd_scores.get('graph') else "N/A"
+                csd_d = f"{csd_scores.get('dual'):.2f}" if csd_scores.get('dual') else "N/A"
+                csd_str = f"{csd_s}/{csd_g}/{csd_d}"
+                print(f"  {cat:<30} {best.upper():<12} {score_str:<20} {csd_str:<20}")
         
         # ─────────────────────────────────────────────────────────────────────
         # 4. RELATION UTILIZATION ANALYSIS
