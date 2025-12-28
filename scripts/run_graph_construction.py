@@ -157,137 +157,172 @@ def run_phase_1a() -> bool:
 def run_phase_1b() -> bool:
     """
     Phase 1B: Entity Extraction
-    
-    Extracts pre-entities from chunks using Qwen-72B LLM.
-    Each pre-entity has: name, type, description, chunk_id.
-    
+
+    Extracts entities from chunks using dual-pass extraction (semantic + metadata).
+    Uses Mistral-7B via Together.ai for LLM extraction.
+
     Input:  data/processed/chunks/chunks_embedded.jsonl
-    Output: data/interim/entities/pre_entities.jsonl
-    
+    Output: data/processed/entities/entities_semantic.jsonl
+            data/processed/entities/entities_metadata.jsonl
+
     Returns True if successful.
     """
     logger.info("=" * 60)
     logger.info("PHASE 1B: Entity Extraction")
     logger.info("=" * 60)
-    
-    # TODO: Import and run entity_processor
-    # from src.processing.entities.entity_processor import EntityProcessor
-    # processor = EntityProcessor()
-    # return processor.run()
-    
-    logger.warning("Phase 1B not yet implemented in runner")
+
+    from src.processing.entities.pre_entity_processor import main as run_entity_extraction
+    run_entity_extraction()
     return True
 
 
 def run_phase_1c() -> bool:
     """
     Phase 1C: Entity Disambiguation
-    
-    Merges duplicate pre-entities using FAISS blocking + tiered similarity thresholds.
-    Assigns deterministic canonical IDs.
-    
-    Input:  data/interim/entities/pre_entities.jsonl
-    Output: data/processed/entities/entities_canonical.jsonl
-    
+
+    Merges duplicate entities using two-path disambiguation:
+    - Semantic entities: FAISS blocking + SameJudge LLM verification
+    - Metadata entities: Structural PART_OF relationships
+
+    Input:  data/processed/entities/entities_semantic.jsonl (raw)
+            data/processed/entities/entities_metadata.jsonl (raw)
+    Output: data/processed/entities/entities_semantic.jsonl (disambiguated)
+            data/processed/entities/entities_metadata.jsonl (with PART_OF)
+            data/processed/entities/entities_semantic_embedded.jsonl (with BGE-M3)
+
     Returns True if successful.
     """
     logger.info("=" * 60)
     logger.info("PHASE 1C: Disambiguation")
     logger.info("=" * 60)
-    
-    # TODO: Import and run disambiguation
-    # from src.processing.entities.disambiguation import DisambiguationProcessor
-    # processor = DisambiguationProcessor()
-    # return processor.run()
-    
-    logger.warning("Phase 1C not yet implemented in runner")
+
+    from src.processing.entities.disambiguation_processor import main as run_disambiguation
+    run_disambiguation()
     return True
 
 
 def run_phase_1d() -> bool:
     """
     Phase 1D: Relation Extraction
-    
-    Extracts relations between entities using Mistral-7B LLM.
-    Two-track strategy: semantic (OpenIE) and academic (discusses only).
-    
-    Input:  data/processed/entities/entities_canonical.jsonl
+
+    Extracts relations between entities using two-track strategy:
+    - Track 1: Semantic relations (entity-centered with MMR context)
+    - Track 2: Citation relations (chunk-centered DISCUSSES)
+
+    Input:  data/processed/entities/entities_semantic_embedded.jsonl
             data/processed/chunks/chunks_embedded.jsonl
-    Output: data/processed/relations/relations.jsonl
-    
+    Output: data/processed/relations/relations_semantic.jsonl
+            data/processed/relations/relations_discusses.jsonl
+            data/processed/relations/same_as_relations.jsonl (SAME_AS)
+            data/processed/relations/part_of_relations.jsonl (PART_OF)
+
     Returns True if successful.
     """
     logger.info("=" * 60)
     logger.info("PHASE 1D: Relation Extraction")
     logger.info("=" * 60)
-    
-    # TODO: Import and run relation extraction
-    # from src.processing.relations.run_relation_extraction import RelationProcessor
-    # processor = RelationProcessor()
-    # return processor.run()
-    
-    logger.warning("Phase 1D not yet implemented in runner")
+
+    from src.processing.relations.relation_processor import main as run_relation_extraction
+    run_relation_extraction()
     return True
 
 
 def run_phase_2a() -> bool:
     """
     Phase 2A: Scopus Enrichment
-    
-    Adds structured metadata from Scopus:
-    - Author nodes with AUTHORED_BY relations
-    - Journal nodes with PUBLISHED_IN relations
-    - L2 Publication nodes for citations with CITES relations
-    - Jurisdiction SAME_AS links
-    
-    Input:  data/processed/entities/entities_canonical.jsonl
-            data/raw/scopus/*.csv
-    Output: data/processed/entities/entities_enriched.jsonl
-            data/processed/relations/relations_enriched.jsonl
-    
+
+    Integrates Scopus metadata to create structured nodes:
+    - L1/L2 Publications (source papers + cited works)
+    - Authors with Scopus IDs
+    - Journals with ISSN
+    - Jurisdiction codes
+
+    Creates enrichment relations:
+    - CITES (Citation→L2Publication fuzzy matching)
+    - SAME_AS (Location→Jurisdiction, Person→Author, etc.)
+    - AUTHORED, PUBLISHED_IN, CONTAINS
+
+    Input:  data/processed/entities/entities_semantic_embedded.jsonl
+            data/processed/entities/entities_metadata.jsonl
+            data/raw/academic/scopus_2023/scopus_export_2023_raw.csv
+            data/raw/dlapiper/scraping_summary.json
+    Output: data/processed/enrichment/publications.json
+            data/processed/enrichment/authors.json
+            data/processed/enrichment/journals.json
+            data/processed/enrichment/enrichment_relations.json
+
     Returns True if successful.
     """
     logger.info("=" * 60)
     logger.info("PHASE 2A: Scopus Enrichment")
     logger.info("=" * 60)
-    
-    # TODO: Import and run enrichment
-    # from src.enrichment.enrichment_processor import EnrichmentProcessor
-    # processor = EnrichmentProcessor()
-    # return processor.run()
-    
-    logger.warning("Phase 2A not yet implemented in runner")
+
+    from src.enrichment.enrichment_processor import main as run_enrichment
+    run_enrichment()
     return True
 
 
 def run_phase_2b() -> bool:
     """
     Phase 2B: Storage
-    
-    Imports graph to Neo4j and builds FAISS indices.
-    - Neo4j: nodes (entities, chunks) + edges (relations)
-    - FAISS: HNSW indices for entity and chunk embeddings
-    
-    Input:  data/processed/entities/entities_enriched.jsonl
-            data/processed/relations/relations_enriched.jsonl
+
+    Imports knowledge graph to Neo4j and builds FAISS HNSW indices.
+
+    Neo4j Import (with checkpointing):
+    - Nodes: Jurisdiction, Publication (L1+L2), Author, Journal, Chunk, Entity
+    - Relationships: CONTAINS, AUTHORED_BY, PUBLISHED_IN, EXTRACTED_FROM,
+                     RELATION, MATCHED_TO, CITES, SAME_AS, AUTHORED, PART_OF
+    - Uses batched UNWIND pattern (batch_size=500)
+    - Dependency order: nodes before relationships
+
+    FAISS Indices:
+    - Entity embeddings (BGE-M3, 1024 dims) → HNSW index
+    - Chunk embeddings (BGE-M3, 1024 dims) → HNSW index
+    - Parallel ID maps for index→entity_id resolution
+
+    Input:  data/processed/enrichment/publications.json
+            data/processed/enrichment/authors.json
+            data/processed/enrichment/journals.json
+            data/processed/enrichment/enrichment_relations.json
+            data/processed/entities/entities_semantic_embedded.jsonl
+            data/processed/entities/entities_metadata.jsonl
+            data/processed/relations/relations_semantic.jsonl
             data/processed/chunks/chunks_embedded.jsonl
-    Output: Neo4j database populated
-            data/processed/faiss/entities.faiss
-            data/processed/faiss/chunks.faiss
-    
+            data/raw/dlapiper/scraping_summary.json
+            data/raw/academic/scopus_2023/scopus_export_2023_raw.csv
+    Output: Neo4j database (requires NEO4J_URI, NEO4J_PASSWORD env vars)
+            data/processed/faiss/entity_embeddings.index
+            data/processed/faiss/entity_id_map.json
+            data/processed/faiss/chunk_embeddings.index
+            data/processed/faiss/chunk_id_map.json
+
     Returns True if successful.
     """
     logger.info("=" * 60)
-    logger.info("PHASE 2B: Storage")
+    logger.info("PHASE 2B: Storage (Neo4j + FAISS)")
     logger.info("=" * 60)
-    
-    # TODO: Import and run storage
-    # from src.graph.neo4j_import_processor import Neo4jImporter
-    # from src.graph.faiss_builder import FaissBuilder
-    # Neo4jImporter().run()
-    # FaissBuilder().run()
-    
-    logger.warning("Phase 2B not yet implemented in runner")
+
+    # Step 1: Neo4j Import
+    logger.info("\n>>> Sub-phase 2B.1: Neo4j Import")
+    try:
+        from src.graph.neo4j_import_processor import main as run_neo4j_import
+        run_neo4j_import()
+        logger.info("<<< Neo4j import complete")
+    except Exception as e:
+        logger.exception(f"Neo4j import failed: {e}")
+        logger.error("Hint: Ensure NEO4J_URI and NEO4J_PASSWORD are set in .env")
+        return False
+
+    # Step 2: FAISS Index Building
+    logger.info("\n>>> Sub-phase 2B.2: FAISS Index Building")
+    try:
+        from src.graph.faiss_builder import main as run_faiss_builder
+        run_faiss_builder()
+        logger.info("<<< FAISS indexes built")
+    except Exception as e:
+        logger.exception(f"FAISS building failed: {e}")
+        return False
+
     return True
 
 
