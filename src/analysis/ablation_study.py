@@ -565,7 +565,10 @@ class AblationTestSuite:
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
                 answer_text="",
                 success=False,
-                error=str(e)
+                error=str(e),
+                chunks_detail=[],
+                cited_chunks=[],
+                relations_detail=[]
             )
     
     def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
@@ -941,7 +944,12 @@ class AblationTestSuite:
                     'total_time': r.performance.total_time,
                     'answer_tokens': r.performance.answer_tokens,
                     'cost_usd': r.performance.cost_usd
-                }
+                },
+                # Detailed fields for appendix export
+                'answer_text': r.answer_text,
+                'chunks_detail': r.chunks_detail,
+                'relations_detail': r.relations_detail,
+                'cited_chunks': r.cited_chunks
             }
             results_dicts.append(result_dict)
         
