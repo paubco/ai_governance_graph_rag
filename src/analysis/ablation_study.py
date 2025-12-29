@@ -1,43 +1,21 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unified ablation study comparing retrieval modes with comprehensive evaluation metrics.
+Unified ablation study with comprehensive evaluation metrics.
 
-Systematic comparison of three retrieval strategies (SEMANTIC, GRAPH, DUAL) using RAGAS
-metrics, entity coverage analysis, and cost/latency measurements. Executes test queries
-across all modes, generates answers via Claude Haiku, and evaluates with answer relevancy,
-faithfulness, context precision, context recall, and custom entity coverage metrics.
-
-Supports three output modes: (1) detailed - 8 queries with full answers and per-query
-verbose analysis, (2) full - 36 queries with compact output and aggregate statistics
-for visualization, (3) quick (default) - 8 queries compact output for rapid iteration.
-Results saved to JSON with mode-specific statistics and per-query breakdowns for LaTeX
-export and chart generation.
+Compares semantic, graph, and dual retrieval modes with RAGAS metrics.
 
 Modes:
-    --detailed      8 queries, full answers printed, verbose per-query analysis
-    --full          36 queries, compact output, aggregate stats for charts
-    --quick         8 queries, compact output (default)
-    --no-ragas      Skip RAGAS evaluation for faster debugging
+    --detailed    6 queries, full answers printed, verbose per-query analysis
+    --full        30 queries, compact output, aggregate stats for charts
+    (default)     6 queries, compact output
 
-Examples:
-    # Detailed analysis with full RAGAS metrics
-    python src/analysis/ablation_study.py --detailed
-
-    # Generate aggregate statistics for visualization
-    python src/analysis/ablation_study.py --full
-
-    # Quick debugging without expensive metrics
-    python src/analysis/ablation_study.py --quick --no-ragas
-
-    # Custom query set with detailed output
-    python src/analysis/ablation_study.py --detailed --queries custom_queries.json
-
-References:
-    RAGAS framework: https://docs.ragas.io/en/latest/
-    Test queries: src/analysis/test_queries.py
-    Retrieval modes: config.retrieval_config.RetrievalMode
-    LaTeX export: src/analysis/ablation_latex_export.py
+Example:
+    python src/analysis/ablation_study.py --detailed        # Full analysis
+    python src/analysis/ablation_study.py --full            # Stats for charts
+    python src/analysis/ablation_study.py --quick --no-ragas  # Quick debug
 """
+
 # Standard library
 import argparse
 import json
@@ -68,7 +46,6 @@ from src.retrieval.retrieval_processor import RetrievalProcessor
 from src.retrieval.answer_generator import AnswerGenerator
 from src.utils.embedder import BGEEmbedder
 from src.utils.logger import get_logger
-from src.utils.citations import CitationFormatter
 
 # Analysis metrics
 from src.analysis.retrieval_metrics import (
@@ -85,6 +62,9 @@ from src.analysis.retrieval_metrics import (
     compute_coverage_metrics
 )
 
+# Citation formatting
+from src.utils.citations import CitationFormatter
+
 logger = get_logger(__name__)
 
 
@@ -100,10 +80,9 @@ class RAGASEvaluator:
     faithfulness evaluation with full retrieval context.
     
     Includes robust JSON parsing with retry and regex fallback.
-    Includes Claim Semantic Diversity (CSD) for measuring answer coverage.
     """
     
-    def __init__(self, max_retries: int = 2, embedder: 'BGEEmbedder' = None):
+    def __init__(self, max_retries: int = 2):
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment")
@@ -111,67 +90,6 @@ class RAGASEvaluator:
         # Use Haiku for evaluation - 12x cheaper than Sonnet, sufficient for judging
         self.model = "claude-3-5-haiku-20241022"
         self.max_retries = max_retries
-        self.embedder = embedder  # Optional: for CSD computation
-    
-    def compute_csd(self, claims: List[str]) -> Dict:
-        """
-        Compute Claim Semantic Diversity (CSD).
-        
-        Measures how semantically diverse the claims are in an answer.
-        CSD = 1 - mean(pairwise_cosine_similarities)
-        
-        Args:
-            claims: List of claim text strings
-            
-        Returns:
-            Dict with csd_score, n_claims, mean_similarity
-        """
-        import numpy as np
-        
-        if not self.embedder:
-            return {'csd_score': None, 'n_claims': len(claims), 'mean_similarity': None, 
-                    'error': 'No embedder provided'}
-        
-        n = len(claims)
-        if n < 2:
-            return {'csd_score': 1.0, 'n_claims': n, 'mean_similarity': 0.0,
-                    'note': 'CSD=1.0 by definition for n<2'}
-        
-        try:
-            # Embed all claims
-            embeddings = []
-            for claim in claims:
-                emb = self.embedder.embed_single(claim)
-                embeddings.append(emb)
-            
-            embeddings = np.array(embeddings)
-            
-            # Normalize for cosine similarity
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            normalized = embeddings / (norms + 1e-10)
-            
-            # Compute pairwise cosine similarities
-            sim_matrix = np.dot(normalized, normalized.T)
-            
-            # Extract upper triangle (excluding diagonal)
-            upper_tri_indices = np.triu_indices(n, k=1)
-            pairwise_sims = sim_matrix[upper_tri_indices]
-            
-            mean_sim = float(np.mean(pairwise_sims))
-            csd = 1.0 - mean_sim
-            
-            return {
-                'csd_score': float(csd),
-                'n_claims': n,
-                'mean_similarity': mean_sim,
-                'min_similarity': float(np.min(pairwise_sims)),
-                'max_similarity': float(np.max(pairwise_sims))
-            }
-            
-        except Exception as e:
-            logger.error(f"CSD computation failed: {e}")
-            return {'csd_score': None, 'n_claims': n, 'mean_similarity': None,
-                    'error': str(e)}
     
     def _parse_json_response(self, content: str) -> Dict:
         """
@@ -293,13 +211,13 @@ Return ONLY the JSON object, no other text."""
                 'score': float(score),
                 'supported': supported,
                 'total': total,
-                'explanation': result.get('explanation', ''),
-                'claims': [c.get('claim', '') for c in claims if c.get('supported', False)]  # Return supported claim texts for CSD
+                'claims': claims,  # Keep actual claims for display
+                'explanation': result.get('explanation', '')
             }
             
         except Exception as e:
             logger.error(f"Faithfulness evaluation failed: {e}")
-            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}', 'claims': []}
+            return {'score': 0.0, 'supported': 0, 'total': 0, 'explanation': f'Error: {e}'}
     
     def answer_relevancy(self, query: str, answer: str) -> Dict:
         """Measure how well answer addresses query."""
@@ -346,11 +264,10 @@ Return ONLY the JSON object, no other text."""
 # TEST QUERIES
 # ============================================================================
 
-from src.analysis.test_queries import DETAILED_QUERIES, FULL_QUERIES, get_queries
+from src.analysis.test_queries import QUICK_QUERIES, FULL_QUERIES, get_queries
 
-# Legacy alias for backward compatibility
-QUICK_QUERIES = DETAILED_QUERIES
-TEST_QUERIES = DETAILED_QUERIES
+# Default to quick queries for backward compatibility
+TEST_QUERIES = QUICK_QUERIES
 
 
 # ============================================================================
@@ -368,7 +285,7 @@ class AblationTestSuite:
         self.processor = None
         self.generator = None
         self.ragas = None
-        self.citation_formatter = None  # For citation formatting
+        self.citation_formatter = None  # For paper/regulation metadata
         self.results = []
         self.results_lock = Lock()  # Thread-safe results collection
         self.print_lock = Lock()  # Thread-safe printing
@@ -379,15 +296,12 @@ class AblationTestSuite:
         
         data_dir = PROJECT_ROOT / 'data'
         
-        # Load citation formatter
-        self.citation_formatter = CitationFormatter(project_root=PROJECT_ROOT)
-        
-        # Embedding model (keep reference for CSD computation)
-        self.embedder = BGEEmbedder()
+        # Embedding model
+        embedding_model = BGEEmbedder()
         
         # Retrieval processor (v2.0 paths)
         self.processor = RetrievalProcessor(
-            embedding_model=self.embedder,
+            embedding_model=embedding_model,
             faiss_entity_index_path=data_dir / 'processed' / 'faiss' / 'entity_embeddings.index',
             entity_ids_path=data_dir / 'processed' / 'faiss' / 'entity_id_map.json',
             normalized_entities_path=data_dir / 'processed' / 'entities' / 'entities_semantic_embedded.jsonl',
@@ -402,11 +316,13 @@ class AblationTestSuite:
         # Answer generator
         self.generator = AnswerGenerator()
         
+        # Citation formatter (for paper names and URLs)
+        self.citation_formatter = CitationFormatter()
+        
         # RAGAS evaluator (Claude Haiku - cheap but reliable)
-        # Pass embedder for CSD computation
         if self.enable_ragas:
-            print("Initializing RAGAS evaluator (Claude Haiku + CSD)...")
-            self.ragas = RAGASEvaluator(embedder=self.embedder)
+            print("Initializing RAGAS evaluator (Claude Haiku)...")
+            self.ragas = RAGASEvaluator()
         
         print("Pipeline loaded\n")
     
@@ -418,7 +334,7 @@ class AblationTestSuite:
             print(f"  TEST {test_num}/{total_tests}: {mode.value.upper()}")
             print(f"{'━'*80}")
             print(f"  Query: {query_def['query']}")
-            print(f"  Category: {query_def['primary_category']}")
+            print(f"  Category: {query_def['category']}")
             if query_def.get('expected_mode'):
                 print(f"  Expected winner: {query_def['expected_mode']}")
             print()
@@ -441,7 +357,7 @@ class AblationTestSuite:
             
             # Compute entity resolution metrics
             extracted = retrieval_result.parsed_query.extracted_entities if retrieval_result.parsed_query else []
-            resolved = getattr(retrieval_result, 'resolved_entities', None) or []
+            resolved = retrieval_result.resolved_entities if retrieval_result.resolved_entities else []
             
             entity_metrics = compute_entity_resolution_metrics(extracted, resolved)
             
@@ -497,7 +413,7 @@ class AblationTestSuite:
             )
             
             if self.detailed:
-                print(f"     Terminal coverage: {coverage_metrics.terminal_coverage_rate:.1%} ({coverage_metrics.terminals_in_answer}/{coverage_metrics.query_terminals})")
+                print(f"     Entity coverage: {coverage_metrics.entity_coverage_rate:.1%}")
                 print(f"     Relation coverage: {coverage_metrics.relation_coverage_rate:.1%}")
                 if coverage_metrics.covered_entities:
                     print(f"     Covered: {', '.join(coverage_metrics.covered_entities[:5])}")
@@ -524,11 +440,6 @@ class AblationTestSuite:
                 
                 faith = self.ragas.faithfulness(answer_result.answer, context_text)
                 
-                # Compute Claim Semantic Diversity (CSD) from supported claims
-                csd_result = {'csd_score': None, 'n_claims': 0, 'mean_similarity': None}
-                if faith.get('claims'):
-                    csd_result = self.ragas.compute_csd(faith['claims'])
-                
                 time.sleep(2)  # Rate limit protection
                 
                 if self.detailed:
@@ -538,8 +449,6 @@ class AblationTestSuite:
                 
                 if self.detailed:
                     print(f"     Faithfulness: {faith['score']:.3f} ({faith['supported']}/{faith['total']} claims)")
-                    if csd_result.get('csd_score') is not None:
-                        print(f"     Claim Diversity (CSD): {csd_result['csd_score']:.3f} (mean_sim={csd_result['mean_similarity']:.3f})")
                     print(f"     Relevancy: {rel['score']:.3f}")
                     if faith.get('explanation'):
                         print(f"     Explanation: {faith['explanation'][:100]}...")
@@ -549,14 +458,11 @@ class AblationTestSuite:
                     faithfulness_details={
                         'supported_claims': faith['supported'],
                         'total_claims': faith['total'],
-                        'explanation': faith['explanation'],
-                        'claims': faith.get('claims', [])  # Store for future analysis
+                        'claims': faith.get('claims', []),  # Actual claims for display
+                        'explanation': faith['explanation']
                     },
                     relevancy_score=rel['score'],
-                    relevancy_explanation=rel['explanation'],
-                    csd_score=csd_result.get('csd_score'),
-                    csd_mean_similarity=csd_result.get('mean_similarity'),
-                    csd_n_claims=csd_result.get('n_claims', 0)
+                    relevancy_explanation=rel['explanation']
                 )
             else:
                 ragas_metrics = RAGASMetrics(
@@ -577,52 +483,49 @@ class AblationTestSuite:
                 cost_usd=answer_result.cost_usd
             )
             
-            # ============================================================
-            # PATCH: Extract citations and build detailed data
-            # ============================================================
+            # Build chunks_detail for detailed export
+            chunks_detail = []
+            for i, chunk in enumerate(retrieval_result.chunks):
+                chunks_detail.append({
+                    'index': i + 1,
+                    'chunk_id': chunk.chunk_id,
+                    'doc_id': chunk.doc_id,
+                    'doc_type': chunk.doc_type,
+                    'score': chunk.score,
+                    'method': chunk.source_path,  # 'method' for LaTeX export compatibility
+                    'jurisdiction': chunk.jurisdiction,
+                    'text': chunk.text,
+                    'matching_entities': chunk.matching_entities if hasattr(chunk, 'matching_entities') else [],
+                })
             
-            # Extract citations from answer text
-            citations = re.findall(r'\[(\d+)\]', answer_result.answer)
-            cited_indices = sorted(set(int(c) for c in citations))
+            # Enrich chunks with proper citation metadata (paper names, URLs)
+            if self.citation_formatter:
+                chunks_detail = self.citation_formatter.enrich_chunks(chunks_detail)
             
-            # Build detailed data (only in detailed mode to save memory)
-            chunks_detail = None
-            relations_detail = None
-            if self.detailed:
-                chunks_detail = [
-                    {
-                        'index': i + 1,
-                        'chunk_id': c.chunk_id,
-                        'doc_id': c.doc_id,
-                        'doc_type': c.doc_type,
-                        'score': c.score,
-                        'method': c.source_path,
-                        'text': c.text,  # Full text for detailed mode
-                        'cited': (i + 1) in cited_indices,
-                        'jurisdiction': c.jurisdiction if hasattr(c, 'jurisdiction') else None,
-                        'citation': self.citation_formatter.format(
-                            c.doc_id, 
-                            c.doc_type, 
-                            c.jurisdiction if hasattr(c, 'jurisdiction') else None
-                        )
-                    }
-                    for i, c in enumerate(retrieval_result.chunks)
-                ]
-                relations_detail = [
-                    {
+            # Build relations_detail with entity NAMES (not just IDs)
+            relations_detail = []
+            if retrieval_result.subgraph and retrieval_result.subgraph.relations:
+                for rel in retrieval_result.subgraph.relations[:30]:  # Top 30
+                    relations_detail.append({
                         'subject_id': rel.subject_id,
+                        'subject_name': rel.source_name if hasattr(rel, 'source_name') else rel.subject_id,
                         'predicate': rel.predicate,
                         'object_id': rel.object_id,
-                        'chunk_ids': rel.chunk_ids[:3] if rel.chunk_ids else []  # First 3 for brevity
-                    }
-                    for rel in retrieval_result.subgraph.relations[:20]  # Top 20
-                ]
+                        'object_name': rel.target_name if hasattr(rel, 'target_name') else rel.object_id,
+                        'chunk_ids': rel.chunk_ids[:3] if hasattr(rel, 'chunk_ids') and rel.chunk_ids else [],
+                    })
+            
+            # Extract cited chunk indices from answer text [1], [2], etc.
+            cited_chunks = []
+            if answer_result.answer:
+                citations = re.findall(r'\[(\d+)\]', answer_result.answer)
+                cited_chunks = sorted(set(int(c) for c in citations))
             
             test_result = TestResult(
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['primary_category'],
+                category=query_def['category'],
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=entity_metrics,
                 graph_utilization=graph_metrics,
@@ -634,7 +537,7 @@ class AblationTestSuite:
                 success=True,
                 error=None,
                 chunks_detail=chunks_detail,
-                cited_chunks=cited_indices,
+                cited_chunks=cited_chunks,
                 relations_detail=relations_detail
             )
             
@@ -652,20 +555,17 @@ class AblationTestSuite:
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['primary_category'],
+                category=query_def['category'],
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
-                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, 0, 0, 0.0, [], []),
+                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
                 retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
                 ragas=RAGASMetrics(0.0, {}, 0.0, ""),
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
                 answer_text="",
                 success=False,
-                error=str(e),
-                chunks_detail=None,
-                cited_chunks=[],
-                relations_detail=None
+                error=str(e)
             )
     
     def run_full_suite(self, queries: List[Dict], modes: List[RetrievalMode]):
@@ -784,8 +684,8 @@ class AblationTestSuite:
         print(f"  {'─'*76}")
         print(f"  1. MODE PERFORMANCE")
         print(f"  {'─'*76}")
-        print(f"\n  {'Mode':<12} {'Chunks':>8} {'Entities':>10} {'Relations':>10} {'Faith':>8} {'Relev':>8} {'CSD':>8}")
-        print(f"  {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*8} {'-'*8} {'-'*8}")
+        print(f"\n  {'Mode':<12} {'Chunks':>8} {'Entities':>10} {'Relations':>10} {'Faith':>8} {'Relev':>8}")
+        print(f"  {'-'*12} {'-'*8} {'-'*10} {'-'*10} {'-'*8} {'-'*8}")
         
         for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
@@ -797,13 +697,9 @@ class AblationTestSuite:
                 if self.enable_ragas:
                     avg_faith = sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results)
                     avg_rel = sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results)
-                    # CSD average (handle None values)
-                    csd_values = [r.ragas.csd_score for r in mode_results if r.ragas.csd_score is not None]
-                    avg_csd = sum(csd_values) / len(csd_values) if csd_values else None
-                    csd_str = f"{avg_csd:.3f}" if avg_csd is not None else "N/A"
-                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {avg_faith:>8.3f} {avg_rel:>8.3f} {csd_str:>8}")
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {avg_faith:>8.3f} {avg_rel:>8.3f}")
                 else:
-                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {'N/A':>8} {'N/A':>8} {'N/A':>8}")
+                    print(f"  {mode.upper():<12} {avg_chunks:>8.1f} {avg_entities:>10.1f} {avg_relations:>10.1f} {'N/A':>8} {'N/A':>8}")
         
         # Group results by query (used in sections 2 and 5)
         queries = {}
@@ -851,42 +747,6 @@ class AblationTestSuite:
                 print(f"  {q_short:<45} {sem:>6.2f} {graph:>6.2f} {dual:>6.2f} {winner:>8}")
             
             print(f"\n  Winner counts: semantic={winners['semantic']}, graph={winners['graph']}, dual={winners['dual']}, tie={winners['tie']}")
-            
-            # ─────────────────────────────────────────────────────────────────────
-            # 2b. CSD PER-QUERY (Claim Semantic Diversity)
-            # ─────────────────────────────────────────────────────────────────────
-            print(f"\n  {'─'*76}")
-            print(f"  2b. CSD PER-QUERY (Claim Semantic Diversity)")
-            print(f"  {'─'*76}")
-            
-            # Collect CSD per query
-            csd_by_query = {}
-            for r in successful_tests:
-                if r.query not in csd_by_query:
-                    csd_by_query[r.query] = {}
-                csd_by_query[r.query][r.mode] = r.ragas.csd_score
-            
-            print(f"\n  {'Query':<45} {'Sem':>6} {'Graph':>6} {'Dual':>6} {'Best':>8}")
-            print(f"  {'-'*45} {'-'*6} {'-'*6} {'-'*6} {'-'*8}")
-            
-            for query, csd_scores in csd_by_query.items():
-                q_short = query[:42] + '...' if len(query) > 42 else query
-                sem = csd_scores.get('semantic')
-                graph = csd_scores.get('graph')
-                dual = csd_scores.get('dual')
-                
-                sem_str = f"{sem:.3f}" if sem is not None else "N/A"
-                graph_str = f"{graph:.3f}" if graph is not None else "N/A"
-                dual_str = f"{dual:.3f}" if dual is not None else "N/A"
-                
-                # Determine highest CSD (most diverse)
-                valid_scores = {k: v for k, v in csd_scores.items() if v is not None}
-                if valid_scores:
-                    best = max(valid_scores, key=valid_scores.get)
-                else:
-                    best = "N/A"
-                
-                print(f"  {q_short:<45} {sem_str:>6} {graph_str:>6} {dual_str:>6} {best:>8}")
         
         # ─────────────────────────────────────────────────────────────────────
         # 3. CATEGORY ANALYSIS
@@ -901,32 +761,23 @@ class AblationTestSuite:
                 categories[r.category] = {'semantic': [], 'graph': [], 'dual': []}
             categories[r.category][r.mode].append(r)
         
-        print(f"\n  {'Category':<30} {'Best Mode':<12} {'Faith (S/G/D)':<20} {'CSD (S/G/D)':<20}")
-        print(f"  {'-'*30} {'-'*12} {'-'*20} {'-'*20}")
+        print(f"\n  {'Category':<30} {'Best Mode':<12} {'Faith (S/G/D)':<20} {'n':>4}")
+        print(f"  {'-'*30} {'-'*12} {'-'*20} {'-'*4}")
         
         for cat, mode_results in sorted(categories.items()):
             scores = {}
-            csd_scores = {}
             for mode in ['semantic', 'graph', 'dual']:
                 if mode_results[mode]:
                     if self.enable_ragas:
                         scores[mode] = sum(r.ragas.faithfulness_score for r in mode_results[mode]) / len(mode_results[mode])
-                        # CSD average (handle None)
-                        csd_vals = [r.ragas.csd_score for r in mode_results[mode] if r.ragas.csd_score is not None]
-                        csd_scores[mode] = sum(csd_vals) / len(csd_vals) if csd_vals else None
                     else:
                         scores[mode] = 0
-                        csd_scores[mode] = None
             
             if scores:
                 best = max(scores, key=scores.get)
                 score_str = f"{scores.get('semantic', 0):.2f}/{scores.get('graph', 0):.2f}/{scores.get('dual', 0):.2f}"
-                # CSD string
-                csd_s = f"{csd_scores.get('semantic'):.2f}" if csd_scores.get('semantic') else "N/A"
-                csd_g = f"{csd_scores.get('graph'):.2f}" if csd_scores.get('graph') else "N/A"
-                csd_d = f"{csd_scores.get('dual'):.2f}" if csd_scores.get('dual') else "N/A"
-                csd_str = f"{csd_s}/{csd_g}/{csd_d}"
-                print(f"  {cat:<30} {best.upper():<12} {score_str:<20} {csd_str:<20}")
+                n = len(mode_results['semantic']) + len(mode_results['graph']) + len(mode_results['dual'])
+                print(f"  {cat:<30} {best.upper():<12} {score_str:<20} {n//3:>4}")
         
         # ─────────────────────────────────────────────────────────────────────
         # 4. RELATION UTILIZATION ANALYSIS
@@ -982,6 +833,52 @@ class AblationTestSuite:
                     print(f"    High relation context: {high_faith:.2f} avg faithfulness (n={len(high_rel)})")
                     print(f"    Low relation context:  {low_faith:.2f} avg faithfulness (n={len(low_rel)})")
         
+        # ─────────────────────────────────────────────────────────────────────
+        # 5. EXPECTATION VALIDATION
+        # ─────────────────────────────────────────────────────────────────────
+        print(f"\n  {'─'*76}")
+        print(f"  5. EXPECTATION VALIDATION")
+        print(f"  {'─'*76}")
+        
+        # Check if expected_mode predictions held
+        if self.enable_ragas:
+            correct = 0
+            total_expected = 0
+            
+            for query, scores in queries.items():
+                # Find the query definition to get expected_mode
+                # We need to match query text to QUICK_QUERIES or FULL_QUERIES
+                expected = None
+                for qdef in QUICK_QUERIES + FULL_QUERIES:
+                    if qdef['query'] == query:
+                        expected = qdef.get('expected_mode')
+                        break
+                
+                if not expected:
+                    continue
+                
+                total_expected += 1
+                
+                # Determine actual winner
+                max_score = max(scores.values())
+                if max_score == 0:
+                    continue
+                    
+                actual_winners = [m for m, s in scores.items() if s == max_score]
+                
+                if expected in actual_winners:
+                    correct += 1
+                    status = "✓"
+                else:
+                    status = "✗"
+                
+                q_short = query[:40] + '...' if len(query) > 40 else query
+                actual_str = '/'.join(actual_winners)
+                print(f"  {status} {q_short:<42} expected={expected:<8} actual={actual_str}")
+            
+            if total_expected > 0:
+                print(f"\n  Prediction accuracy: {correct}/{total_expected} ({correct/total_expected:.0%})")
+        
         print(f"\n{'━'*80}\n")
     
     def save_results(self, output_dir: Path, detailed: bool = False):
@@ -1026,9 +923,6 @@ class AblationTestSuite:
                     'entities_in_subgraph': r.coverage.entities_in_subgraph,
                     'entities_in_answer': r.coverage.entities_in_answer,
                     'entity_coverage_rate': r.coverage.entity_coverage_rate,
-                    'query_terminals': r.coverage.query_terminals,
-                    'terminals_in_answer': r.coverage.terminals_in_answer,
-                    'terminal_coverage_rate': r.coverage.terminal_coverage_rate,
                     'relations_in_subgraph': r.coverage.relations_in_subgraph,
                     'relations_mentioned': r.coverage.relations_mentioned,
                     'relation_coverage_rate': r.coverage.relation_coverage_rate,
@@ -1039,10 +933,7 @@ class AblationTestSuite:
                     'faithfulness_score': r.ragas.faithfulness_score,
                     'faithfulness_details': r.ragas.faithfulness_details,
                     'relevancy_score': r.ragas.relevancy_score,
-                    'relevancy_explanation': r.ragas.relevancy_explanation,
-                    'csd_score': r.ragas.csd_score,
-                    'csd_mean_similarity': r.ragas.csd_mean_similarity,
-                    'csd_n_claims': r.ragas.csd_n_claims
+                    'relevancy_explanation': r.ragas.relevancy_explanation
                 },
                 'performance': {
                     'retrieval_time': r.performance.retrieval_time,
@@ -1050,20 +941,8 @@ class AblationTestSuite:
                     'total_time': r.performance.total_time,
                     'answer_tokens': r.performance.answer_tokens,
                     'cost_usd': r.performance.cost_usd
-                },
-                # ============================================================
-                # PATCH: Add answer_text and detailed data to JSON
-                # ============================================================
-                'answer_text': r.answer_text,
-                'cited_chunks': r.cited_chunks if r.cited_chunks else []
+                }
             }
-            
-            # Only include heavy data in detailed mode (saves space in full runs)
-            if r.chunks_detail:
-                result_dict['chunks_detail'] = r.chunks_detail
-            if r.relations_detail:
-                result_dict['relations_detail'] = r.relations_detail
-            
             results_dicts.append(result_dict)
         
         json_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.json'
@@ -1088,20 +967,15 @@ class AblationTestSuite:
         for mode in ['semantic', 'graph', 'dual']:
             mode_results = [r for r in successful_tests if r.mode == mode]
             if mode_results:
-                # CSD avg (handle None values)
-                csd_values = [r.ragas.csd_score for r in mode_results if r.ragas.csd_score is not None]
-                csd_avg = sum(csd_values) / len(csd_values) if csd_values else None
-                
                 mode_stats[mode] = {
                     'faith_avg': sum(r.ragas.faithfulness_score for r in mode_results) / len(mode_results),
                     'relev_avg': sum(r.ragas.relevancy_score for r in mode_results) / len(mode_results),
-                    'csd_avg': csd_avg,
                     'time_avg': sum(r.performance.total_time for r in mode_results) / len(mode_results),
                     'cost_avg': sum(r.performance.cost_usd for r in mode_results) / len(mode_results),
                     'entities_avg': sum(r.graph_utilization.entities_in_subgraph for r in mode_results) / len(mode_results),
                     'relations_avg': sum(r.graph_utilization.relations_in_subgraph for r in mode_results) / len(mode_results),
                     'resolution_avg': sum(r.entity_resolution.resolution_rate for r in mode_results) / len(mode_results),
-                    'e_cov_avg': sum(r.coverage.terminal_coverage_rate for r in mode_results) / len(mode_results),
+                    'e_cov_avg': sum(r.coverage.entity_coverage_rate for r in mode_results) / len(mode_results),
                     'r_cov_avg': sum(r.coverage.relation_coverage_rate for r in mode_results) / len(mode_results),
                 }
         
@@ -1110,8 +984,6 @@ class AblationTestSuite:
         total_time = sum(r.performance.total_time for r in successful_tests)
         avg_faith = sum(r.ragas.faithfulness_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
         avg_relev = sum(r.ragas.relevancy_score for r in successful_tests) / len(successful_tests) if successful_tests else 0
-        csd_values_all = [r.ragas.csd_score for r in successful_tests if r.ragas.csd_score is not None]
-        avg_csd = sum(csd_values_all) / len(csd_values_all) if csd_values_all else None
         
         report = f"""# GraphRAG Retrieval Ablation Study v1.1
 
@@ -1140,7 +1012,6 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 |--------|-------|
 | Avg Faithfulness | {avg_faith:.3f} |
 | Avg Relevancy | {avg_relev:.3f} |
-| Avg Claim Diversity | {f'{avg_csd:.3f}' if avg_csd else 'N/A'} |
 | Entity Resolution | 100% (in-domain) |
 | Best Overall Mode | {'semantic' if mode_stats.get('semantic', {}).get('faith_avg', 0) >= mode_stats.get('graph', {}).get('faith_avg', 0) else 'graph'} |
 
@@ -1149,14 +1020,13 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 ## Mode Comparison
 
 ### Performance by Mode
-| Mode | Faithfulness | Relevancy | CSD | Resolution | E.Cov | R.Cov | Time | Cost |
-|------|-------------|-----------|-----|------------|-------|-------|------|------|
+| Mode | Faithfulness | Relevancy | Resolution | E.Cov | R.Cov | Time | Cost |
+|------|-------------|-----------|------------|-------|-------|------|------|
 """
         for mode, stats in mode_stats.items():
             best_faith = max(s.get('faith_avg', 0) for s in mode_stats.values())
             marker = "**" if stats['faith_avg'] == best_faith else ""
-            csd_str = f"{stats['csd_avg']:.3f}" if stats.get('csd_avg') else "N/A"
-            report += f"| {mode.upper()} | {marker}{stats['faith_avg']:.3f}{marker} | {stats['relev_avg']:.3f} | {csd_str} | {stats['resolution_avg']:.1%} | {stats['e_cov_avg']:.1%} | {stats['r_cov_avg']:.1%} | {stats['time_avg']:.1f}s | ${stats['cost_avg']:.4f} |\n"
+            report += f"| {mode.upper()} | {marker}{stats['faith_avg']:.3f}{marker} | {stats['relev_avg']:.3f} | {stats['resolution_avg']:.1%} | {stats['e_cov_avg']:.1%} | {stats['r_cov_avg']:.1%} | {stats['time_avg']:.1f}s | ${stats['cost_avg']:.4f} |\n"
         
         report += """
 ### Graph Utilization by Mode
@@ -1200,7 +1070,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
                 jur = rd['retrieval'].get('jurisdiction_diversity', [])
                 jur_count = len(jur) if jur else 0
                 
-                e_cov = rd['coverage'].get('terminal_coverage_rate', 0) * 100
+                e_cov = rd['coverage'].get('entity_coverage_rate', 0) * 100
                 sim = rd['retrieval'].get('avg_query_similarity', 0)
                 
                 subgraph = f"{rd['graph_utilization']['entities_in_subgraph']}/{rd['graph_utilization']['relations_in_subgraph']}"
@@ -1421,7 +1291,7 @@ Comparative evaluation of three retrieval strategies for cross-jurisdictional AI
 
 ---
 
-*Generated by src/analysis/ablation_study.py v1.2*
+*Generated by src/analysis/ablation_study.py v1.1*
 """
         
         report_file = output_dir / f'ablation_{mode_suffix}_{timestamp}.md'
@@ -1441,13 +1311,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Detailed analysis (8 queries, full answers printed)
+  # Detailed analysis (6 queries, full answers printed)
   python src/analysis/ablation_study.py --detailed
 
-  # Stats mode (36 queries, aggregate metrics for charts)
+  # Stats mode (30 queries, aggregate metrics for charts)
   python src/analysis/ablation_study.py --full
   
-  # Quick debug (2 queries, no RAGAS, no LaTeX)
+  # Quick debug (2 queries, no RAGAS)
   python src/analysis/ablation_study.py --quick --no-ragas
   
   # Export to LaTeX after running
@@ -1455,9 +1325,9 @@ Examples:
         """
     )
     parser.add_argument('--detailed', action='store_true', 
-                        help='Detailed mode: 8 queries, full answers, verbose metrics')
+                        help='Detailed mode: 6 queries, full answers, verbose metrics')
     parser.add_argument('--full', action='store_true', 
-                        help='Stats mode: 36 queries, aggregate metrics for charts')
+                        help='Stats mode: 30 queries, aggregate metrics for charts')
     parser.add_argument('--quick', action='store_true', 
                         help='Quick test with 2 queries (debug)')
     parser.add_argument('--parallel', action='store_true',
@@ -1478,34 +1348,31 @@ Examples:
     try:
         # Determine mode
         if args.detailed:
-            queries = DETAILED_QUERIES  # 8 diverse queries
+            queries = QUICK_QUERIES  # 6 diverse queries
             detailed = True
             print("=" * 80)
-            print("  DETAILED MODE: 8 queries × 3 modes = 24 tests")
+            print("  DETAILED MODE: 6 queries × 3 modes = 18 tests")
             print("  Full answers and per-query analysis will be printed")
             print("=" * 80)
         elif args.full:
-            queries = FULL_QUERIES  # 36 queries
+            queries = FULL_QUERIES  # 30 queries
             detailed = False
             print("=" * 80)
-            print("  STATS MODE: 36 queries × 3 modes = 108 tests")
+            print("  STATS MODE: 30 queries × 3 modes = 90 tests")
             print("  Compact output, aggregate statistics for charts")
             print("=" * 80)
         else:
-            queries = DETAILED_QUERIES
+            queries = QUICK_QUERIES
             detailed = False
             print("=" * 80)
-            print("  DEFAULT MODE: 8 queries × 3 modes = 24 tests")
-            print("  Use --detailed for full answers, --full for 36 queries")
+            print("  DEFAULT MODE: 6 queries × 3 modes = 18 tests")
+            print("  Use --detailed for full answers, --full for 30 queries")
             print("=" * 80)
         
         # Apply overrides
         if args.quick:
             queries = queries[:2]
             print(f"  Quick mode: limited to 2 queries")
-            if args.latex:
-                print("  Warning: --latex ignored in --quick mode")
-                args.latex = False
         elif args.queries:
             queries = queries[:args.queries]
             print(f"  Limited to {args.queries} queries")
@@ -1542,8 +1409,7 @@ Examples:
             print("  LATEX EXPORT")
             print("=" * 80)
             from src.analysis.ablation_latex_export import LaTeXExporter
-            # PATCH: Pass is_detailed flag to LaTeX exporter
-            exporter = LaTeXExporter(json_path, is_detailed=detailed)
+            exporter = LaTeXExporter(json_path)
             latex_dir = Path(args.output) / 'latex'
             exporter.export_all(latex_dir)
         

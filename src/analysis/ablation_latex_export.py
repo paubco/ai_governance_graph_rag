@@ -548,6 +548,20 @@ class LaTeXExporter:
                         "\\end{tcolorbox}",
                         "",
                     ])
+                    
+                    # Add claims breakdown if available
+                    faith_details = r.get('ragas', {}).get('faithfulness_details', {})
+                    claims = faith_details.get('claims', [])
+                    if claims:
+                        lines.append("\\paragraph{Claims Analysis}")
+                        lines.append("\\begin{itemize}")
+                        for claim in claims:
+                            claim_text = escape_latex(claim.get('claim', claim.get('text', '')))
+                            supported = claim.get('supported', False)
+                            marker = "$\\checkmark$" if supported else "$\\times$"
+                            lines.append(f"\\item {marker} {claim_text}")
+                        lines.append("\\end{itemize}")
+                        lines.append("")
             
             # ─────────────────────────────────────────────────────────────────
             # SECTION 4: Retrieved Chunks (FULL TEXT for each mode)
@@ -641,22 +655,24 @@ class LaTeXExporter:
                 
                 lines.extend([
                     f"\\subsubsection*{{{mode.capitalize()} Mode Relations ({len(relations)} total)}}",
-                    "\\begin{longtable}{p{4cm}lp{4cm}p{3cm}}",
+                    "\\begin{longtable}{p{4cm}lp{4cm}}",
                     "\\toprule",
-                    "Subject & Predicate & Object & Provenance \\\\",
+                    "Subject & Predicate & Object \\\\",
                     "\\midrule",
                     "\\endhead",
                 ])
                 
-                for rel in relations:  # ALL relations, FULL text
-                    subj = escape_latex(rel.get('subject_id', ''))
-                    pred = escape_latex(rel.get('predicate', ''))
-                    obj = escape_latex(rel.get('object_id', ''))
-                    chunk_ids = rel.get('chunk_ids', [])
-                    provenance = ', '.join(chunk_ids[:3]) if chunk_ids else 'N/A'
-                    provenance = escape_latex(provenance)
+                for rel in relations:  # ALL relations, use NAMES
+                    # Prefer name over ID
+                    subj = rel.get('subject_name') or rel.get('subject_id', '')
+                    pred = rel.get('predicate', '')
+                    obj = rel.get('object_name') or rel.get('object_id', '')
                     
-                    lines.append(f"{subj} & {pred} & {obj} & {provenance} \\\\")
+                    subj = escape_latex(subj)
+                    pred = escape_latex(pred)
+                    obj = escape_latex(obj)
+                    
+                    lines.append(f"{subj} & {pred} & {obj} \\\\")
                 
                 lines.extend([
                     "\\bottomrule",
