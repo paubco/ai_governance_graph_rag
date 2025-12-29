@@ -334,7 +334,7 @@ class AblationTestSuite:
             print(f"  TEST {test_num}/{total_tests}: {mode.value.upper()}")
             print(f"{'━'*80}")
             print(f"  Query: {query_def['query']}")
-            print(f"  Category: {query_def['category']}")
+            print(f"  Category: {query_def.get('category', 'unknown')}")
             if query_def.get('expected_mode'):
                 print(f"  Expected winner: {query_def['expected_mode']}")
             print()
@@ -525,7 +525,7 @@ class AblationTestSuite:
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['category'],
+                category=query_def.get('category', 'unknown'),
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=entity_metrics,
                 graph_utilization=graph_metrics,
@@ -555,7 +555,7 @@ class AblationTestSuite:
                 test_id=f"{query_def['id']}_{mode.value}",
                 query=query_def['query'],
                 mode=mode.value,
-                category=query_def['category'],
+                category=query_def.get('category', 'unknown'),
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
