@@ -1,46 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-LaTeX export utilities for ablation study results.
+LaTeX exporter for ablation study results.
 
-Converts ablation study JSON results into LaTeX tables, variables, and data files for
-thesis integration. Generates: (1) ablation_table.tex - results table grouped by query
-category with RAGAS metrics per mode, (2) ablation_vars.tex - \\newcommand variables
-for inline metric citations in prose, (3) ablation_appendix.tex - detailed query I/O
-with full answers and contexts (DETAILED mode only), (4) ablation_data.tex - pgfplots
-data for generating charts and visualizations.
+Generates:
+1. ablation_table.tex - Results table grouped by category (both modes)
+2. ablation_vars.tex - \\newcommand variables for inline citations (both modes)
+3. ablation_appendix.tex - Detailed I/O per query (DETAILED MODE ONLY)
+4. ablation_data.tex - Data for pgfplots figures (both modes)
 
-Handles LaTeX escaping for special characters, text truncation for readability, and
-semantic interpretation of metrics (e.g., faithfulness > 0.8 = "high"). Supports both
-compact and detailed export modes depending on ablation study output.
-
-Examples:
-    # Export ablation results to LaTeX
+Usage:
     from src.analysis.ablation_latex_export import LaTeXExporter
-    import json
-    
-    # Load results from ablation study
-    with open("data/analysis/results/ablation_results.json") as f:
-        results = json.load(f)
-    
-    exporter = LaTeXExporter(results)
-    
-    # Generate all LaTeX files
-    exporter.export_all(output_dir="thesis/tables/")
-
-    # Generate specific outputs
-    table_tex = exporter.generate_grouped_table_tex()
-    vars_tex = exporter.generate_vars_tex()
-    
-    # Use from command line
-    python -m src.analysis.ablation_latex_export \
-        --input data/analysis/results/ablation_results.json \
-        --output thesis/tables/
-
-References:
-    Input format: JSON from src/analysis/ablation_study.py
-    LaTeX packages: booktabs, pgfplots for table formatting
-    Metric interpretation: RAGAS thresholds and semantic labels
+    exporter = LaTeXExporter(json_path, is_detailed=True)
+    exporter.export_all(output_dir)
 """
+
 import json
 import re
 from pathlib import Path
@@ -156,24 +129,41 @@ class LaTeXExporter:
                     authors = f"{first_author} et al."
                 year = meta.get('year', 'n.d.')
                 title = meta.get('title', 'Untitled')
-                # Truncate long titles
-                if len(title) > 80:
-                    title = title[:77] + '...'
+                # Keep full title - don't truncate
                 journal = meta.get('journal', '')
                 doi = meta.get('doi', '')
                 link = meta.get('link', '')
+                scopus_id = meta.get('scopus_id', doc_id)  # Full Scopus ID
                 
-                citation = f"{authors} ({year}). ``{title}'' {journal}."
-                url = f"https://doi.org/{doi}" if doi else link
+                citation = f"{authors} ({year}). ``{title}''"
+                if journal:
+                    citation += f" {journal}."
+                
+                # Prefer DOI URL, then Scopus link
+                if doi:
+                    url = f"https://doi.org/{doi}"
+                elif link:
+                    url = link
+                elif scopus_id:
+                    url = f"https://www.scopus.com/record/display.uri?eid=2-s2.0-{scopus_id}"
+                else:
+                    url = ""
+                
                 return (citation, url)
             else:
-                return (f"Paper: {doc_id}", "")
+                # Fallback: try to extract Scopus ID from doc_id
+                # doc_id might be like "paper_85148048311" or just the number
+                scopus_num = doc_id.replace('paper_', '').replace('scopus_', '')
+                citation = f"Scopus paper {scopus_num}"
+                url = f"https://www.scopus.com/record/display.uri?eid=2-s2.0-{scopus_num}"
+                return (citation, url)
         
         elif doc_type == 'regulation':
-            # DLA Piper format
+            # DLA Piper format - use full URL
             jur = jurisdiction or doc_id
-            citation = f"DLA Piper AI Laws -- {jur}"
-            url = f"{self.DLA_PIPER_BASE_URL}{jur}#insight"
+            jur_upper = jur.upper() if jur else 'UNKNOWN'
+            citation = f"DLA Piper AI Laws -- {jur_upper}"
+            url = f"{self.DLA_PIPER_BASE_URL}{jur_upper}#insight"
             return (citation, url)
         
         else:
@@ -447,8 +437,12 @@ class LaTeXExporter:
             category = first_result.get('category', 'unknown')
             subcategory = first_result.get('subcategory', '')
             
+            # For TOC: truncate long queries but keep full in section
+            q_short = query[:60] + '...' if len(query) > 60 else query
+            q_short_escaped = escape_latex(q_short)
+            
             lines.extend([
-                f"\\section{{Query {i}: {q_escaped}}}",
+                f"\\section{{\\texorpdfstring{{Query {i}: {q_escaped}}}{{Q{i}: {q_short_escaped}}}}}",
                 f"\\label{{sec:q{i}}}",
                 "",
                 f"\\textbf{{Category:}} {escape_latex(category)}" + (f" ({escape_latex(subcategory)})" if subcategory else ""),
@@ -572,19 +566,26 @@ class LaTeXExporter:
                     if not chunks:
                         continue
                     
-                    lines.extend([
-                        f"\\subsubsection*{{{mode.capitalize()} Mode Chunks}}",
-                        "",
-                    ])
+                    lines.append(f"\\subsubsection*{{{mode.capitalize()} Mode Chunks}}")
                     
-                    for c in chunks:  # ALL chunks, FULL text
-                        idx = c.get('index', '?')
+                    # Deduplicate chunks by text content (keep first occurrence)
+                    seen_texts = set()
+                    unique_chunks = []
+                    for c in chunks:
+                        text_hash = hash(c.get('text', '')[:200])  # Hash first 200 chars
+                        if text_hash not in seen_texts:
+                            seen_texts.add(text_hash)
+                            unique_chunks.append(c)
+                    
+                    # Sequential numbering (1, 2, 3...) instead of original indices
+                    for seq_idx, c in enumerate(unique_chunks, 1):
+                        original_idx = c.get('index', '?')
                         doc_id = c.get('doc_id', 'unknown')
                         doc_type = c.get('doc_type', 'unknown')
                         score = c.get('score', 0)
                         jurisdiction = c.get('jurisdiction', None)
                         method = c.get('method', 'unknown')
-                        is_cited = c.get('cited', False) or idx in cited
+                        is_cited = c.get('cited', False) or original_idx in cited
                         
                         # FULL text - no truncation
                         text = escape_latex(c.get('text', ''))
@@ -595,8 +596,7 @@ class LaTeXExporter:
                             authors = cit.get('authors', 'Unknown')
                             year = cit.get('year', 'n.d.')
                             title = cit.get('title', '')
-                            if len(title) > 80:
-                                title = title[:77] + '...'
+                            # Keep full title, just escape it
                             journal = cit.get('journal', '')
                             citation = f"{authors} ({year}). ``{title}''"
                             if journal:
@@ -609,18 +609,16 @@ class LaTeXExporter:
                         
                         cited_str = " $\\checkmark$ \\textbf{CITED}" if is_cited else ""
                         
-                        lines.append(f"\\paragraph{{Chunk {idx}{cited_str}}}")
+                        # Use sequential index for display
+                        lines.append(f"\\paragraph{{Chunk {seq_idx}{cited_str}}}")
                         lines.append(f"\\textit{{{citation_escaped}}}")
                         if url:
+                            # Full URL - no truncation
                             lines.append(f"\\\\\\url{{{url}}}")
-                        lines.append(f"\\\\\\textit{{Score: {score:.3f} | Method: {method}}}")
-                        lines.extend([
-                            "",
-                            "\\begin{quote}",
-                            f"\\small {text}",
-                            "\\end{quote}",
-                            "",
-                        ])
+                        lines.append(f"\\\\\\textit{{Score: {score:.3f} | Source: {method}}}")
+                        lines.append("\\begin{quote}")
+                        lines.append(f"\\small {text}")
+                        lines.append("\\end{quote}")
                     
                     lines.append("")
             
