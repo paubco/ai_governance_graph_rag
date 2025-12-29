@@ -1409,7 +1409,7 @@ Examples:
             print("  LATEX EXPORT")
             print("=" * 80)
             from src.analysis.ablation_latex_export import LaTeXExporter
-            exporter = LaTeXExporter(json_path)
+            exporter = LaTeXExporter(json_path, is_detailed=args.detailed)
             latex_dir = Path(args.output) / 'latex'
             exporter.export_all(latex_dir)
         
