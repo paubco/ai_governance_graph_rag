@@ -32,7 +32,7 @@ class CitationFormatter:
     for any doc_id.
     """
     
-    # Default paths
+    # Default paths - relative to project root
     DEFAULT_PAPER_MAPPING = Path('data/raw/academic/scopus_2023/paper_mapping.json')
     DLA_PIPER_BASE_URL = 'https://intelligence.dlapiper.com/artificial-intelligence/?t=01-law&c='
     
@@ -44,7 +44,23 @@ class CitationFormatter:
             paper_mapping_path: Path to paper_mapping.json
             project_root: Project root directory (for resolving relative paths)
         """
-        self.project_root = project_root or Path(__file__).resolve().parent.parent.parent
+        # Try multiple ways to find project root
+        if project_root:
+            self.project_root = Path(project_root)
+        else:
+            # Try to find Graph_RAG directory
+            cwd = Path.cwd()
+            if 'Graph_RAG' in str(cwd):
+                # Find the Graph_RAG root
+                parts = cwd.parts
+                for i, part in enumerate(parts):
+                    if part == 'Graph_RAG':
+                        self.project_root = Path(*parts[:i+1])
+                        break
+                else:
+                    self.project_root = cwd
+            else:
+                self.project_root = cwd
         
         # Resolve paper mapping path
         if paper_mapping_path:
@@ -60,8 +76,26 @@ class CitationFormatter:
         """Load paper metadata from JSON file."""
         if self.paper_mapping_path.exists():
             with open(self.paper_mapping_path) as f:
-                self.paper_mapping = json.load(f)
-            print(f"CitationFormatter: Loaded {len(self.paper_mapping)} paper citations")
+                raw_mapping = json.load(f)
+            
+            # Build lookup by BOTH paper_id (paper_001) AND scopus EID (2-s2.0-xxx)
+            self.paper_mapping = {}
+            for paper_id, data in raw_mapping.items():
+                # Index by paper_id
+                self.paper_mapping[paper_id] = data
+                
+                # Also index by Scopus EID if available
+                eid = data.get('scopus_metadata', {}).get('eid', '')
+                if eid:
+                    self.paper_mapping[eid] = data
+                
+                # Also index by doc_id format (just the number part)
+                # e.g., "2-s2.0-85148048311" -> also try "85148048311"
+                if eid and eid.startswith('2-s2.0-'):
+                    short_eid = eid.replace('2-s2.0-', '')
+                    self.paper_mapping[short_eid] = data
+            
+            print(f"CitationFormatter: Loaded {len(raw_mapping)} papers ({len(self.paper_mapping)} lookup keys)")
         else:
             print(f"CitationFormatter: Warning - Paper mapping not found at {self.paper_mapping_path}")
     

@@ -286,7 +286,6 @@ class AblationTestSuite:
         self.generator = None
         self.ragas = None
         self.citation_formatter = None  # For paper/regulation metadata
-        self.entity_lookup = {}  # entity_id → canonical name
         self.results = []
         self.results_lock = Lock()  # Thread-safe results collection
         self.print_lock = Lock()  # Thread-safe printing
@@ -319,15 +318,6 @@ class AblationTestSuite:
         
         # Citation formatter (for paper names and URLs)
         self.citation_formatter = CitationFormatter()
-        
-        # Entity name lookup (for relation display)
-        entity_lookup_path = data_dir / 'interim' / 'entities' / 'normalized_entities_with_ids.json'
-        if entity_lookup_path.exists():
-            with open(entity_lookup_path, 'r') as f:
-                entities_data = json.load(f)
-                for entity in entities_data:
-                    self.entity_lookup[entity['entity_id']] = entity['name']
-            print(f"Loaded {len(self.entity_lookup)} entity names")
         
         # RAGAS evaluator (Claude Haiku - cheap but reliable)
         if self.enable_ragas:
@@ -512,21 +502,14 @@ class AblationTestSuite:
             if self.citation_formatter:
                 chunks_detail = self.citation_formatter.enrich_chunks(chunks_detail)
             
-            # Build relations_detail with entity NAMES (not just IDs)
+            # Build relations_detail with entity NAMES (already on Relation object)
             relations_detail = []
             if retrieval_result.subgraph and retrieval_result.subgraph.relations:
                 for rel in retrieval_result.subgraph.relations[:30]:  # Top 30
-                    # Resolve names from lookup, fall back to ID
-                    subj_name = self.entity_lookup.get(rel.subject_id, rel.subject_id)
-                    obj_name = self.entity_lookup.get(rel.object_id, rel.object_id)
-                    
                     relations_detail.append({
-                        'subject_id': rel.subject_id,
-                        'subject_name': subj_name,
+                        'subject_name': rel.source_name,
                         'predicate': rel.predicate,
-                        'object_id': rel.object_id,
-                        'object_name': obj_name,
-                        'chunk_ids': rel.chunk_ids[:3] if hasattr(rel, 'chunk_ids') and rel.chunk_ids else [],
+                        'object_name': rel.target_name,
                     })
             
             # Extract cited chunk indices from answer text [1], [2], etc.
