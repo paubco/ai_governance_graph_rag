@@ -502,15 +502,28 @@ class AblationTestSuite:
             if self.citation_formatter:
                 chunks_detail = self.citation_formatter.enrich_chunks(chunks_detail)
             
-            # Build relations_detail with entity NAMES (already on Relation object)
+            # Build relations_detail with entity NAMES
+            # Relation objects only have IDs, need to look up names
             relations_detail = []
             if retrieval_result.subgraph and retrieval_result.subgraph.relations:
                 for rel in retrieval_result.subgraph.relations[:30]:  # Top 30
-                    relations_detail.append({
-                        'subject_name': rel.source_name,
-                        'predicate': rel.predicate,
-                        'object_name': rel.target_name,
-                    })
+                    try:
+                        # Try different attribute names that might exist
+                        subj_name = getattr(rel, 'source_name', None) or getattr(rel, 'subject_name', None) or rel.subject_id
+                        obj_name = getattr(rel, 'target_name', None) or getattr(rel, 'object_name', None) or rel.object_id
+                        pred = rel.predicate
+                        
+                        relations_detail.append({
+                            'subject_id': rel.subject_id,
+                            'subject_name': subj_name,
+                            'predicate': pred,
+                            'object_id': rel.object_id,
+                            'object_name': obj_name,
+                        })
+                    except Exception as rel_err:
+                        # Skip relations that fail
+                        logger.warning(f"Skipping relation: {rel_err}")
+                        continue
             
             # Extract cited chunk indices from answer text [1], [2], etc.
             cited_chunks = []
@@ -556,7 +569,16 @@ class AblationTestSuite:
                 timestamp=datetime.now().isoformat(),
                 entity_resolution=EntityResolutionMetrics(0, 0, 0.0, 0.0, [], {}),
                 graph_utilization=GraphUtilizationMetrics(0, 0, {}, []),
-                coverage=CoverageMetrics(0, 0, 0.0, 0, 0, 0.0, [], []),
+                coverage=CoverageMetrics(
+                    entities_in_subgraph=0,
+                    entities_in_answer=0,
+                    entity_coverage_rate=0.0,
+                    relations_in_subgraph=0,
+                    relations_mentioned=0,
+                    relation_coverage_rate=0.0,
+                    covered_entities=[],
+                    uncovered_entities=[]
+                ),
                 retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
                 ragas=RAGASMetrics(0.0, {}, 0.0, ""),
                 performance=PerformanceMetrics(0.0, 0.0, 0.0, 0, 0.0),
