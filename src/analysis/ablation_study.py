@@ -577,7 +577,10 @@ class AblationTestSuite:
                     relations_mentioned=0,
                     relation_coverage_rate=0.0,
                     covered_entities=[],
-                    uncovered_entities=[]
+                    uncovered_entities=[],
+                    query_terminals=0,
+                    terminals_in_answer=0,
+                    terminal_coverage_rate=0.0
                 ),
                 retrieval=RetrievalMetrics(0, {}, 0.0, 0.0, {}, []),
                 ragas=RAGASMetrics(0.0, {}, 0.0, ""),
